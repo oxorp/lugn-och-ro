@@ -1,9 +1,12 @@
 import { Head } from '@inertiajs/react';
 import {
+    AlertTriangle,
     ArrowDown,
     ArrowRight,
     ArrowUp,
     MapPin,
+    Shield,
+    ShieldAlert,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -34,6 +37,35 @@ export interface School {
     student_count: number | null;
 }
 
+interface CrimeData {
+    deso_code: string;
+    kommun_code: string;
+    kommun_name: string;
+    year: number;
+    estimated_rates: {
+        violent: { rate: number | null; percentile: number | null };
+        property: { rate: number | null; percentile: number | null };
+        total: { rate: number | null; percentile: number | null };
+    };
+    perceived_safety: {
+        percent_safe: number | null;
+        percentile: number | null;
+    };
+    kommun_actual_rates: {
+        total: number | null;
+        person: number | null;
+        theft: number | null;
+    };
+    vulnerability: {
+        name: string;
+        tier: string;
+        tier_label: string;
+        overlap_fraction: number;
+        assessment_year: number;
+        police_region: string;
+    } | null;
+}
+
 const INDICATOR_LABELS: Record<string, string> = {
     median_income: 'Median Income',
     low_economic_standard_pct: 'Low Economic Standard',
@@ -46,6 +78,11 @@ const INDICATOR_LABELS: Record<string, string> = {
     school_merit_value_avg: 'School Merit Value',
     school_goal_achievement_avg: 'School Goal Achievement',
     school_teacher_certification_avg: 'Teacher Certification',
+    crime_violent_rate: 'Violent Crime Rate',
+    crime_property_rate: 'Property Crime Rate',
+    crime_total_rate: 'Total Crime Rate',
+    perceived_safety: 'Perceived Safety',
+    vulnerability_flag: 'Vulnerability Area',
 };
 
 function scoreColor(score: number): string {
@@ -189,11 +226,177 @@ function SchoolCard({
     );
 }
 
+function VulnerabilityCard({ vulnerability }: { vulnerability: CrimeData['vulnerability'] }) {
+    if (!vulnerability) return null;
+
+    const isSarskilt = vulnerability.tier === 'sarskilt_utsatt';
+    const Icon = isSarskilt ? ShieldAlert : AlertTriangle;
+
+    return (
+        <div
+            className={`rounded-lg border-2 p-3 ${
+                isSarskilt
+                    ? 'border-red-300 bg-red-50'
+                    : 'border-amber-300 bg-amber-50'
+            }`}
+        >
+            <div className="flex items-start gap-2">
+                <Icon
+                    className={`mt-0.5 h-5 w-5 shrink-0 ${
+                        isSarskilt ? 'text-red-600' : 'text-amber-600'
+                    }`}
+                />
+                <div>
+                    <div
+                        className={`text-sm font-semibold ${
+                            isSarskilt ? 'text-red-800' : 'text-amber-800'
+                        }`}
+                    >
+                        Polisens {vulnerability.tier_label}
+                    </div>
+                    <div
+                        className={`mt-1 text-xs ${
+                            isSarskilt ? 'text-red-700' : 'text-amber-700'
+                        }`}
+                    >
+                        This area overlaps with &ldquo;{vulnerability.name}&rdquo; &mdash;
+                        classified as{' '}
+                        <span className="font-semibold uppercase">
+                            {isSarskilt ? 'SÄRSKILT UTSATT' : 'UTSATT'}
+                        </span>{' '}
+                        ({vulnerability.assessment_year})
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function CrimeRateBar({
+    label,
+    rate,
+    percentile,
+}: {
+    label: string;
+    rate: number | null;
+    percentile: number | null;
+}) {
+    if (rate === null || percentile === null) return null;
+
+    // For crime: low percentile = low crime = good, high = bad
+    // Invert display: show "safeness" where 100 = safest
+    const safeness = 100 - percentile;
+    return (
+        <div className="space-y-0.5">
+            <div className="flex justify-between text-xs">
+                <span className="text-muted-foreground">{label}</span>
+                <span className="font-medium">{Math.round(safeness)}th pctl</span>
+            </div>
+            <div className="h-2 w-full overflow-hidden rounded-full bg-gray-100">
+                <div
+                    className={`h-full rounded-full transition-all ${scoreBgColor(safeness)}`}
+                    style={{ width: `${safeness}%` }}
+                />
+            </div>
+            <div className="text-muted-foreground text-[10px]">
+                est. {rate.toLocaleString()}/100k
+            </div>
+        </div>
+    );
+}
+
+function CrimeSection({
+    crimeData,
+    loading,
+}: {
+    crimeData: CrimeData | null;
+    loading: boolean;
+}) {
+    if (loading) {
+        return (
+            <div className="space-y-3">
+                <div className="h-16 animate-pulse rounded-lg bg-gray-100" />
+                <div className="h-24 animate-pulse rounded-lg bg-gray-100" />
+            </div>
+        );
+    }
+
+    if (!crimeData) return null;
+
+    return (
+        <div className="space-y-3">
+            {crimeData.vulnerability && (
+                <VulnerabilityCard vulnerability={crimeData.vulnerability} />
+            )}
+
+            <div>
+                <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    <Shield className="h-3.5 w-3.5" />
+                    Crime & Safety
+                </div>
+                <div className="space-y-2.5">
+                    <CrimeRateBar
+                        label="Violent crime"
+                        rate={crimeData.estimated_rates.violent.rate}
+                        percentile={crimeData.estimated_rates.violent.percentile}
+                    />
+                    <CrimeRateBar
+                        label="Property crime"
+                        rate={crimeData.estimated_rates.property.rate}
+                        percentile={crimeData.estimated_rates.property.percentile}
+                    />
+                    {crimeData.perceived_safety.percent_safe !== null &&
+                        crimeData.perceived_safety.percentile !== null && (
+                            <div className="space-y-0.5">
+                                <div className="flex justify-between text-xs">
+                                    <span className="text-muted-foreground">
+                                        Perceived safety
+                                    </span>
+                                    <span className="font-medium">
+                                        {Math.round(crimeData.perceived_safety.percentile)}th pctl
+                                    </span>
+                                </div>
+                                <div className="h-2 w-full overflow-hidden rounded-full bg-gray-100">
+                                    <div
+                                        className={`h-full rounded-full transition-all ${scoreBgColor(crimeData.perceived_safety.percentile)}`}
+                                        style={{
+                                            width: `${crimeData.perceived_safety.percentile}%`,
+                                        }}
+                                    />
+                                </div>
+                                <div className="text-muted-foreground text-[10px]">
+                                    {crimeData.perceived_safety.percent_safe}% feel safe at night
+                                </div>
+                            </div>
+                        )}
+                </div>
+            </div>
+
+            <div className="rounded border border-dashed border-gray-200 px-2.5 py-2 text-[10px] text-muted-foreground">
+                Crime rates are estimated from kommun-level data ({crimeData.kommun_name}) using
+                demographic weighting. Kommun total: {crimeData.kommun_actual_rates.total?.toLocaleString()}/100k.
+            </div>
+
+            {/* Future: Recent Incidents placeholder */}
+            <div className="rounded-lg border border-dashed p-3 text-center">
+                <div className="text-xs font-medium text-muted-foreground">
+                    Recent Incidents
+                </div>
+                <div className="mt-0.5 text-[10px] text-muted-foreground">
+                    Coming soon &mdash; real-time tracking of police reports and news.
+                </div>
+            </div>
+        </div>
+    );
+}
+
 export default function MapPage({ initialCenter, initialZoom }: MapPageProps) {
     const [selectedDeso, setSelectedDeso] = useState<DesoProperties | null>(null);
     const [selectedScore, setSelectedScore] = useState<DesoScore | null>(null);
     const [schools, setSchools] = useState<School[]>([]);
     const [schoolsLoading, setSchoolsLoading] = useState(false);
+    const [crimeData, setCrimeData] = useState<CrimeData | null>(null);
+    const [crimeLoading, setCrimeLoading] = useState(false);
     const [highlightedSchool, setHighlightedSchool] = useState<string | null>(null);
     const schoolRefs = useRef<Record<string, HTMLDivElement | null>>({});
     const mapRef = useRef<{ updateSize: () => void; clearSchoolMarkers: () => void; setSchoolMarkers: (schools: School[]) => void } | null>(null);
@@ -206,6 +409,8 @@ export default function MapPage({ initialCenter, initialZoom }: MapPageProps) {
 
             if (properties) {
                 setSchoolsLoading(true);
+                setCrimeLoading(true);
+
                 fetch(`/api/deso/${properties.deso_code}/schools`)
                     .then((r) => r.json())
                     .then((data: School[]) => {
@@ -218,8 +423,20 @@ export default function MapPage({ initialCenter, initialZoom }: MapPageProps) {
                         setSchoolsLoading(false);
                         mapRef.current?.clearSchoolMarkers();
                     });
+
+                fetch(`/api/deso/${properties.deso_code}/crime?year=2024`)
+                    .then((r) => r.json())
+                    .then((data: CrimeData) => {
+                        setCrimeData(data);
+                        setCrimeLoading(false);
+                    })
+                    .catch(() => {
+                        setCrimeData(null);
+                        setCrimeLoading(false);
+                    });
             } else {
                 setSchools([]);
+                setCrimeData(null);
                 mapRef.current?.clearSchoolMarkers();
             }
         },
@@ -326,6 +543,10 @@ export default function MapPage({ initialCenter, initialZoom }: MapPageProps) {
                                     </div>
                                 </>
                             )}
+
+                            {/* Crime & Safety Section */}
+                            <Separator />
+                            <CrimeSection crimeData={crimeData} loading={crimeLoading} />
 
                             {/* Schools Section */}
                             <Separator />

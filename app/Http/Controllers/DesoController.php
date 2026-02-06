@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\DesoVulnerabilityMapping;
 use App\Models\School;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -92,5 +93,90 @@ class DesoController extends Controller
             ]);
 
         return response()->json($schools);
+    }
+
+    public function crime(string $desoCode, Request $request): JsonResponse
+    {
+        $year = $request->integer('year', now()->year);
+
+        // Get kommun code for this DeSO
+        $deso = DB::table('deso_areas')
+            ->where('deso_code', $desoCode)
+            ->select('kommun_code', 'kommun_name', 'lan_code')
+            ->first();
+
+        if (! $deso) {
+            return response()->json(['error' => 'DeSO not found'], 404);
+        }
+
+        // Estimated DeSO-level crime rates from indicator values
+        $crimeIndicators = DB::table('indicator_values')
+            ->join('indicators', 'indicators.id', '=', 'indicator_values.indicator_id')
+            ->whereIn('indicators.slug', ['crime_violent_rate', 'crime_property_rate', 'crime_total_rate', 'perceived_safety'])
+            ->where('indicator_values.deso_code', $desoCode)
+            ->where('indicator_values.year', $year)
+            ->select('indicators.slug', 'indicator_values.raw_value', 'indicator_values.normalized_value')
+            ->get()
+            ->keyBy('slug');
+
+        // Kommun-level actual crime rates (for reference)
+        $kommunCrime = DB::table('crime_statistics')
+            ->where('municipality_code', $deso->kommun_code)
+            ->where('year', $year)
+            ->select('crime_category', 'reported_count', 'rate_per_100k')
+            ->get()
+            ->keyBy('crime_category');
+
+        // Vulnerability area info
+        $vulnerability = DesoVulnerabilityMapping::query()
+            ->where('deso_code', $desoCode)
+            ->where('overlap_fraction', '>=', 0.25)
+            ->with('vulnerabilityArea')
+            ->orderByRaw("CASE WHEN tier = 'sarskilt_utsatt' THEN 0 ELSE 1 END")
+            ->first();
+
+        $vulnData = null;
+        if ($vulnerability) {
+            $area = $vulnerability->vulnerabilityArea;
+            $vulnData = [
+                'name' => $area->name,
+                'tier' => $vulnerability->tier,
+                'tier_label' => $vulnerability->tier === 'sarskilt_utsatt' ? 'Särskilt utsatt område' : 'Utsatt område',
+                'overlap_fraction' => (float) $vulnerability->overlap_fraction,
+                'assessment_year' => $area->assessment_year,
+                'police_region' => $area->police_region,
+            ];
+        }
+
+        return response()->json([
+            'deso_code' => $desoCode,
+            'kommun_code' => $deso->kommun_code,
+            'kommun_name' => $deso->kommun_name,
+            'year' => $year,
+            'estimated_rates' => [
+                'violent' => [
+                    'rate' => $crimeIndicators->get('crime_violent_rate')?->raw_value ? round((float) $crimeIndicators->get('crime_violent_rate')->raw_value, 1) : null,
+                    'percentile' => $crimeIndicators->get('crime_violent_rate')?->normalized_value ? round((float) $crimeIndicators->get('crime_violent_rate')->normalized_value * 100, 1) : null,
+                ],
+                'property' => [
+                    'rate' => $crimeIndicators->get('crime_property_rate')?->raw_value ? round((float) $crimeIndicators->get('crime_property_rate')->raw_value, 1) : null,
+                    'percentile' => $crimeIndicators->get('crime_property_rate')?->normalized_value ? round((float) $crimeIndicators->get('crime_property_rate')->normalized_value * 100, 1) : null,
+                ],
+                'total' => [
+                    'rate' => $crimeIndicators->get('crime_total_rate')?->raw_value ? round((float) $crimeIndicators->get('crime_total_rate')->raw_value, 1) : null,
+                    'percentile' => $crimeIndicators->get('crime_total_rate')?->normalized_value ? round((float) $crimeIndicators->get('crime_total_rate')->normalized_value * 100, 1) : null,
+                ],
+            ],
+            'perceived_safety' => [
+                'percent_safe' => $crimeIndicators->get('perceived_safety')?->raw_value ? round((float) $crimeIndicators->get('perceived_safety')->raw_value, 1) : null,
+                'percentile' => $crimeIndicators->get('perceived_safety')?->normalized_value ? round((float) $crimeIndicators->get('perceived_safety')->normalized_value * 100, 1) : null,
+            ],
+            'kommun_actual_rates' => [
+                'total' => $kommunCrime->get('crime_total')?->rate_per_100k ? round((float) $kommunCrime->get('crime_total')->rate_per_100k, 1) : null,
+                'person' => $kommunCrime->get('crime_person')?->rate_per_100k ? round((float) $kommunCrime->get('crime_person')->rate_per_100k, 1) : null,
+                'theft' => $kommunCrime->get('crime_theft')?->rate_per_100k ? round((float) $kommunCrime->get('crime_theft')->rate_per_100k, 1) : null,
+            ],
+            'vulnerability' => $vulnData,
+        ]);
     }
 }

@@ -55,23 +55,51 @@ Read `data_pipeline_specification.md` for full business context, data sources, a
 - Teacher certification data has much better coverage than merit/achievement data
 - Use `--academic-year=2020/21 --calendar-year=2024` for aggregation to align with SCB data year
 
+### BRÅ Crime Data (No API — Excel/CSV only)
+- BRÅ has explicitly no public API — all data via Excel/CSV downloads
+- Kommun-level CSV: `storage/app/data/raw/bra/anmalda_brott_kommuner_2025.csv` (290 kommuner, total crimes + rate per 100k)
+- National Excel: `storage/app/data/raw/bra/anmalda_brott_10_ar.xlsx` (crime categories by year, national level only)
+- Category-level kommun rates estimated using national proportions applied to kommun totals
+- Excel files have Swedish formatting: ".." = suppressed, "-" = zero, comma decimals, BOM in CSV
+- `BraDataService` handles all parsing and estimation
+- Disaggregation from kommun→DeSO uses demographic-weighted model (income 35%, employment 20%, education 15%, vulnerability 30%+20%)
+
+### Police Vulnerability Areas
+- GeoJSON download: `https://polisen.se/contentassets/.../uso_2025_geojson.zip` (44KB, 65 areas)
+- CRS is EPSG:3006 (SWEREF99TM) — must transform to WGS84 via PostGIS `ST_Transform`
+- Properties: NAMN (name), KATEGORI ("Utsatt område"/"Särskilt utsatt område"), REGION, LOKALPOLISOMRADE, ORT
+- 46 utsatt + 19 särskilt utsatt = 65 total, ~275 DeSOs with >=25% overlap
+- Geometry type is Polygon — wrap with ST_Multi for MULTIPOLYGON storage
+
+### NTU Survey Data
+- Län-level Excel: `storage/app/data/raw/bra/ntu_lan_2017_2025.xlsx` (21 län, 2017-2025)
+- Key sheet: R4.1 "Otrygghet vid utevistelse sent på kvällen" (% feeling unsafe at night)
+- Values are percentages, rows by län, columns by year, CI in last 2 columns
+- Disaggregated to DeSO using inverted demographic weighting (safer areas get higher safety scores)
+
 ### Artisan Commands
 - `ingest:scb --all` — Ingest all SCB indicators (or `--indicator=slug --year=2024`)
 - `ingest:skolverket-schools` — Ingest school locations + metadata from Skolverket
 - `ingest:skolverket-stats` — Ingest performance statistics per school
 - `aggregate:school-indicators --academic-year=2020/21 --calendar-year=2024` — Aggregate school stats to DeSO indicators
+- `ingest:bra-crime --year=2024` — Ingest BRÅ kommun-level crime statistics from CSV/Excel
+- `ingest:ntu --year=2025` — Ingest NTU survey data from Excel
+- `ingest:vulnerability-areas --year=2025` — Import police vulnerability area polygons
+- `disaggregate:crime --year=2024` — Disaggregate crime data from kommun/län to DeSO
 - `normalize:indicators --year=2024` — Normalize all active indicators
 - `compute:scores --year=2024` — Compute composite scores
 
 ### Service Architecture
 - `ScbApiService` — Fetches and parses SCB PX-Web data
 - `SkolverketApiService` — Fetches school registry and statistics data
+- `BraDataService` — Parses BRÅ Excel/CSV, estimates category rates from national proportions
 - `NormalizationService` — Rank percentile, min-max, z-score normalization
 - `ScoringService` — Weighted composite scores with direction handling
 
 ### Key Routes
 - `/api/deso/scores?year=2024` — Returns composite scores keyed by deso_code (1-hour cache)
 - `/api/deso/{desoCode}/schools` — Returns schools for a specific DeSO with latest statistics
+- `/api/deso/{desoCode}/crime` — Returns crime rates, vulnerability info, perceived safety for a DeSO
 - `/admin/indicators` — Admin dashboard for indicator management
 - `/admin/indicators/{indicator}` — Update indicator weight/direction
 - `/admin/recompute` — Re-normalize and recompute all scores
