@@ -34,14 +34,14 @@ services:
     depends_on:
       - app
 
-  # PostgreSQL Database
+  # PostgreSQL Database with PostGIS
   postgres:
-    image: postgres:16-alpine
+    image: postgis/postgis:16-3.4
     container_name: skapa-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${DB_DATABASE:-skapa}
-      POSTGRES_USER: ${DB_USERNAME:-postgres}
+      POSTGRES_DB: ${DB_DATABASE:-realestate}
+      POSTGRES_USER: ${DB_USERNAME:-realestate}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-secret}
     ports:
       - "${DB_PORT:-5432}:5432"
@@ -50,7 +50,7 @@ services:
     networks:
       - skapa-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-postgres}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-realestate}"]
       interval: 10s
       timeout: 5s
       retries: 5
