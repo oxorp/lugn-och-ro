@@ -1,12 +1,14 @@
+import { cellToBoundary } from 'h3-js';
 import Feature from 'ol/Feature';
 import Map from 'ol/Map';
 import Overlay from 'ol/Overlay';
 import View from 'ol/View';
 import GeoJSON from 'ol/format/GeoJSON';
 import Point from 'ol/geom/Point';
+import Polygon from 'ol/geom/Polygon';
 import TileLayer from 'ol/layer/Tile';
 import VectorLayer from 'ol/layer/Vector';
-import { fromLonLat } from 'ol/proj';
+import { fromLonLat, transformExtent } from 'ol/proj';
 import OSM from 'ol/source/OSM';
 import VectorSource from 'ol/source/Vector';
 import CircleStyle from 'ol/style/Circle';
@@ -50,6 +52,8 @@ export interface DesoMapHandle {
     clearSchoolMarkers: () => void;
     setSchoolMarkers: (schools: School[]) => void;
 }
+
+type LayerMode = 'hexagons' | 'deso';
 
 interface DesoMapProps {
     initialCenter: [number, number];
@@ -117,6 +121,20 @@ const selectedStyle = new Style({
     stroke: new Stroke({ color: 'rgba(255, 140, 0, 1)', width: 2.5 }),
 });
 
+function h3ToFeature(h3Index: string, score: number, primaryDesoCode: string | null): Feature {
+    const boundary = cellToBoundary(h3Index, true); // true = GeoJSON format [lng, lat]
+    // Close the ring
+    boundary.push(boundary[0]);
+    const coords = boundary.map((c) => fromLonLat(c));
+    const feature = new Feature({
+        geometry: new Polygon([coords]),
+    });
+    feature.set('h3Index', h3Index);
+    feature.set('score', score);
+    feature.set('primaryDesoCode', primaryDesoCode);
+    return feature;
+}
+
 function ScoreLegend() {
     return (
         <div className="absolute bottom-6 left-6 z-10 rounded-lg bg-white/90 px-4 py-3 shadow-lg backdrop-blur-sm">
@@ -139,6 +157,64 @@ function ScoreLegend() {
     );
 }
 
+function LayerControl({
+    mode,
+    onModeChange,
+    showSmoothing,
+    smoothed,
+    onSmoothedChange,
+}: {
+    mode: LayerMode;
+    onModeChange: (mode: LayerMode) => void;
+    showSmoothing: boolean;
+    smoothed: boolean;
+    onSmoothedChange: (smoothed: boolean) => void;
+}) {
+    return (
+        <div className="absolute top-4 right-4 z-10 rounded-lg bg-white/90 px-3 py-2.5 shadow-lg backdrop-blur-sm">
+            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-500">
+                View
+            </div>
+            <div className="space-y-1">
+                <label className="flex cursor-pointer items-center gap-2 text-xs">
+                    <input
+                        type="radio"
+                        name="layer"
+                        checked={mode === 'hexagons'}
+                        onChange={() => onModeChange('hexagons')}
+                        className="h-3 w-3 text-blue-600"
+                    />
+                    Hexagons
+                </label>
+                <label className="flex cursor-pointer items-center gap-2 text-xs">
+                    <input
+                        type="radio"
+                        name="layer"
+                        checked={mode === 'deso'}
+                        onChange={() => onModeChange('deso')}
+                        className="h-3 w-3 text-blue-600"
+                    />
+                    Statistical Areas
+                </label>
+            </div>
+            {showSmoothing && mode === 'hexagons' && (
+                <>
+                    <div className="my-1.5 border-t border-gray-200" />
+                    <label className="flex cursor-pointer items-center gap-2 text-xs">
+                        <input
+                            type="checkbox"
+                            checked={!smoothed}
+                            onChange={() => onSmoothedChange(!smoothed)}
+                            className="h-3 w-3 rounded text-blue-600"
+                        />
+                        Raw scores
+                    </label>
+                </>
+            )}
+        </div>
+    );
+}
+
 const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
     { initialCenter, initialZoom, onFeatureSelect, onSchoolClick },
     ref,
@@ -148,11 +224,22 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
     const hoveredFeature = useRef<Feature | null>(null);
     const selectedFeature = useRef<Feature | null>(null);
     const scoresRef = useRef<Record<string, DesoScore>>({});
+    const desoPropsRef = useRef<Record<string, DesoProperties>>({});
     const schoolLayerRef = useRef<VectorLayer | null>(null);
     const schoolSourceRef = useRef<VectorSource | null>(null);
     const tooltipRef = useRef<HTMLDivElement>(null);
     const tooltipOverlayRef = useRef<Overlay | null>(null);
+    const h3SourceRef = useRef<VectorSource | null>(null);
+    const h3LayerRef = useRef<VectorLayer | null>(null);
+    const desoLayerRef = useRef<VectorLayer | null>(null);
+    const desoSourceRef = useRef<VectorSource | null>(null);
+    const fetchControllerRef = useRef<AbortController | null>(null);
     const [loading, setLoading] = useState(true);
+    const [layerMode, setLayerMode] = useState<LayerMode>('hexagons');
+    const [smoothed, setSmoothed] = useState(true);
+    const [debugZoom, setDebugZoom] = useState(initialZoom);
+    const layerModeRef = useRef<LayerMode>('hexagons');
+    const smoothedRef = useRef(true);
 
     const handleFeatureSelect = useCallback(
         (properties: DesoProperties | null, score: DesoScore | null) => {
@@ -160,6 +247,15 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
         },
         [onFeatureSelect],
     );
+
+    // Keep refs in sync with state
+    useEffect(() => {
+        layerModeRef.current = layerMode;
+    }, [layerMode]);
+
+    useEffect(() => {
+        smoothedRef.current = smoothed;
+    }, [smoothed]);
 
     useImperativeHandle(ref, () => ({
         updateSize() {
@@ -199,12 +295,51 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
         },
     }));
 
+    // Fetch H3 hexes for the current viewport
+    const loadH3Viewport = useCallback(() => {
+        const map = mapInstance.current;
+        const source = h3SourceRef.current;
+        if (!map || !source) return;
+
+        const view = map.getView();
+        const extent = view.calculateExtent(map.getSize());
+        const [minLng, minLat, maxLng, maxLat] = transformExtent(extent, 'EPSG:3857', 'EPSG:4326');
+        const zoom = Math.round(view.getZoom() ?? 5);
+
+        // Cancel previous request
+        fetchControllerRef.current?.abort();
+        const controller = new AbortController();
+        fetchControllerRef.current = controller;
+
+        const smoothedParam = smoothedRef.current ? 'true' : 'false';
+
+        fetch(
+            `/api/h3/viewport?bbox=${minLng},${minLat},${maxLng},${maxLat}&zoom=${zoom}&year=2024&smoothed=${smoothedParam}`,
+            { signal: controller.signal },
+        )
+            .then((r) => r.json())
+            .then((data) => {
+                source.clear();
+                const features = data.features.map((f: { h3_index: string; score: number; primary_deso_code: string | null }) =>
+                    h3ToFeature(f.h3_index, Number(f.score), f.primary_deso_code),
+                );
+                source.addFeatures(features);
+            })
+            .catch((err) => {
+                if (err.name !== 'AbortError') {
+                    console.error('H3 viewport fetch failed:', err);
+                }
+            });
+    }, []);
+
     useEffect(() => {
         if (!mapDivRef.current || !tooltipRef.current) return;
 
-        const vectorSource = new VectorSource();
+        // DeSO vector layer
+        const desoSource = new VectorSource();
+        desoSourceRef.current = desoSource;
 
-        function styleForFeature(feature: Feature): Style {
+        function styleForDesoFeature(feature: Feature): Style {
             const desoCode = feature.get('deso_code');
             const scoreData = scoresRef.current[desoCode];
 
@@ -222,10 +357,38 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
             });
         }
 
-        const vectorLayer = new VectorLayer({
-            source: vectorSource,
-            style: (feature) => styleForFeature(feature as Feature),
+        const desoLayer = new VectorLayer({
+            source: desoSource,
+            style: (feature) => styleForDesoFeature(feature as Feature),
+            visible: false, // Hidden by default, hexagons are primary
+            zIndex: 1,
         });
+        desoLayerRef.current = desoLayer;
+
+        // H3 hexagon layer
+        const h3Source = new VectorSource();
+        h3SourceRef.current = h3Source;
+
+        const h3Layer = new VectorLayer({
+            source: h3Source,
+            style: (feature) => {
+                const score = (feature as Feature).get('score');
+                if (score == null) return noDataStyle;
+                const [r, g, b, a] = interpolateColor(score);
+                return new Style({
+                    fill: new Fill({
+                        color: `rgba(${r}, ${g}, ${b}, ${a / 255})`,
+                    }),
+                    stroke: new Stroke({
+                        color: 'rgba(255, 255, 255, 0.15)',
+                        width: 0.5,
+                    }),
+                });
+            },
+            visible: true,
+            zIndex: 1,
+        });
+        h3LayerRef.current = h3Layer;
 
         // School markers layer (on top)
         const schoolSource = new VectorSource();
@@ -249,7 +412,8 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
             target: mapDivRef.current,
             layers: [
                 new TileLayer({ source: new OSM() }),
-                vectorLayer,
+                desoLayer,
+                h3Layer,
                 schoolLayer,
             ],
             overlays: [tooltipOverlay],
@@ -261,7 +425,7 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
 
         mapInstance.current = map;
 
-        // Fetch both GeoJSON and scores in parallel
+        // Load DeSO GeoJSON + scores (for DeSO layer and sidebar data)
         Promise.all([
             fetch('/data/deso.geojson').then((r) => r.json()),
             fetch('/api/deso/scores?year=2024').then((r) => r.json()),
@@ -298,13 +462,48 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
                     dataProjection: 'EPSG:4326',
                     featureProjection: 'EPSG:3857',
                 });
-                vectorSource.addFeatures(features);
+
+                // Store DeSO properties for lookup when clicking H3 hexes
+                for (const f of features) {
+                    const props = f.getProperties();
+                    desoPropsRef.current[props.deso_code] = {
+                        deso_code: props.deso_code,
+                        deso_name: props.deso_name,
+                        kommun_code: props.kommun_code,
+                        kommun_name: props.kommun_name,
+                        lan_code: props.lan_code,
+                        lan_name: props.lan_name,
+                        area_km2: props.area_km2,
+                    };
+                }
+
+                desoSource.addFeatures(features);
                 setLoading(false);
+
+                // Initial H3 load after map is ready
+                loadH3Viewport();
             })
             .catch((err) => {
                 console.error('Failed to load map data:', err);
                 setLoading(false);
             });
+
+        // Viewport change → reload H3 hexes + update debug zoom
+        let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+        map.on('moveend', () => {
+            setDebugZoom(Math.round((map.getView().getZoom() ?? 0) * 10) / 10);
+            if (debounceTimer) clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+                if (layerModeRef.current === 'hexagons') {
+                    loadH3Viewport();
+                }
+            }, 300);
+        });
+
+        // Helper to get the active polygon layer
+        function getActiveLayer(): VectorLayer {
+            return layerModeRef.current === 'hexagons' ? h3Layer : desoLayer;
+        }
 
         // Hover interaction
         map.on('pointermove', (evt) => {
@@ -328,7 +527,6 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
                 tooltipOverlay.setPosition(evt.coordinate);
                 map.getTargetElement().style.cursor = 'pointer';
 
-                // Reset hovered DeSO
                 if (
                     hoveredFeature.current &&
                     hoveredFeature.current !== selectedFeature.current
@@ -344,11 +542,12 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
                 tooltipRef.current.style.display = 'none';
             }
 
-            // DeSO polygon hover
+            // Polygon hover (active layer only)
+            const activeLayer = getActiveLayer();
             const feature = map.forEachFeatureAtPixel(
                 evt.pixel,
                 (f) => f as Feature,
-                { layerFilter: (l) => l === vectorLayer },
+                { layerFilter: (l) => l === activeLayer },
             );
 
             if (
@@ -360,10 +559,17 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
             }
 
             if (feature && feature !== selectedFeature.current) {
-                const desoCode = feature.get('deso_code');
-                const scoreData = scoresRef.current[desoCode];
-                if (scoreData) {
-                    const [r, g, b] = interpolateColor(scoreData.score);
+                // Determine score
+                let score: number | null = null;
+                if (layerModeRef.current === 'hexagons') {
+                    score = feature.get('score');
+                } else {
+                    const desoCode = feature.get('deso_code');
+                    score = scoresRef.current[desoCode]?.score ?? null;
+                }
+
+                if (score !== null) {
+                    const [r, g, b] = interpolateColor(score);
                     feature.setStyle(
                         new Style({
                             fill: new Fill({
@@ -390,8 +596,21 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
                     );
                 }
                 map.getTargetElement().style.cursor = 'pointer';
+
+                // Show tooltip for H3 hexes
+                if (layerModeRef.current === 'hexagons' && score !== null) {
+                    const tooltipEl = tooltipRef.current;
+                    if (tooltipEl) {
+                        tooltipEl.innerHTML = `Score: ${Number(score).toFixed(1)}`;
+                        tooltipEl.style.display = 'block';
+                    }
+                    tooltipOverlay.setPosition(evt.coordinate);
+                }
             } else if (!feature) {
                 map.getTargetElement().style.cursor = '';
+                if (layerModeRef.current === 'hexagons' && tooltipRef.current) {
+                    tooltipRef.current.style.display = 'none';
+                }
             }
 
             hoveredFeature.current = feature ?? null;
@@ -411,14 +630,15 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
                 if (code && onSchoolClick) {
                     onSchoolClick(code);
                 }
-                return; // Don't deselect DeSO when clicking a school
+                return;
             }
 
-            // DeSO polygon click
+            // Polygon click (active layer)
+            const activeLayer = getActiveLayer();
             const feature = map.forEachFeatureAtPixel(
                 evt.pixel,
                 (f) => f as Feature,
-                { layerFilter: (l) => l === vectorLayer },
+                { layerFilter: (l) => l === activeLayer },
             );
 
             if (selectedFeature.current) {
@@ -426,25 +646,84 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
             }
 
             if (feature) {
-                feature.setStyle(selectedStyle);
-                selectedFeature.current = feature;
+                const geom = feature.getGeometry();
+                const view = map.getView();
 
-                const props = feature.getProperties();
-                const desoCode = props.deso_code;
-                const scoreData = scoresRef.current[desoCode] || null;
+                if (layerModeRef.current === 'hexagons') {
+                    const desoCode = feature.get('primaryDesoCode');
 
-                handleFeatureSelect(
-                    {
+                    if (!desoCode) {
+                        // Low-res hex without a DeSO — zoom into it to reveal detail
+                        if (geom) {
+                            const extent = geom.getExtent();
+                            view.fit(extent, {
+                                duration: 600,
+                                padding: [100, 100, 100, 100],
+                                maxZoom: 11,
+                            });
+                        }
+                        return;
+                    }
+
+                    // Has a DeSO — select it and animate to center
+                    feature.setStyle(selectedStyle);
+                    selectedFeature.current = feature;
+
+                    if (geom) {
+                        // Buffer the hex extent to show ~5-10 surrounding hexes
+                        const ext = geom.getExtent();
+                        const dx = (ext[2] - ext[0]) * 5;
+                        const dy = (ext[3] - ext[1]) * 5;
+                        const cx = (ext[0] + ext[2]) / 2;
+                        const cy = (ext[1] + ext[3]) / 2;
+                        const buffered = [cx - dx, cy - dy, cx + dx, cy + dy];
+                        const currentZoom = view.getZoom() ?? 5;
+                        if (currentZoom < 14) {
+                            view.fit(buffered, { duration: 600 });
+                        } else {
+                            view.animate({ center: [cx, cy], duration: 400 });
+                        }
+                    }
+
+                    const props = desoPropsRef.current[desoCode] ?? {
                         deso_code: desoCode,
-                        deso_name: props.deso_name,
-                        kommun_code: props.kommun_code,
-                        kommun_name: props.kommun_name,
-                        lan_code: props.lan_code,
-                        lan_name: props.lan_name,
-                        area_km2: props.area_km2,
-                    },
-                    scoreData,
-                );
+                        deso_name: null,
+                        kommun_code: '',
+                        kommun_name: null,
+                        lan_code: '',
+                        lan_name: null,
+                        area_km2: null,
+                    };
+                    const scoreData = scoresRef.current[desoCode] || null;
+                    handleFeatureSelect(props, scoreData);
+                } else {
+                    // DeSO polygon — select and animate to center
+                    feature.setStyle(selectedStyle);
+                    selectedFeature.current = feature;
+
+                    if (geom) {
+                        const extent = geom.getExtent();
+                        const cx = (extent[0] + extent[2]) / 2;
+                        const cy = (extent[1] + extent[3]) / 2;
+                        view.animate({
+                            center: [cx, cy],
+                            duration: 400,
+                        });
+                    }
+
+                    const desoCode = feature.get('deso_code');
+                    const props = desoPropsRef.current[desoCode] ?? {
+                        deso_code: desoCode,
+                        deso_name: null,
+                        kommun_code: '',
+                        kommun_name: null,
+                        lan_code: '',
+                        lan_name: null,
+                        area_km2: null,
+                    };
+                    const scoreData = scoresRef.current[desoCode] || null;
+                    handleFeatureSelect(props, scoreData);
+                }
             } else {
                 selectedFeature.current = null;
                 handleFeatureSelect(null, null);
@@ -454,7 +733,36 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
         return () => {
             map.setTarget(undefined);
         };
-    }, [initialCenter, initialZoom, handleFeatureSelect, onSchoolClick]);
+    }, [initialCenter, initialZoom, handleFeatureSelect, onSchoolClick, loadH3Viewport]);
+
+    // Layer mode switching
+    useEffect(() => {
+        const desoLayer = desoLayerRef.current;
+        const h3Layer = h3LayerRef.current;
+        if (!desoLayer || !h3Layer) return;
+
+        if (layerMode === 'hexagons') {
+            h3Layer.setVisible(true);
+            desoLayer.setVisible(false);
+            loadH3Viewport();
+        } else {
+            h3Layer.setVisible(false);
+            desoLayer.setVisible(true);
+        }
+
+        // Clear selection when switching layers
+        if (selectedFeature.current) {
+            selectedFeature.current.setStyle(undefined);
+            selectedFeature.current = null;
+        }
+    }, [layerMode, loadH3Viewport]);
+
+    // Smoothing toggle → re-fetch H3 hexes
+    useEffect(() => {
+        if (layerMode === 'hexagons') {
+            loadH3Viewport();
+        }
+    }, [smoothed, layerMode, loadH3Viewport]);
 
     return (
         <div className="relative h-full w-full">
@@ -464,11 +772,21 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
                 className="pointer-events-none rounded bg-gray-900 px-2 py-1 text-xs text-white shadow-lg"
                 style={{ display: 'none' }}
             />
+            <div className="absolute bottom-6 right-6 z-10 rounded bg-black/70 px-2 py-1 font-mono text-xs text-white">
+                Z {debugZoom}
+            </div>
             <ScoreLegend />
+            <LayerControl
+                mode={layerMode}
+                onModeChange={setLayerMode}
+                showSmoothing={true}
+                smoothed={smoothed}
+                onSmoothedChange={setSmoothed}
+            />
             {loading && (
                 <div className="bg-background/80 absolute inset-0 flex items-center justify-center">
                     <div className="text-muted-foreground text-sm">
-                        Loading DeSO areas...
+                        Loading map data...
                     </div>
                 </div>
             )}

@@ -34,9 +34,11 @@ services:
     depends_on:
       - app
 
-  # PostgreSQL Database with PostGIS
+  # PostgreSQL Database with PostGIS + H3
   postgres:
-    image: postgis/postgis:16-3.4
+    build:
+      context: ./docker/postgres
+      dockerfile: Dockerfile
     container_name: skapa-postgres
     restart: unless-stopped
     environment:
