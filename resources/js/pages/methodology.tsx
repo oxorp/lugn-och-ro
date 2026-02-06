@@ -167,7 +167,7 @@ const FAQ_ITEMS = [
     {
         question:
             'Why does the map sometimes show a high-scoring area right next to a low-scoring area?',
-        answer: 'Statistical areas have defined boundaries, but neighborhoods in reality blend into each other. We mitigate this through spatial smoothing \u2014 each area\u2019s score is influenced by its neighbors, creating more gradual transitions. However, genuine sharp contrasts do exist in Sweden. It\u2019s not uncommon for a wealthy residential area to be separated from a disadvantaged one by a single street or railway line. When you see a sharp contrast on the map, it often reflects a real geographic divide \u2014 but always click both areas to understand the specific factors driving the difference.',
+        answer: 'Our default hexagonal grid view already smooths scores across neighboring areas, so most transitions are gradual. When you still see a sharp contrast, it usually reflects a genuine geographic divide \u2014 it\u2019s not uncommon in Sweden for a wealthy residential area to be separated from a disadvantaged one by a single street or railway line. You can switch between the hexagonal view (which emphasizes smooth transitions) and the statistical area view (which shows exact administrative boundaries) using the layer toggle. Either way, click both areas to understand which specific factors drive the difference.',
     },
 ];
 
@@ -448,12 +448,14 @@ export default function Methodology() {
                                     Government statistics are published for defined geographic
                                     areas &mdash; but reality doesn&apos;t stop at a boundary
                                     line. A street that separates two statistical areas
-                                    doesn&apos;t create a wall between them. Our model accounts
-                                    for this by considering neighboring areas when computing
-                                    scores, so that transitions between areas are gradual rather
-                                    than abrupt. This reflects how neighborhoods actually work:
-                                    the character of a place is shaped not just by what&apos;s
-                                    inside its borders, but by what surrounds it.
+                                    doesn&apos;t create a wall between them. That&apos;s why our
+                                    map defaults to a hexagonal grid rather than showing raw
+                                    administrative boundaries. Each hexagon blends data from the
+                                    statistical areas it touches, creating smooth, gradual
+                                    transitions that reflect how neighborhoods actually work.
+                                    You can switch to the traditional boundary view at any time,
+                                    but the hexagonal layer gives you a more honest picture of
+                                    how conditions shift across the landscape.
                                 </p>
                             </div>
                         </div>
