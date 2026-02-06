@@ -6,6 +6,7 @@ use App\Models\DebtDisaggregationResult;
 use App\Models\DesoVulnerabilityMapping;
 use App\Models\KronofogdenStatistic;
 use App\Models\School;
+use App\Models\ScoreVersion;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -64,11 +65,25 @@ class DesoController extends Controller
     {
         $year = $request->integer('year', now()->year);
 
-        $scores = DB::table('composite_scores')
+        // Serve scores from the latest published version, falling back to any scores for the year
+        $publishedVersion = ScoreVersion::query()
             ->where('year', $year)
-            ->select('deso_code', 'score', 'trend_1y', 'factor_scores', 'top_positive', 'top_negative')
-            ->get()
-            ->keyBy('deso_code');
+            ->where('status', 'published')
+            ->latest('published_at')
+            ->first();
+
+        $query = DB::table('composite_scores')
+            ->where('year', $year)
+            ->select('deso_code', 'score', 'trend_1y', 'factor_scores', 'top_positive', 'top_negative');
+
+        if ($publishedVersion) {
+            $query->where('score_version_id', $publishedVersion->id);
+        } else {
+            // Fallback: serve latest scores (backward compatible with pre-versioning data)
+            $query->whereNull('score_version_id');
+        }
+
+        $scores = $query->get()->keyBy('deso_code');
 
         return response()->json($scores)
             ->header('Cache-Control', 'public, max-age=3600');

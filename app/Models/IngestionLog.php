@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class IngestionLog extends Model
 {
@@ -18,6 +19,11 @@ class IngestionLog extends Model
         'started_at',
         'completed_at',
     ];
+
+    public function validationResults(): HasMany
+    {
+        return $this->hasMany(ValidationResult::class);
+    }
 
     /**
      * @return array{metadata: 'array', started_at: 'datetime', completed_at: 'datetime'}

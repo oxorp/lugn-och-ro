@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Models\IngestionLog;
 use App\Services\BraDataService;
+use App\Services\DataValidationService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 
@@ -153,6 +154,21 @@ class IngestBraCrime extends Command
                 'total_records' => count($records),
             ],
         ]);
+
+        $report = app(DataValidationService::class)->validateIngestion($log, 'bra', $year);
+        $this->info("Validation: {$report->passedCount()} passed, {$report->failedCount()} failed");
+
+        if ($report->hasBlockingFailures()) {
+            $this->error('Blocking validation failures detected.');
+            $this->error($report->summary());
+            $log->update(['status' => 'completed_with_errors']);
+
+            return self::FAILURE;
+        }
+
+        if ($report->hasWarnings()) {
+            $this->warn($report->summary());
+        }
 
         return self::SUCCESS;
     }

@@ -3,12 +3,14 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class CompositeScore extends Model
 {
     protected $fillable = [
         'deso_code',
         'year',
+        'score_version_id',
         'score',
         'trend_1y',
         'trend_3y',
@@ -32,5 +34,10 @@ class CompositeScore extends Model
             'top_negative' => 'array',
             'computed_at' => 'datetime',
         ];
+    }
+
+    public function scoreVersion(): BelongsTo
+    {
+        return $this->belongsTo(ScoreVersion::class);
     }
 }

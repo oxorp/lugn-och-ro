@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\AdminDataQualityController;
 use App\Http\Controllers\AdminIndicatorController;
 use App\Http\Controllers\AdminScoreController;
 use App\Http\Controllers\DesoController;
@@ -32,6 +33,10 @@ Route::prefix('admin')->group(function () {
     Route::get('/indicators', [AdminIndicatorController::class, 'index'])->name('admin.indicators');
     Route::put('/indicators/{indicator}', [AdminIndicatorController::class, 'update'])->name('admin.indicators.update');
     Route::post('/recompute-scores', [AdminScoreController::class, 'recompute'])->name('admin.recompute');
+
+    Route::get('/data-quality', [AdminDataQualityController::class, 'index'])->name('admin.data-quality');
+    Route::post('/data-quality/publish/{versionId}', [AdminDataQualityController::class, 'publish'])->name('admin.data-quality.publish');
+    Route::post('/data-quality/rollback/{versionId}', [AdminDataQualityController::class, 'rollback'])->name('admin.data-quality.rollback');
 });
 
 require __DIR__.'/settings.php';

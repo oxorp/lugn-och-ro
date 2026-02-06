@@ -1,0 +1,28 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('sentinel_areas', function (Blueprint $table) {
+            $table->id();
+            $table->string('deso_code', 10)->index();
+            $table->string('name');
+            $table->string('expected_tier', 20);
+            $table->decimal('expected_score_min', 6, 2);
+            $table->decimal('expected_score_max', 6, 2);
+            $table->text('rationale')->nullable();
+            $table->boolean('is_active')->default(true);
+            $table->timestamps();
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('sentinel_areas');
+    }
+};

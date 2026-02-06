@@ -6,6 +6,7 @@ use App\Models\DesoArea;
 use App\Models\Indicator;
 use App\Models\IndicatorValue;
 use App\Models\IngestionLog;
+use App\Services\DataValidationService;
 use App\Services\ScbApiService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -119,6 +120,28 @@ class IngestScbData extends Command
 
             $this->newLine();
             $this->info("Ingestion complete: {$totalProcessed} processed, {$totalCreated} created, {$totalUpdated} updated.");
+
+            // Run validation
+            $year = (int) ($this->option('year') ?: now()->year - 1);
+            $report = app(DataValidationService::class)->validateIngestion($log, 'scb', $year);
+
+            $this->newLine();
+            $this->info("Validation: {$report->passedCount()} passed, {$report->failedCount()} failed");
+
+            if ($report->hasBlockingFailures()) {
+                $this->error('Blocking validation failures detected. Scoring will not proceed.');
+                $this->error($report->summary());
+                $log->update(['status' => 'completed_with_errors', 'metadata' => array_merge($log->metadata ?? [], ['validation' => $report->toArray()])]);
+
+                return self::FAILURE;
+            }
+
+            if ($report->hasWarnings()) {
+                $this->warn('Validation warnings:');
+                $this->warn($report->summary());
+            }
+
+            $log->update(['metadata' => array_merge($log->metadata ?? [], ['validation' => $report->toArray()])]);
 
             return self::SUCCESS;
         } catch (\Exception $e) {

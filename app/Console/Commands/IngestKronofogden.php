@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\IngestionLog;
+use App\Services\DataValidationService;
 use App\Services\KronofogdenService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -141,6 +142,21 @@ class IngestKronofogden extends Command
                 ],
             ],
         ]);
+
+        $report = app(DataValidationService::class)->validateIngestion($log, 'kronofogden', $year);
+        $this->info("Validation: {$report->passedCount()} passed, {$report->failedCount()} failed");
+
+        if ($report->hasBlockingFailures()) {
+            $this->error('Blocking validation failures detected.');
+            $this->error($report->summary());
+            $log->update(['status' => 'completed_with_errors']);
+
+            return self::FAILURE;
+        }
+
+        if ($report->hasWarnings()) {
+            $this->warn($report->summary());
+        }
 
         return self::SUCCESS;
     }
