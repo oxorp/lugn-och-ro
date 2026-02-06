@@ -15,38 +15,57 @@ class ImportDesoAreasTest extends TestCase
         parent::setUp();
 
         DB::statement('CREATE EXTENSION IF NOT EXISTS postgis');
+
+        // Back up real files so import tests don't destroy them
+        $staticPath = public_path('data/deso.geojson');
+        if (file_exists($staticPath)) {
+            rename($staticPath, $staticPath.'.bak');
+        }
+
+        $cachePath = storage_path('app/geodata/deso_2025.geojson');
+        if (file_exists($cachePath)) {
+            rename($cachePath, $cachePath.'.bak');
+        }
+    }
+
+    protected function tearDown(): void
+    {
+        // Clean up test artifacts and restore real files
+        $staticPath = public_path('data/deso.geojson');
+        if (file_exists($staticPath) && ! file_exists($staticPath.'.bak')) {
+            unlink($staticPath);
+        } elseif (file_exists($staticPath.'.bak')) {
+            if (file_exists($staticPath)) {
+                unlink($staticPath);
+            }
+            rename($staticPath.'.bak', $staticPath);
+        }
+
+        $cachePath = storage_path('app/geodata/deso_2025.geojson');
+        if (file_exists($cachePath) && ! file_exists($cachePath.'.bak')) {
+            unlink($cachePath);
+        } elseif (file_exists($cachePath.'.bak')) {
+            if (file_exists($cachePath)) {
+                unlink($cachePath);
+            }
+            rename($cachePath.'.bak', $cachePath);
+        }
+
+        parent::tearDown();
     }
 
     public function test_import_command_succeeds_with_cached_geojson(): void
     {
-        $geojson = $this->makeSampleGeojson(3);
-        $cachePath = storage_path('app/geodata/deso_2025.geojson');
+        $this->writeCacheFile($this->makeSampleGeojson(3));
 
-        if (! is_dir(dirname($cachePath))) {
-            mkdir(dirname($cachePath), 0755, true);
-        }
+        $this->artisan('import:deso-areas', ['--fresh' => true])
+            ->assertExitCode(0);
 
-        file_put_contents($cachePath, json_encode($geojson));
-
-        try {
-            $this->artisan('import:deso-areas', ['--fresh' => true])
-                ->assertExitCode(0);
-
-            $this->assertDatabaseCount('deso_areas', 3);
-        } finally {
-            unlink($cachePath);
-        }
+        $this->assertDatabaseCount('deso_areas', 3);
     }
 
     public function test_import_command_with_fresh_flag_truncates_table(): void
     {
-        $geojson = $this->makeSampleGeojson(2);
-        $cachePath = storage_path('app/geodata/deso_2025.geojson');
-
-        if (! is_dir(dirname($cachePath))) {
-            mkdir(dirname($cachePath), 0755, true);
-        }
-
         // Insert a record first
         DB::table('deso_areas')->insert([
             'deso_code' => '9999X0001',
@@ -58,26 +77,17 @@ class ImportDesoAreasTest extends TestCase
 
         $this->assertDatabaseCount('deso_areas', 1);
 
-        file_put_contents($cachePath, json_encode($geojson));
+        $this->writeCacheFile($this->makeSampleGeojson(2));
 
-        try {
-            $this->artisan('import:deso-areas', ['--fresh' => true])
-                ->assertExitCode(0);
+        $this->artisan('import:deso-areas', ['--fresh' => true])
+            ->assertExitCode(0);
 
-            $this->assertDatabaseCount('deso_areas', 2);
-            $this->assertDatabaseMissing('deso_areas', ['deso_code' => '9999X0001']);
-        } finally {
-            unlink($cachePath);
-        }
+        $this->assertDatabaseCount('deso_areas', 2);
+        $this->assertDatabaseMissing('deso_areas', ['deso_code' => '9999X0001']);
     }
 
     public function test_import_command_fails_without_cached_file_and_cache_only_flag(): void
     {
-        $cachePath = storage_path('app/geodata/deso_2025.geojson');
-        if (file_exists($cachePath)) {
-            unlink($cachePath);
-        }
-
         $this->artisan('import:deso-areas', ['--cache-only' => true])
             ->assertExitCode(1);
     }
@@ -103,30 +113,55 @@ class ImportDesoAreasTest extends TestCase
             ],
         ];
 
+        $this->writeCacheFile($geojson);
+
+        $this->artisan('import:deso-areas', ['--fresh' => true])
+            ->assertExitCode(0);
+
+        $this->assertDatabaseHas('deso_areas', [
+            'deso_code' => '0180A0010',
+            'kommun_code' => '0180',
+            'kommun_name' => 'Stockholm',
+            'lan_code' => '01',
+        ]);
+
+        $area = DB::selectOne("SELECT area_km2, ST_AsText(geom) as geom_text FROM deso_areas WHERE deso_code = '0180A0010'");
+        $this->assertNotNull($area->area_km2);
+        $this->assertGreaterThan(0, $area->area_km2);
+        $this->assertNotNull($area->geom_text);
+    }
+
+    public function test_import_command_generates_static_geojson_file(): void
+    {
+        $this->writeCacheFile($this->makeSampleGeojson(2));
+
+        $this->artisan('import:deso-areas', ['--fresh' => true])
+            ->assertExitCode(0);
+
+        $staticPath = public_path('data/deso.geojson');
+        $this->assertFileExists($staticPath);
+
+        $content = json_decode(file_get_contents($staticPath), true);
+        $this->assertEquals('FeatureCollection', $content['type']);
+        $this->assertCount(2, $content['features']);
+        $this->assertEquals('Feature', $content['features'][0]['type']);
+        $this->assertArrayHasKey('geometry', $content['features'][0]);
+        $this->assertArrayHasKey('properties', $content['features'][0]);
+        $this->assertEquals('0180A0001', $content['features'][0]['properties']['deso_code']);
+    }
+
+    /**
+     * @param  array<string, mixed>  $geojson
+     */
+    private function writeCacheFile(array $geojson): void
+    {
         $cachePath = storage_path('app/geodata/deso_2025.geojson');
+
         if (! is_dir(dirname($cachePath))) {
             mkdir(dirname($cachePath), 0755, true);
         }
+
         file_put_contents($cachePath, json_encode($geojson));
-
-        try {
-            $this->artisan('import:deso-areas', ['--fresh' => true])
-                ->assertExitCode(0);
-
-            $this->assertDatabaseHas('deso_areas', [
-                'deso_code' => '0180A0010',
-                'kommun_code' => '0180',
-                'kommun_name' => 'Stockholm',
-                'lan_code' => '01',
-            ]);
-
-            $area = DB::selectOne("SELECT area_km2, ST_AsText(geom) as geom_text FROM deso_areas WHERE deso_code = '0180A0010'");
-            $this->assertNotNull($area->area_km2);
-            $this->assertGreaterThan(0, $area->area_km2);
-            $this->assertNotNull($area->geom_text);
-        } finally {
-            unlink($cachePath);
-        }
     }
 
     /**

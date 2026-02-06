@@ -89,8 +89,8 @@ export default function DesoMap({
 
         mapInstance.current = map;
 
-        // Fetch DeSO GeoJSON
-        fetch('/api/deso/geojson')
+        // Fetch DeSO GeoJSON (static file served by nginx, falls back to API)
+        fetch('/data/deso.geojson')
             .then((res) => res.json())
             .then((geojson) => {
                 const features = new GeoJSON().readFeatures(geojson, {

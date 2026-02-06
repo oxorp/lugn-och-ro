@@ -3,15 +3,23 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class DesoController extends Controller
 {
-    public function geojson(Request $request): JsonResponse
+    public function geojson(): JsonResponse|BinaryFileResponse
     {
-        $tolerance = $request->float('tolerance', 0.005);
+        $staticPath = public_path('data/deso.geojson');
 
+        if (file_exists($staticPath)) {
+            return response()->file($staticPath, [
+                'Content-Type' => 'application/json',
+                'Cache-Control' => 'public, max-age=86400',
+            ]);
+        }
+
+        // Fallback: generate from DB if static file doesn't exist
         $features = DB::select('
             SELECT
                 deso_code,
@@ -21,10 +29,10 @@ class DesoController extends Controller
                 lan_code,
                 lan_name,
                 area_km2,
-                ST_AsGeoJSON(ST_Simplify(geom, ?)) as geometry
+                ST_AsGeoJSON(ST_Buffer(geom, 0.00005)) as geometry
             FROM deso_areas
             WHERE geom IS NOT NULL
-        ', [$tolerance]);
+        ');
 
         $geojson = [
             'type' => 'FeatureCollection',

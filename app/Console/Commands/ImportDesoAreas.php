@@ -77,7 +77,60 @@ class ImportDesoAreas extends Command
         $count = DB::table('deso_areas')->count();
         $this->info("Import complete. {$count} DeSO areas in database.");
 
+        $this->generateStaticGeojson();
+
         return self::SUCCESS;
+    }
+
+    private function generateStaticGeojson(): void
+    {
+        $this->info('Generating static GeoJSON file...');
+
+        $outputPath = public_path('data/deso.geojson');
+        $dir = dirname($outputPath);
+        if (! is_dir($dir)) {
+            mkdir($dir, 0755, true);
+        }
+
+        $handle = fopen($outputPath, 'w');
+        fwrite($handle, '{"type":"FeatureCollection","features":[');
+
+        $first = true;
+
+        DB::table('deso_areas')
+            ->whereNotNull('geom')
+            ->select('deso_code', 'deso_name', 'kommun_code', 'kommun_name', 'lan_code', 'lan_name', 'area_km2')
+            ->selectRaw('ST_AsGeoJSON(ST_Buffer(geom, 0.00005)) as geometry')
+            ->orderBy('deso_code')
+            ->chunk(500, function ($rows) use ($handle, &$first) {
+                foreach ($rows as $f) {
+                    $feature = json_encode([
+                        'type' => 'Feature',
+                        'geometry' => json_decode($f->geometry),
+                        'properties' => [
+                            'deso_code' => $f->deso_code,
+                            'deso_name' => $f->deso_name,
+                            'kommun_code' => $f->kommun_code,
+                            'kommun_name' => $f->kommun_name,
+                            'lan_code' => $f->lan_code,
+                            'lan_name' => $f->lan_name,
+                            'area_km2' => $f->area_km2,
+                        ],
+                    ]);
+
+                    if (! $first) {
+                        fwrite($handle, ',');
+                    }
+                    fwrite($handle, $feature);
+                    $first = false;
+                }
+            });
+
+        fwrite($handle, ']}');
+        fclose($handle);
+
+        $sizeMb = round(filesize($outputPath) / 1024 / 1024, 1);
+        $this->info("Static GeoJSON written to public/data/deso.geojson ({$sizeMb} MB).");
     }
 
     private function ensureGeojsonFile(): ?string
