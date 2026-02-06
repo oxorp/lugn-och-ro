@@ -45,6 +45,7 @@ export interface DesoScore {
     factor_scores: Record<string, number> | null;
     top_positive: string[] | null;
     top_negative: string[] | null;
+    urbanity_tier: 'urban' | 'semi_urban' | 'rural' | null;
 }
 
 export interface DesoMapHandle {
@@ -454,6 +455,7 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
                             typeof d.top_negative === 'string'
                                 ? JSON.parse(d.top_negative)
                                 : (d.top_negative as string[] | null),
+                        urbanity_tier: (d.urbanity_tier as DesoScore['urbanity_tier']) ?? null,
                     };
                 }
                 scoresRef.current = parsedScores;

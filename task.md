@@ -1,402 +1,391 @@
-# TASK: Methodology Page
+# TASK: Urbanity Classification & Stratified Normalization
 
 ## Context
 
-The platform needs a public-facing page that explains how the Neighborhood Trajectory Score works. This serves three audiences simultaneously: homebuyers who need to trust the number, investors/banks doing due diligence, and journalists who might write about us. The page must feel transparent and authoritative without revealing the actual scoring weights, normalization methods, or disaggregation techniques that make the model work.
+The platform currently normalizes every indicator by ranking all ~6,160 DeSOs against each other nationally. This works for socioeconomic indicators (income, employment, education) where a national comparison is meaningful — low income is low income regardless of whether you're in Stockholm or Jokkmokk.
 
-**The line we're walking:** Niche.com publishes exact factor weights (e.g., "Academics: 30%, Teachers: 15%") — that's too much. NeighborhoodScout says "proprietary algorithms" and nothing else — that's too little and invites criticism. We want the middle: name every data category, explain *why* it matters for real estate, cite the government sources by name, but never reveal how much each factor weighs or how they combine.
+But it breaks down for **amenity-type and access-type indicators** that are coming next (POI density, transit access, healthcare proximity). A rural DeSO in Norrbotten with 900 people and one ICA Nära grocery store is perfectly well-served for its context — but if you rank it nationally against Södermalm with 15 grocery options, it looks terrible. That's not a real disadvantage; it's a measurement artifact from comparing fundamentally different geographic contexts.
+
+The fix is **urbanity-stratified normalization**: rank urban DeSOs against other urban DeSOs, and rural against rural, for indicators where the urban/rural distinction changes what "good" means. This is a standard approach in regional statistics — SCB itself publishes stratified comparisons.
+
+**This task must be completed before the POI system is built**, because POI indicators are the primary consumer of stratified normalization.
 
 ## Goals
 
-1. Add a "Methodology" link to the navbar that leads to `/methodology`
-2. Build a static Inertia page with structured content sections
-3. English only (Swedish translation is a separate future task)
-4. Tone: friendly, confident, backed by authority — not academic, not corporate-stiff
+1. Classify every DeSO by urbanity tier (urban / semi-urban / rural)
+2. Add stratified normalization as an option in the indicator system
+3. Refactor the NormalizationService to support per-tier ranking
+4. Update the admin dashboard to show/configure normalization scope
+5. Ensure the scoring engine handles mixed normalization correctly
 
 ---
 
-## Step 1: Navbar Update
+## Step 1: Urbanity Classification
 
-Add a "Methodology" link to the existing navbar, positioned after the map/home link and before any admin links.
+### 1.1 Data Source
+
+SCB publishes **tätort** (urban area / locality) boundaries. A tätort is a contiguous settlement with ≥200 inhabitants and ≤200m between buildings. SCB classifies all of Sweden into tätort vs. non-tätort.
+
+**Two approaches to classify DeSOs:**
+
+**Approach A (recommended): SCB's DeSO metadata**
+
+SCB publishes a classification of DeSOs by density type in their DeSO documentation. Check if the DeSO boundary file or the statistics database includes a built-in urbanity/density field. The DeSO 2025 specification may include a "tätortsgrad" (urbanity degree) column.
+
+Look at:
+- The DeSO attribute table in the GeoPackage/Shapefile from SCB geodata
+- The DeSO metadata tables on SCB's statistics database
+- The RegSO (regional statistical areas) parent classification, which has explicit urban/rural coding
+
+**Approach B: Tätort intersection**
+
+Download tätort boundaries from SCB geodata (`https://geodata.scb.se/geoserver/stat/wfs` — layer `stat:Tatort`). Classify each DeSO based on how much of its population falls within a tätort:
+
+```sql
+-- Classify DeSOs by tätort overlap
+WITH deso_tatort AS (
+    SELECT
+        d.deso_code,
+        d.population,
+        COALESCE(SUM(ST_Area(ST_Intersection(d.geom, t.geom)) / ST_Area(d.geom)), 0) AS tatort_coverage
+    FROM deso_areas d
+    LEFT JOIN tatort_areas t ON ST_Intersects(d.geom, t.geom)
+    GROUP BY d.deso_code, d.population, d.geom
+)
+SELECT
+    deso_code,
+    CASE
+        WHEN tatort_coverage > 0.8 THEN 'urban'      -- >80% within a tätort
+        WHEN tatort_coverage > 0.2 THEN 'semi_urban'  -- 20-80% tätort overlap
+        ELSE 'rural'                                    -- <20% tätort coverage
+    END AS urbanity_tier
+FROM deso_tatort;
+```
+
+**Approach C: Population density**
+
+Simplest but least precise. Use the existing `population` and `area_km2` columns:
+
+```sql
+UPDATE deso_areas SET urbanity_tier = CASE
+    WHEN population / NULLIF(area_km2, 0) > 1500 THEN 'urban'
+    WHEN population / NULLIF(area_km2, 0) > 100 THEN 'semi_urban'
+    ELSE 'rural'
+END;
+```
+
+Thresholds need calibration. Urban DeSOs in Stockholm can have 10,000+ people/km². Rural DeSOs in Norrland can be < 5 people/km². The thresholds above should produce roughly:
+- Urban: ~2,500 DeSOs
+- Semi-urban: ~2,000 DeSOs
+- Rural: ~1,600 DeSOs
+
+**Start with Approach C** (can be done immediately with existing data), then upgrade to Approach A or B when you process the tätort boundary data.
+
+### 1.2 Migration
+
+```php
+// Add urbanity_tier to deso_areas
+Schema::table('deso_areas', function (Blueprint $table) {
+    $table->string('urbanity_tier', 20)->nullable()->index()->after('area_km2');
+    // 'urban', 'semi_urban', 'rural'
+});
+```
+
+### 1.3 Classification Command
+
+```bash
+php artisan classify:deso-urbanity [--method=density]
+```
+
+Options:
+- `--method=density` — uses population/area_km2 (Approach C, default)
+- `--method=tatort` — uses tätort boundary intersection (Approach B, requires tätort data)
+- `--method=scb` — reads from SCB metadata (Approach A, if available)
+
+After classification, log the distribution:
 
 ```
-[Logo]  [Map]  [Methodology]  [Admin ▾]
+Urban:      2,487 DeSOs (40.4%)
+Semi-urban: 2,103 DeSOs (34.1%)
+Rural:      1,570 DeSOs (25.5%)
 ```
 
-Use a simple `<Link>` — no dropdown, no fancy treatment. It's a standard page.
+### 1.4 Verification
+
+Spot-check the classification:
+- Stockholm inner city DeSOs → urban ✓
+- Suburban DeSOs (Täby, Nacka) → urban or semi-urban ✓
+- Small town centers (Falun, Kalmar) → semi-urban ✓
+- Remote Norrland DeSOs → rural ✓
+- Edge cases: large DeSOs that contain both a small town and surrounding forest → semi-urban (which is correct — the town part provides the amenities)
 
 ---
 
-## Step 2: Route & Controller
+## Step 2: Extend the Indicator System
+
+### 2.1 Add Normalization Scope to Indicators Table
 
 ```php
-Route::get('/methodology', [PageController::class, 'methodology'])->name('methodology');
+Schema::table('indicators', function (Blueprint $table) {
+    $table->string('normalization_scope', 30)->default('national')->after('normalization');
+    // 'national' = rank against all DeSOs (default, current behavior)
+    // 'urbanity_stratified' = rank within urban/semi-urban/rural tier
+});
 ```
 
-Create `app/Http/Controllers/PageController.php` (or add to an existing static page controller):
+### 2.2 Which Indicators Get Stratified Normalization
+
+| Indicator type | Normalization scope | Rationale |
+|---|---|---|
+| Income (median, low economic standard) | national | Low income is low income everywhere |
+| Employment rate | national | Employment is a universal metric |
+| Education level | national | Same |
+| School quality (meritvärde) | national | National curriculum, national grading |
+| Crime rate | national | Crime is crime |
+| Financial distress | national | Debt is debt |
+| **Grocery density** | **urbanity_stratified** | What "good access" means differs by context |
+| **Restaurant density** | **urbanity_stratified** | Same |
+| **Healthcare access** | **urbanity_stratified** | Same |
+| **Transit access** | **urbanity_stratified** | Same |
+| **Fitness/gym density** | **urbanity_stratified** | Same |
+| **Gambling/pawn density** | **urbanity_stratified** | Even negative POIs — 0 gambling venues in a rural area isn't a "strength" |
+
+Rule of thumb: **if the indicator measures physical access to something, stratify. If it measures a rate or outcome, don't.**
+
+### 2.3 Update the Indicator Seeder
+
+When adding new POI/amenity indicators (future task), they should default to `normalization_scope = 'urbanity_stratified'`. Add this to the seeder notes.
+
+---
+
+## Step 3: Refactor NormalizationService
+
+### 3.1 Current Behavior
+
+The service currently does:
+1. Fetch all raw_values for an indicator + year
+2. Compute PERCENT_RANK across all DeSOs
+3. Write normalized_value
+
+### 3.2 New Behavior
 
 ```php
-public function methodology()
+public function normalizeIndicator(Indicator $indicator, int $year): void
 {
-    return Inertia::render('Methodology');
+    if ($indicator->normalization_scope === 'urbanity_stratified') {
+        $this->normalizeStratified($indicator, $year);
+    } else {
+        $this->normalizeNational($indicator, $year);
+    }
+}
+
+private function normalizeNational(Indicator $indicator, int $year): void
+{
+    // Current implementation — unchanged
+    DB::statement("
+        UPDATE indicator_values iv
+        SET normalized_value = sub.percentile
+        FROM (
+            SELECT id,
+                   PERCENT_RANK() OVER (ORDER BY raw_value) as percentile
+            FROM indicator_values
+            WHERE indicator_id = ? AND year = ? AND raw_value IS NOT NULL
+        ) sub
+        WHERE iv.id = sub.id
+    ", [$indicator->id, $year]);
+}
+
+private function normalizeStratified(Indicator $indicator, int $year): void
+{
+    // Rank within each urbanity tier separately
+    DB::statement("
+        UPDATE indicator_values iv
+        SET normalized_value = sub.percentile
+        FROM (
+            SELECT iv2.id,
+                   PERCENT_RANK() OVER (
+                       PARTITION BY da.urbanity_tier
+                       ORDER BY iv2.raw_value
+                   ) as percentile
+            FROM indicator_values iv2
+            JOIN deso_areas da ON da.deso_code = iv2.deso_code
+            WHERE iv2.indicator_id = ? AND iv2.year = ? AND iv2.raw_value IS NOT NULL
+              AND da.urbanity_tier IS NOT NULL
+        ) sub
+        WHERE iv.id = sub.id
+    ", [$indicator->id, $year]);
 }
 ```
 
-No data passed from the backend. This is a static content page.
+The key difference: `PARTITION BY da.urbanity_tier` in the window function. A rural DeSO with grocery density at the 80th percentile *among rural DeSOs* gets normalized_value = 0.80 — even though its absolute density might be at the 20th percentile nationally.
+
+### 3.3 Edge Cases
+
+**DeSOs without urbanity classification:** If `urbanity_tier IS NULL` (shouldn't happen after classification, but defensively), fall back to national ranking for those DeSOs. Log a warning.
+
+**Very small tier groups:** If a tier has < 50 DeSOs with data for an indicator, percentile ranking becomes unreliable (each rank jump is 2+ percentile points). This shouldn't happen with our tier sizes (~1,500-2,500 each) but add a check: if a tier has fewer than 30 data points, fall back to national ranking for that tier and log a warning.
+
+**The scoring engine doesn't change:** It reads `normalized_value` regardless of how it was computed. Direction application, weighted sum, composite score — all identical. The stratification is invisible downstream of normalization.
 
 ---
 
-## Step 3: Page Layout
+## Step 4: Admin Dashboard Updates
 
-Create `resources/js/Pages/Methodology.tsx`
+### 4.1 Indicators Table — New Column
 
-The page should use the same app layout as the rest of the site (navbar at top). The content area is a **single-column readable layout** — not full-width like the map, but a centered content column (max-width ~720px) with comfortable reading typography.
+Add a "Scope" column to the admin indicators table:
 
-Use shadcn components where it makes sense: `Card` for the data source boxes, `Accordion` for the FAQ, `Badge` for labels. But keep it mostly prose — this is a content page, not a dashboard.
+| Column | Control |
+|---|---|
+| Normalization Scope | Select: `national` / `urbanity_stratified` |
 
-### Visual Structure
+### 4.2 Visual Indicator
+
+When an indicator uses stratified normalization, show a small info tooltip: "Ranked within urbanity tier (urban / semi-urban / rural) instead of nationally."
+
+### 4.3 Urbanity Distribution Card
+
+On the data quality dashboard (from the governance task), add a card showing the urbanity classification distribution:
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│  Navbar                                                   │
-├──────────────────────────────────────────────────────────┤
-│                                                           │
-│           ┌─────────────────────────────┐                │
-│           │                             │                │
-│           │  Hero section               │                │
-│           │  "How the Score Works"      │                │
-│           │  Brief intro paragraph      │                │
-│           │                             │                │
-│           ├─────────────────────────────┤                │
-│           │                             │                │
-│           │  "The Score at a Glance"    │                │
-│           │  Simple visual/diagram      │                │
-│           │                             │                │
-│           ├─────────────────────────────┤                │
-│           │                             │                │
-│           │  Data Source cards           │                │
-│           │  (one per category)         │                │
-│           │                             │                │
-│           ├─────────────────────────────┤                │
-│           │                             │                │
-│           │  "What the Score Means"     │                │
-│           │  Score range table          │                │
-│           │                             │                │
-│           ├─────────────────────────────┤                │
-│           │                             │                │
-│           │  Principles / approach      │                │
-│           │                             │                │
-│           ├─────────────────────────────┤                │
-│           │                             │                │
-│           │  FAQ (accordion)            │                │
-│           │                             │                │
-│           ├─────────────────────────────┤                │
-│           │                             │                │
-│           │  Footer CTA                 │                │
-│           │                             │                │
-│           └─────────────────────────────┘                │
-│                                                           │
-└──────────────────────────────────────────────────────────┘
+Urbanity Classification
+  Urban:      2,487 DeSOs (40.4%)
+  Semi-urban: 2,103 DeSOs (34.1%)
+  Rural:      1,570 DeSOs (25.5%)
+  Unclassified: 0
 ```
 
 ---
 
-## Step 4: Content
+## Step 5: Sidebar Display — Context for Stratified Indicators
 
-This is the actual copy for the page. The agent should implement it close to verbatim — the phrasing is deliberate. Formatting (headings, emphasis) should be applied tastefully with Tailwind typography.
+### 5.1 The User-Facing Implication
 
----
-
-### Section 1: Hero
-
-**Heading:** How the Neighborhood Trajectory Score Works
-
-**Body:**
-
-> Every neighborhood in Sweden receives a score from 0 to 100 that reflects its current conditions and likely trajectory over the coming years. The score combines data from dozens of sources across multiple dimensions — economics, education, safety, financial stability, amenities, and infrastructure — into a single number designed to help you understand where an area stands and where it's heading.
->
-> We built this because no tool like it exists in Sweden. Hemnet shows you listings. Booli shows you prices. We show you *why* prices move.
-
----
-
-### Section 2: The Score at a Glance
-
-A simple visual element — either an illustrated diagram or styled HTML — showing the score as a funnel/pipeline:
+When the sidebar shows an indicator breakdown for a DeSO, stratified indicators should display their context:
 
 ```
-  Data Sources
-  ────────────────────────
-  │  Government  │  Commercial  │  Open Data  │
-  │  agencies    │  partners    │  platforms  │
-  ────────────────────────
-          ↓
-    Normalization & Analysis
-    (percentile ranking across
-     all 6,160 areas in Sweden)
-          ↓
-    Weighted Composite Score
-          ↓
-     ┌──────────┐
-     │  0 – 100 │
-     └──────────┘
-   Neighborhood Trajectory Score
+Grocery Access     ████████░░  82nd among rural areas (1.2 per 1,000)
 ```
 
-**Don't** make this a complex infographic. A clean, minimal diagram using Tailwind-styled divs or a simple SVG. The point is to show: multiple inputs → analysis → single output.
+vs. a nationally-normed indicator:
 
-Below the diagram, a single sentence:
+```
+Median Income      ██████░░░░  58th percentile (267,000 SEK)
+```
 
-> Each area is compared against every other area in Sweden using percentile ranking — meaning a score of 75 tells you this neighborhood outperforms roughly 75% of all areas nationwide on the factors we measure.
+The "among rural areas" qualifier helps users understand that a rural DeSO isn't being unfairly compared to Stockholm.
 
----
+### 5.2 Implementation
 
-### Section 3: What We Measure
+The sidebar already gets indicator data from the API. Add `normalization_scope` and `urbanity_tier` to the response:
 
-This is the core section. One card per data category. Each card has:
-- Category name
-- One-line summary of what it captures
-- Why it matters for real estate (1-2 sentences, plain language)
-- Official source name with link
-- A small badge: "Updated annually" or "Updated monthly" etc.
+```php
+// In the DeSO detail API response
+'indicators' => $indicators->map(fn ($iv) => [
+    'slug' => $iv->indicator->slug,
+    'name' => $iv->indicator->name,
+    'raw_value' => $iv->raw_value,
+    'normalized_value' => $iv->normalized_value,
+    'unit' => $iv->indicator->unit,
+    'direction' => $iv->indicator->direction,
+    'normalization_scope' => $iv->indicator->normalization_scope,
+    'urbanity_tier' => $desoArea->urbanity_tier,  // The DeSO's own tier
+]);
+```
 
-**Do NOT reveal:** weights, exact indicator slugs, normalization method, direction logic, how categories combine, or how many indicators exist within each category.
-
-**Card 1: Income & Economic Standing**
-
-> **What we measure:** Household income levels and the prevalence of economic hardship across an area.
->
-> **Why it matters:** Income is the single strongest predictor of property values. Areas with rising incomes tend to see rising demand, improving amenities, and increasing real estate prices. Areas with concentrated economic hardship often face the opposite trajectory.
->
-> **Source:** Statistics Sweden (SCB) — Sweden's official statistics agency
-> **Frequency:** Updated annually
-
-**Card 2: Employment**
-
-> **What we measure:** The share of working-age residents who are employed.
->
-> **Why it matters:** High employment means stable household finances, which supports mortgage payments, local business activity, and community investment. Declining employment is often a leading indicator of neighborhood decline — it shows up in the data before it shows up in property prices.
->
-> **Source:** Statistics Sweden (SCB)
-> **Frequency:** Updated annually
-
-**Card 3: Education — Demographics**
-
-> **What we measure:** The educational attainment of residents — specifically, what share of the adult population has completed post-secondary education.
->
-> **Why it matters:** Education levels shape an area's long-term economic trajectory. Neighborhoods with highly educated populations tend to attract employers, sustain higher incomes, and maintain demand for housing. This is a slow-moving but powerful signal.
->
-> **Source:** Statistics Sweden (SCB)
-> **Frequency:** Updated annually
-
-**Card 4: School Quality**
-
-> **What we measure:** The academic performance of primary schools (grundskolor) physically located within each area, based on standardized national metrics including final grades and teacher qualifications.
->
-> **Why it matters:** In Sweden, school quality is arguably the single biggest driver of where families choose to live. Parents routinely pay significant premiums to live near high-performing schools. A neighborhood's school quality has a direct, measurable effect on property values — and it's one of the factors that changes fastest when an area improves or declines.
->
-> **Source:** Swedish National Agency for Education (Skolverket)
-> **Frequency:** Updated annually
-
-**Card 5: Safety**
-
-> **What we measure:** Reported crime rates, how residents perceive their own safety, and whether an area has been classified as vulnerable by Swedish Police.
->
-> **Why it matters:** Safety is fundamental. High or rising crime depresses property values, discourages investment, and drives out residents who have the means to move. Perceived safety — how safe people *feel*, not just official statistics — matters just as much, because it drives behavior. We combine official crime data with Sweden's National Crime Survey, one of Europe's largest victimization studies.
->
-> **Sources:** Swedish National Council for Crime Prevention (BRÅ), Swedish Police Authority (Polisen)
-> **Frequency:** Crime statistics updated quarterly; survey data updated annually
-
-**Card 6: Financial Distress**
-
-> **What we measure:** The prevalence of debt enforcement, payment defaults, and evictions — the share of an area's residents who have unpaid debts serious enough to reach Sweden's Enforcement Authority.
->
-> **Why it matters:** Financial distress is both a symptom and a cause. Areas with high rates of debt enforcement tend to see more forced property sales, deferred maintenance, and population turnover. Rising financial distress in an area is one of the clearest warning signs of a downward trajectory. Falling distress, conversely, suggests an area is stabilizing.
->
-> **Source:** Swedish Enforcement Authority (Kronofogden)
-> **Frequency:** Updated annually
-
-**Card 7: Local Amenities & Services**
-
-> **What we measure:** The availability of everyday services and amenities — grocery stores, healthcare, restaurants, fitness facilities, and other services that residents depend on, measured relative to the local population.
->
-> **Why it matters:** Amenity access directly affects quality of life and property demand. An area with good grocery coverage, healthcare options, and dining is more attractive than one where residents must drive 30 minutes for basic errands. We measure availability per capita, so a rural area with a well-stocked ICA for its 1,500 residents scores just as well as a city block with three options for its 3,000.
->
-> **Sources:** OpenStreetMap, Google Places, and specialized registries
-> **Frequency:** Updated monthly
-
-**Card 8: Transport & Connectivity**
-
-> **What we measure:** Public transit accessibility, commute times to employment centers, and the availability of transport infrastructure.
->
-> **Why it matters:** In Sweden's housing market, "30 minutes to Central Station" is one of the most common search criteria. Areas with improving transit connections — a new Pendeltåg station, extended bus routes, planned metro expansion — often see property values rise well before the infrastructure is completed. We measure both what exists today and what's planned.
->
-> **Sources:** Regional transit authorities (SL, Västtrafik, Skånetrafiken), GTFS open data
-> **Frequency:** Updated monthly
+The frontend formats the percentile label based on scope:
+- `national` → "58th percentile"
+- `urbanity_stratified` → "82nd among [urban/semi-urban/rural] areas"
 
 ---
 
-### Section 4: What the Score Means
+## Step 6: Recompute and Verify
 
-A styled table or set of cards showing the score ranges:
+### 6.1 Run the Classification
 
-| Score | Label | What it means |
-|-------|-------|---------------|
-| 80–100 | Strong Growth Area | Consistently strong across most factors. These areas typically have high demand, rising property values, and positive momentum. |
-| 60–79 | Stable / Positive Outlook | Solid fundamentals with some areas of strength. Generally desirable and trending in a positive direction. |
-| 40–59 | Mixed Signals | Some strengths, some concerns. These areas may be transitioning — either improving or facing early signs of decline. Worth investigating closely. |
-| 20–39 | Elevated Risk | Multiple concerning signals across several factors. These areas may face declining demand or structural challenges. |
-| 0–19 | High Risk / Declining | Significant challenges across most measured factors. High uncertainty about the area's near-term trajectory. |
+```bash
+php artisan classify:deso-urbanity --method=density
+```
 
-Below the table:
+### 6.2 Recompute Existing Indicators
 
-> A score is not a verdict — it's a starting point. A score of 35 doesn't mean you shouldn't buy there; it means you should understand *why* it scores that way before you do. The factor breakdown for each area (available when you click on the map) shows exactly which dimensions are strong and which are weak, so you can make your own judgment.
+Even though current indicators all use national scope, run a full recompute to verify nothing breaks:
 
----
+```bash
+php artisan normalize:indicators --year=2024
+php artisan compute:scores --year=2024
+php artisan check:sentinels --year=2024
+```
 
-### Section 5: Our Approach
+Scores should be identical to before (since no existing indicator changed scope).
 
-**Heading:** How We Build the Score
+### 6.3 Verification Queries
 
-A series of short principle statements. These explain the *philosophy* without revealing the *mechanics*:
+```sql
+-- Check urbanity distribution
+SELECT urbanity_tier, COUNT(*) FROM deso_areas GROUP BY urbanity_tier;
 
-> **Everything is relative, not absolute.**
-> We don't score areas on an abstract scale. Every area is ranked against every other area in Sweden. A score of 73 means this area outperforms 73% of all neighborhoods in the country on the factors we measure. This makes scores directly comparable — whether you're looking at central Stockholm or rural Norrland.
+-- Verify stratified normalization produces different results than national
+-- (This is a test query — run it against a hypothetical stratified indicator)
+-- Urban DeSOs should have higher raw_value thresholds for the same percentile
+-- compared to rural DeSOs
 
-> **We use the best available data — and we tell you where it comes from.**
-> Our foundation is official Swedish government statistics: SCB, Skolverket, BRÅ, Kronofogden, and Polisen. These are the same statistics that policymakers and researchers rely on. Where government data has gaps or lacks granularity, we supplement it with commercial data sources, open platforms like OpenStreetMap, and specialized datasets covering everything from transit accessibility to local amenities. Every data category we score is documented on this page, and every area's detail view shows which sources contributed to its score.
+-- Spot check: Stockholm DeSOs should be 'urban'
+SELECT deso_code, deso_name, kommun_name, urbanity_tier, population, area_km2,
+       population / NULLIF(area_km2, 0) AS density
+FROM deso_areas
+WHERE kommun_name LIKE '%Stockholm%'
+LIMIT 10;
 
-> **We measure what matters for real estate.**
-> Not every statistic matters equally for property values. We focus on the factors that research and market evidence show actually drive where people want to live and what they're willing to pay. The weighting of each factor in our model is based on its demonstrated relationship with real estate outcomes in the Swedish market.
+-- Spot check: Norrland DeSOs should be 'rural'
+SELECT deso_code, deso_name, kommun_name, urbanity_tier, population, area_km2,
+       population / NULLIF(area_km2, 0) AS density
+FROM deso_areas
+WHERE lan_name LIKE '%Norrbotten%'
+LIMIT 10;
+```
 
-> **We never use individual-level data.**
-> All our inputs are aggregate statistics — averages, rates, percentages, and counts across entire areas. We do not access, store, or process any data about identifiable individuals. This is a deliberate design choice, both for legal compliance with GDPR and because aggregate patterns are what drive neighborhood-level trends.
+### 6.4 Visual Checklist
 
-> **The score updates as new data becomes available.**
-> Government agencies publish new data on different schedules — some annually, some quarterly. When new data arrives, we re-run the model and the map updates. The "last updated" date for each data source is visible in the area detail view.
-
-> **Boundaries are not walls.**
-> Government statistics are published for defined geographic areas — but reality doesn't stop at a boundary line. A street that separates two statistical areas doesn't create a wall between them. Our model accounts for this by considering neighboring areas when computing scores, so that transitions between areas are gradual rather than abrupt. This reflects how neighborhoods actually work: the character of a place is shaped not just by what's inside its borders, but by what surrounds it.
-
----
-
-### Section 6: FAQ (Accordion)
-
-Use a shadcn `Accordion` component. Each question expands to reveal the answer.
-
-**Q: How often does the score change?**
-> The score updates whenever we receive new data from our government sources. In practice, this means most scores are recalculated at least once per year, with some components (like crime statistics) updating more frequently. Major shifts in a score usually reflect real changes on the ground — a new school opening, a significant change in employment, or a shift in crime trends.
-
-**Q: Why does my area score low even though it feels nice?**
-> The score reflects measurable data, not subjective impressions. An area might feel pleasant to live in but score lower because of, say, below-average school performance or higher-than-average financial distress rates. Conversely, an area might score high on data but have qualities you personally dislike that we don't measure — like lack of green space or long commute times. The score is one input to your decision, not the whole picture.
-
-**Q: Do you factor in ethnicity or immigration status?**
-> No. We do not use ethnicity, country of origin, immigration status, religious affiliation, or any demographic characteristic as a factor in the score. Our model measures economic outcomes (income, employment, education, financial stability), institutional quality (schools), and safety. These are the factors that research shows drive property values. Using demographic characteristics would be both legally problematic and methodologically unnecessary — economic indicators already capture the relevant signals.
-
-**Q: How granular is the data?**
-> Sweden is divided into approximately 6,160 DeSO areas (Demografiska statistikområden), each containing roughly 700–2,700 residents. These are the finest-grained statistical areas for which the Swedish government publishes data. Each DeSO gets its own score. This is far more granular than municipal or postal code-level analysis — within a single municipality like Stockholm, scores can range from below 20 to above 90.
-
-**Q: Can I see exactly which factors affect my area's score?**
-> Yes. Click any area on the map to see its full factor breakdown. You'll see each measured dimension with its individual performance (as a percentile) and the actual underlying value (for example, median income in SEK, or the local school's merit value). This transparency lets you understand not just the score, but *why* the score is what it is.
-
-**Q: Why don't you publish the exact weights?**
-> The weighting model is the core of our intellectual property. We're transparent about *what* we measure and *where* the data comes from, because we believe that's necessary for trust. But the specific way factors are combined — which we've developed through extensive research into what actually predicts real estate outcomes in Sweden — is what makes our score uniquely valuable. Publishing exact weights would allow anyone to replicate the model trivially, which wouldn't serve the users who rely on us to maintain and improve it.
-
-**Q: Is the score a property valuation?**
-> No. The Neighborhood Trajectory Score is not an appraisal, a property valuation, or financial advice. It measures area-level conditions and trends — not individual property characteristics like size, condition, floor, or view. Two apartments in the same DeSO area will have the same neighborhood score but very different market values. Use the score to understand the *area*; use a mäklare to understand the *property*.
-
-**Q: What's the difference between you and Booli or Hemnet?**
-> Hemnet is a listings platform — it shows you what's for sale. Booli adds pricing history and some analytics. We do something different: we score *neighborhoods*, not properties, using government data that goes far beyond transaction prices. We're answering a different question. They answer "what does this apartment cost?" We answer "is this neighborhood getting better or worse, and why?"
-
-**Q: I'm a journalist. Can I cite your scores?**
-> Yes. When citing our data, please attribute it to "[Platform Name] Neighborhood Trajectory Score" and note that it is based on data from government agencies including SCB, Skolverket, BRÅ, and Kronofogden, supplemented by commercial and open-source datasets. We're happy to provide additional context for articles — reach out to [contact info]. We ask that you do not present the score as a property valuation or financial recommendation, as it is neither.
-
-**Q: I'm a researcher. Can I access the underlying data?**
-> Much of the raw data we use is public — you can access government statistics yourself from the agencies we cite. We also integrate commercial and open-source datasets where government data has gaps. What we add beyond raw data is the integration, normalization, and scoring methodology. We don't currently offer API access or bulk data exports, but if you're working on academic research involving neighborhood-level analysis in Sweden, we'd love to hear from you. Contact [contact info].
-
-**Q: Why does the map sometimes show a high-scoring area right next to a low-scoring area?**
-> Statistical areas have defined boundaries, but neighborhoods in reality blend into each other. We mitigate this through spatial smoothing — each area's score is influenced by its neighbors, creating more gradual transitions. However, genuine sharp contrasts do exist in Sweden. It's not uncommon for a wealthy residential area to be separated from a disadvantaged one by a single street or railway line. When you see a sharp contrast on the map, it often reflects a real geographic divide — but always click both areas to understand the specific factors driving the difference.
-
----
-
-### Section 7: Footer CTA
-
-A simple closing section:
-
-> **Ready to explore?**
-> Go back to the map and click any area in Sweden to see its score, factor breakdown, and school details.
->
-> [Back to Map →]
-
----
-
-## Step 5: Styling
-
-- **Page width:** Max ~720px centered, comfortable reading column. Use Tailwind `prose` classes or equivalent.
-- **Typography:** Use the same font stack as the rest of the app. Generous line-height (1.6–1.7). Headings in the bold weight.
-- **Data source cards:** Use shadcn `Card` component. Subtle border, slight shadow. Source name and update frequency as subdued text or badges below the main content. Cards should be in a single column (not a grid) — each one should be readable without scanning sideways.
-- **Score table:** Colored left border or dot matching the map color scale (purple → green). Don't use a heavy table grid — keep it light.
-- **FAQ accordion:** shadcn `Accordion` with clean expand/collapse. Answers in slightly muted text color.
-- **Spacing:** Generous vertical spacing between sections. This is a page people will scroll through at their own pace — don't cram it.
-- **No images required.** The pipeline diagram (Section 2) can be done purely with styled divs/boxes and arrows. Don't over-engineer it — simple > fancy.
-
----
-
-## Step 6: Verification
-
-- [ ] `/methodology` route works and renders the page
-- [ ] Navbar shows "Methodology" link on all pages
-- [ ] Page is readable on desktop (centered column, comfortable width)
-- [ ] Page is readable on mobile (content reflows, cards stack, accordion works)
-- [ ] All six data source cards are present with correct source names
-- [ ] Score range table matches the colors used on the actual map
-- [ ] FAQ accordion expands/collapses correctly
-- [ ] "Back to Map" link works
-- [ ] No weights, percentages, or indicator slugs are exposed anywhere on the page
-- [ ] Page loads fast (no backend queries, no data fetching)
+- [ ] Every DeSO has an urbanity_tier (no NULLs)
+- [ ] Distribution is roughly 40/34/26 (urban/semi/rural)
+- [ ] Stockholm inner city → urban
+- [ ] Small towns → semi_urban
+- [ ] Remote areas → rural
+- [ ] Existing scores unchanged after recompute
+- [ ] Admin indicator table shows normalization scope column
+- [ ] Sentinel checks still pass
 
 ---
 
 ## Notes for the Agent
 
-### What We're Protecting
+### This Is a Prerequisite for POIs
 
-The following must NOT appear on this page or anywhere public-facing:
-- Exact indicator weights (e.g., "school quality: 0.25")
-- Number of indicators per category
-- Indicator slugs or internal names
-- Normalization method (percentile rank, z-score, etc.)
-- Direction logic (positive/negative/neutral classification)
-- Disaggregation methodology (how kommun-level data maps to DeSO)
-- The fact that some data sources are at different geographic granularities
-- Any mention of H3 hexagonal grids (future architecture detail)
+The POI system (next task) will add indicators with `normalization_scope = 'urbanity_stratified'`. This task must be complete first so the normalization infrastructure exists.
 
-### What We're Deliberately Revealing
+### Don't Over-Complicate the Tiers
 
-- Every data source by name (SCB, Skolverket, BRÅ, Kronofogden, Polisen, OSM, Google Places, GTFS)
-- Every category of measurement (income, employment, education, schools, safety, financial distress, amenities, transport)
-- That the score is a percentile-based relative ranking
-- That factors are weighted by relevance to real estate outcomes
-- That we combine government data with commercial and open data sources
-- That we don't use ethnicity/demographics as scoring factors
-- The DeSO geographic unit (6,160 areas, ~700-2,700 people each)
-- Score ranges and labels (these are already visible on the map)
+Three tiers is enough. Don't create 5 or 7 tiers. More granularity means smaller groups and less reliable percentile rankings. Three tiers capture the meaningful distinction: city, town, countryside.
 
-### Tone Guidance
+### Density Thresholds Need Calibration
 
-The copy is written to be confident without being arrogant. We cite government sources by their full Swedish names (which adds authority). We acknowledge limitations honestly (the FAQ about "why does my area score low even though it feels nice"). We explain the weight secrecy directly rather than dodging it.
+The thresholds in Approach C (1500 and 100 people/km²) are starting points. After running the classification, inspect the edge cases. If Danderyd (clearly urban/suburban) lands in semi-urban because it has large parks lowering its density, adjust the thresholds.
 
-Avoid: jargon, hedging, self-congratulation, comparisons to competitors by name (the Booli/Hemnet FAQ is the one exception — it's a question users will genuinely ask).
+Better yet: look at the actual density distribution. There are probably natural break points where urban gives way to semi-urban and semi-urban to rural. Use those rather than arbitrary round numbers.
 
-### This Is a v1
+### The Scoring Engine Is NOT Changing
 
-The page is static and English-only. Future iterations:
-- Swedish translation (separate task)
-- Dynamic stats pulled from DB ("currently tracking X indicators across Y areas")
-- Per-category deep-dive pages (linked from each card)
-- "Data freshness" section showing last update per source
-- Methodology changelog ("January 2026: Added financial distress data from Kronofogden")
-- Update "Boundaries are not walls" section and spatial smoothing FAQ once H3 hexagonal grid is implemented (see `task-h3-grid.md`). The H3 grid will make the visual smoothing self-evident — hexagons at boundaries naturally blend between DeSO values. The copy should then reference the hexagonal visualization as a concrete feature, not just a principle.
+Stratified normalization happens before scoring. The scoring engine reads `normalized_value` identically regardless of how it was produced. Don't touch the scoring service.
 
-### Placeholder: Platform Name
+### What NOT to Do
 
-The copy uses "[Platform Name]" in the journalist FAQ. Replace with the actual product name when one is decided. If no name exists yet, use a placeholder and leave a TODO comment.
+- Don't add a "rural bonus" or "urban penalty" as a multiplier on scores
+- Don't change the normalization of existing socioeconomic indicators
+- Don't create custom scoring formulas per urbanity tier
+- Don't expose the urbanity tier classification as a separate visible feature on the map (it's infrastructure, not a product feature)
+- Don't use more than 3 tiers
+
+### Future Enhancement: Tätort Boundaries
+
+Once tätort boundary data is downloaded and stored, switch from density-based classification (Approach C) to proper tätort intersection (Approach B). This will be more accurate for edge cases like DeSOs that contain both a small town and surrounding farmland. But Approach C is a solid start — don't delay this task waiting for tätort data.

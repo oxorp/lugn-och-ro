@@ -39,6 +39,7 @@ class AdminIndicatorController extends Controller
                     'direction' => $indicator->direction,
                     'weight' => (float) $indicator->weight,
                     'normalization' => $indicator->normalization,
+                    'normalization_scope' => $indicator->normalization_scope,
                     'is_active' => $indicator->is_active,
                     'latest_year' => $latestYear,
                     'coverage' => $coverage,
@@ -46,8 +47,14 @@ class AdminIndicatorController extends Controller
                 ];
             });
 
+        $urbanityDistribution = DB::table('deso_areas')
+            ->selectRaw("COALESCE(urbanity_tier, 'unclassified') as tier, COUNT(*) as count")
+            ->groupBy('urbanity_tier')
+            ->pluck('count', 'tier');
+
         return Inertia::render('admin/indicators', [
             'indicators' => $indicators,
+            'urbanityDistribution' => $urbanityDistribution,
         ]);
     }
 

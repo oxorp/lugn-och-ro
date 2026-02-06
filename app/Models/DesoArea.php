@@ -19,5 +19,6 @@ class DesoArea extends Model
         'lan_name',
         'area_km2',
         'population',
+        'urbanity_tier',
     ];
 }

@@ -33,6 +33,7 @@ class AdminIndicatorTest extends TestCase
             'direction' => 'positive',
             'weight' => 0.25,
             'normalization' => 'rank_percentile',
+            'normalization_scope' => 'national',
             'is_active' => true,
         ]);
 
@@ -52,6 +53,7 @@ class AdminIndicatorTest extends TestCase
             'direction' => 'negative',
             'weight' => 0.05,
             'normalization' => 'rank_percentile',
+            'normalization_scope' => 'national',
             'is_active' => true,
         ]);
 
@@ -60,6 +62,43 @@ class AdminIndicatorTest extends TestCase
         $indicator->refresh();
         $this->assertEquals('negative', $indicator->direction);
         $this->assertEquals(0.05, (float) $indicator->weight);
+    }
+
+    public function test_admin_can_update_normalization_scope(): void
+    {
+        $this->seed(\Database\Seeders\IndicatorSeeder::class);
+
+        $indicator = Indicator::query()->where('slug', 'median_income')->first();
+
+        $response = $this->put(route('admin.indicators.update', $indicator), [
+            'direction' => 'positive',
+            'weight' => 0.09,
+            'normalization' => 'rank_percentile',
+            'normalization_scope' => 'urbanity_stratified',
+            'is_active' => true,
+        ]);
+
+        $response->assertRedirect();
+
+        $indicator->refresh();
+        $this->assertEquals('urbanity_stratified', $indicator->normalization_scope);
+    }
+
+    public function test_admin_update_validates_normalization_scope(): void
+    {
+        $this->seed(\Database\Seeders\IndicatorSeeder::class);
+
+        $indicator = Indicator::query()->where('slug', 'median_income')->first();
+
+        $response = $this->put(route('admin.indicators.update', $indicator), [
+            'direction' => 'positive',
+            'weight' => 0.09,
+            'normalization' => 'rank_percentile',
+            'normalization_scope' => 'invalid_scope',
+            'is_active' => true,
+        ]);
+
+        $response->assertSessionHasErrors('normalization_scope');
     }
 
     public function test_admin_update_validates_direction(): void
@@ -72,6 +111,7 @@ class AdminIndicatorTest extends TestCase
             'direction' => 'invalid',
             'weight' => 0.15,
             'normalization' => 'rank_percentile',
+            'normalization_scope' => 'national',
             'is_active' => true,
         ]);
 
@@ -88,10 +128,24 @@ class AdminIndicatorTest extends TestCase
             'direction' => 'positive',
             'weight' => 1.5,
             'normalization' => 'rank_percentile',
+            'normalization_scope' => 'national',
             'is_active' => true,
         ]);
 
         $response->assertSessionHasErrors('weight');
+    }
+
+    public function test_admin_indicators_page_includes_urbanity_distribution(): void
+    {
+        $this->seed(\Database\Seeders\IndicatorSeeder::class);
+
+        $response = $this->get(route('admin.indicators'));
+
+        $response->assertOk();
+        $response->assertInertia(fn ($page) => $page
+            ->component('admin/indicators')
+            ->has('urbanityDistribution')
+        );
     }
 
     public function test_scores_api_returns_json(): void

@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Indicator;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class NormalizationService
 {
@@ -29,12 +30,117 @@ class NormalizationService
      */
     public function normalizeIndicator(Indicator $indicator, int $year): int
     {
+        if ($indicator->normalization_scope === 'urbanity_stratified') {
+            return $this->normalizeStratified($indicator, $year);
+        }
+
         return match ($indicator->normalization) {
             'rank_percentile' => $this->rankPercentile($indicator, $year),
             'min_max' => $this->minMax($indicator, $year),
             'z_score' => $this->zScore($indicator, $year),
             default => $this->rankPercentile($indicator, $year),
         };
+    }
+
+    /**
+     * Stratified normalization: rank within each urbanity tier separately.
+     * Falls back to national ranking for tiers with fewer than 30 data points
+     * or for DeSOs without an urbanity classification.
+     */
+    private function normalizeStratified(Indicator $indicator, int $year): int
+    {
+        $minTierSize = 30;
+
+        // Check tier sizes for this indicator
+        $tierCounts = DB::table('indicator_values')
+            ->join('deso_areas', 'deso_areas.deso_code', '=', 'indicator_values.deso_code')
+            ->where('indicator_values.indicator_id', $indicator->id)
+            ->where('indicator_values.year', $year)
+            ->whereNotNull('indicator_values.raw_value')
+            ->whereNotNull('deso_areas.urbanity_tier')
+            ->selectRaw('deso_areas.urbanity_tier, COUNT(*) as cnt')
+            ->groupBy('deso_areas.urbanity_tier')
+            ->pluck('cnt', 'urbanity_tier');
+
+        $validTiers = $tierCounts->filter(fn ($count) => $count >= $minTierSize)->keys()->toArray();
+        $smallTiers = $tierCounts->filter(fn ($count) => $count < $minTierSize)->keys()->toArray();
+
+        if (! empty($smallTiers)) {
+            Log::warning("Stratified normalization: tiers with < {$minTierSize} values for {$indicator->slug}: ".implode(', ', $smallTiers).'. Falling back to national ranking for these tiers.');
+        }
+
+        $total = 0;
+
+        // Normalize valid tiers with stratified ranking
+        if (! empty($validTiers)) {
+            $placeholders = implode(',', array_fill(0, count($validTiers), '?'));
+            $total += DB::update("
+                UPDATE indicator_values iv
+                SET normalized_value = sub.percentile,
+                    updated_at = NOW()
+                FROM (
+                    SELECT iv2.id,
+                           PERCENT_RANK() OVER (
+                               PARTITION BY da.urbanity_tier
+                               ORDER BY iv2.raw_value
+                           ) as percentile
+                    FROM indicator_values iv2
+                    JOIN deso_areas da ON da.deso_code = iv2.deso_code
+                    WHERE iv2.indicator_id = ? AND iv2.year = ? AND iv2.raw_value IS NOT NULL
+                      AND da.urbanity_tier IN ({$placeholders})
+                ) sub
+                WHERE iv.id = sub.id
+            ", [$indicator->id, $year, ...$validTiers]);
+        }
+
+        // Fall back to national ranking for small tiers
+        if (! empty($smallTiers)) {
+            $placeholders = implode(',', array_fill(0, count($smallTiers), '?'));
+            $total += DB::update("
+                UPDATE indicator_values iv
+                SET normalized_value = sub.percentile,
+                    updated_at = NOW()
+                FROM (
+                    SELECT iv2.id,
+                           PERCENT_RANK() OVER (ORDER BY iv2.raw_value) as percentile
+                    FROM indicator_values iv2
+                    JOIN deso_areas da ON da.deso_code = iv2.deso_code
+                    WHERE iv2.indicator_id = ? AND iv2.year = ? AND iv2.raw_value IS NOT NULL
+                      AND da.urbanity_tier IN ({$placeholders})
+                ) sub
+                WHERE iv.id = sub.id
+            ", [$indicator->id, $year, ...$smallTiers]);
+        }
+
+        // Handle DeSOs without urbanity classification — fall back to national ranking
+        $nullTierCount = DB::table('indicator_values')
+            ->join('deso_areas', 'deso_areas.deso_code', '=', 'indicator_values.deso_code')
+            ->where('indicator_values.indicator_id', $indicator->id)
+            ->where('indicator_values.year', $year)
+            ->whereNotNull('indicator_values.raw_value')
+            ->whereNull('deso_areas.urbanity_tier')
+            ->count();
+
+        if ($nullTierCount > 0) {
+            Log::warning("Stratified normalization: {$nullTierCount} DeSOs without urbanity_tier for {$indicator->slug}. Using national ranking.");
+
+            $total += DB::update('
+                UPDATE indicator_values iv
+                SET normalized_value = sub.percentile,
+                    updated_at = NOW()
+                FROM (
+                    SELECT iv2.id,
+                           PERCENT_RANK() OVER (ORDER BY iv2.raw_value) as percentile
+                    FROM indicator_values iv2
+                    JOIN deso_areas da ON da.deso_code = iv2.deso_code
+                    WHERE iv2.indicator_id = ? AND iv2.year = ? AND iv2.raw_value IS NOT NULL
+                      AND da.urbanity_tier IS NULL
+                ) sub
+                WHERE iv.id = sub.id
+            ', [$indicator->id, $year]);
+        }
+
+        return $total;
     }
 
     /**

@@ -1,5 +1,5 @@
 import { Head, router } from '@inertiajs/react';
-import { RefreshCw } from 'lucide-react';
+import { Info, RefreshCw } from 'lucide-react';
 import { useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
@@ -22,6 +22,12 @@ import {
     TableHeader,
     TableRow,
 } from '@/components/ui/table';
+import {
+    Tooltip,
+    TooltipContent,
+    TooltipProvider,
+    TooltipTrigger,
+} from '@/components/ui/tooltip';
 
 interface Indicator {
     id: number;
@@ -32,6 +38,7 @@ interface Indicator {
     direction: 'positive' | 'negative' | 'neutral';
     weight: number;
     normalization: string;
+    normalization_scope: 'national' | 'urbanity_stratified';
     is_active: boolean;
     latest_year: number | null;
     coverage: number;
@@ -40,6 +47,7 @@ interface Indicator {
 
 interface Props {
     indicators: Indicator[];
+    urbanityDistribution: Record<string, number>;
 }
 
 const categoryColors: Record<string, string> = {
@@ -50,7 +58,7 @@ const categoryColors: Record<string, string> = {
     housing: 'bg-rose-100 text-rose-800',
 };
 
-export default function IndicatorsPage({ indicators }: Props) {
+export default function IndicatorsPage({ indicators, urbanityDistribution }: Props) {
     const [recomputing, setRecomputing] = useState(false);
     const [editingId, setEditingId] = useState<number | null>(null);
 
@@ -82,6 +90,7 @@ export default function IndicatorsPage({ indicators }: Props) {
                 direction: indicator.direction,
                 weight: indicator.weight,
                 normalization: indicator.normalization,
+                normalization_scope: indicator.normalization_scope,
                 is_active: indicator.is_active,
                 [field]: value,
             },
@@ -149,6 +158,39 @@ export default function IndicatorsPage({ indicators }: Props) {
                 </CardContent>
             </Card>
 
+            {Object.keys(urbanityDistribution).length > 0 && (
+                <Card className="mb-6">
+                    <CardHeader className="pb-3">
+                        <CardTitle className="text-sm font-medium">
+                            Urbanity Classification
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        <div className="grid grid-cols-4 gap-4 text-sm">
+                            {(['urban', 'semi_urban', 'rural', 'unclassified'] as const).map((tier) => {
+                                const count = urbanityDistribution[tier] ?? 0;
+                                const total = Object.values(urbanityDistribution).reduce((s, v) => s + v, 0);
+                                const pct = total > 0 ? ((count / total) * 100).toFixed(1) : '0.0';
+                                const labels: Record<string, string> = {
+                                    urban: 'Urban',
+                                    semi_urban: 'Semi-urban',
+                                    rural: 'Rural',
+                                    unclassified: 'Unclassified',
+                                };
+                                if (tier === 'unclassified' && count === 0) return null;
+                                return (
+                                    <div key={tier} className="rounded-lg border p-3 text-center">
+                                        <div className="text-muted-foreground text-xs">{labels[tier]}</div>
+                                        <div className="text-lg font-semibold">{count.toLocaleString()}</div>
+                                        <div className="text-muted-foreground text-xs">{pct}%</div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </CardContent>
+                </Card>
+            )}
+
             <Card>
                 <Table>
                     <TableHeader>
@@ -160,6 +202,7 @@ export default function IndicatorsPage({ indicators }: Props) {
                             <TableHead>Direction</TableHead>
                             <TableHead>Weight</TableHead>
                             <TableHead>Normalization</TableHead>
+                            <TableHead>Scope</TableHead>
                             <TableHead>Active</TableHead>
                             <TableHead>Year</TableHead>
                             <TableHead>Coverage</TableHead>
@@ -262,6 +305,46 @@ export default function IndicatorsPage({ indicators }: Props) {
                                             </SelectItem>
                                         </SelectContent>
                                     </Select>
+                                </TableCell>
+                                <TableCell>
+                                    <div className="flex items-center gap-1">
+                                        <Select
+                                            value={indicator.normalization_scope}
+                                            onValueChange={(v) =>
+                                                handleUpdate(
+                                                    indicator.id,
+                                                    'normalization_scope',
+                                                    v,
+                                                )
+                                            }
+                                        >
+                                            <SelectTrigger className="w-36">
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="national">
+                                                    national
+                                                </SelectItem>
+                                                <SelectItem value="urbanity_stratified">
+                                                    stratified
+                                                </SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                        {indicator.normalization_scope === 'urbanity_stratified' && (
+                                            <TooltipProvider>
+                                                <Tooltip>
+                                                    <TooltipTrigger>
+                                                        <Info className="h-3.5 w-3.5 text-blue-500" />
+                                                    </TooltipTrigger>
+                                                    <TooltipContent>
+                                                        <p className="max-w-xs text-xs">
+                                                            Ranked within urbanity tier (urban / semi-urban / rural) instead of nationally.
+                                                        </p>
+                                                    </TooltipContent>
+                                                </Tooltip>
+                                            </TooltipProvider>
+                                        )}
+                                    </div>
                                 </TableCell>
                                 <TableCell>
                                     <Switch

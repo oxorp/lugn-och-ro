@@ -17,6 +17,7 @@ class Indicator extends Model
         'direction',
         'weight',
         'normalization',
+        'normalization_scope',
         'is_active',
         'display_order',
         'category',

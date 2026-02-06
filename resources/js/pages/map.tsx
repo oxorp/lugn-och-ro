@@ -24,6 +24,7 @@ import MapLayout from '@/layouts/map-layout';
 interface MapPageProps {
     initialCenter: [number, number];
     initialZoom: number;
+    indicatorScopes: Record<string, 'national' | 'urbanity_stratified'>;
 }
 
 export interface School {
@@ -133,19 +134,34 @@ function TrendIcon({ trend }: { trend: number | null }) {
     return <ArrowRight className="h-4 w-4 text-gray-400" />;
 }
 
+const URBANITY_LABELS: Record<string, string> = {
+    urban: 'urban',
+    semi_urban: 'semi-urban',
+    rural: 'rural',
+};
+
 function FactorBar({
     label,
     value,
+    scope,
+    urbanityTier,
 }: {
     label: string;
     value: number;
+    scope?: 'national' | 'urbanity_stratified';
+    urbanityTier?: string | null;
 }) {
     const pct = Math.round(value * 100);
+    const isStratified = scope === 'urbanity_stratified' && urbanityTier;
+    const tierLabel = urbanityTier ? URBANITY_LABELS[urbanityTier] ?? urbanityTier : '';
+
     return (
         <div className="space-y-0.5">
             <div className="flex justify-between text-xs">
                 <span className="text-muted-foreground">{label}</span>
-                <span className="font-medium">{pct}th pctl</span>
+                <span className="font-medium">
+                    {pct}{isStratified ? `th among ${tierLabel}` : 'th pctl'}
+                </span>
             </div>
             <div className="h-2 w-full overflow-hidden rounded-full bg-gray-100">
                 <div
@@ -533,7 +549,7 @@ function FinancialSection({
     );
 }
 
-export default function MapPage({ initialCenter, initialZoom }: MapPageProps) {
+export default function MapPage({ initialCenter, initialZoom, indicatorScopes }: MapPageProps) {
     const [selectedDeso, setSelectedDeso] = useState<DesoProperties | null>(null);
     const [selectedScore, setSelectedScore] = useState<DesoScore | null>(null);
     const [schools, setSchools] = useState<School[]>([]);
@@ -694,6 +710,8 @@ export default function MapPage({ initialCenter, initialZoom }: MapPageProps) {
                                                         key={slug}
                                                         label={INDICATOR_LABELS[slug] || slug}
                                                         value={value}
+                                                        scope={indicatorScopes[slug]}
+                                                        urbanityTier={selectedScore.urbanity_tier}
                                                     />
                                                 ),
                                             )}

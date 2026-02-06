@@ -21,6 +21,7 @@ class UpdateIndicatorRequest extends FormRequest
             'direction' => ['required', Rule::in(['positive', 'negative', 'neutral'])],
             'weight' => ['required', 'numeric', 'min:0', 'max:1'],
             'normalization' => ['required', Rule::in(['rank_percentile', 'min_max', 'z_score'])],
+            'normalization_scope' => ['required', Rule::in(['national', 'urbanity_stratified'])],
             'is_active' => ['required', 'boolean'],
         ];
     }

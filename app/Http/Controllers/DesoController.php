@@ -73,8 +73,9 @@ class DesoController extends Controller
             ->first();
 
         $query = DB::table('composite_scores')
-            ->where('year', $year)
-            ->select('deso_code', 'score', 'trend_1y', 'factor_scores', 'top_positive', 'top_negative');
+            ->leftJoin('deso_areas', 'deso_areas.deso_code', '=', 'composite_scores.deso_code')
+            ->where('composite_scores.year', $year)
+            ->select('composite_scores.deso_code', 'score', 'trend_1y', 'factor_scores', 'top_positive', 'top_negative', 'deso_areas.urbanity_tier');
 
         if ($publishedVersion) {
             $query->where('score_version_id', $publishedVersion->id);
