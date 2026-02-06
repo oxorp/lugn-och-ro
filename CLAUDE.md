@@ -12,8 +12,8 @@ Read `data_pipeline_specification.md` for full business context, data sources, a
 
 ## Stack
 
-- Laravel 11, PHP 8.3
-- Inertia.js + React 18 + TypeScript
+- Laravel 12, PHP 8.4
+- Inertia.js v2 + React 19 + TypeScript
 - Tailwind CSS 4 + shadcn/ui
 - OpenLayers (for the map — not Mapbox, not Leaflet, not Deck.gl)
 - PostgreSQL 16 + PostGIS 3.4
@@ -27,6 +27,38 @@ Read `data_pipeline_specification.md` for full business context, data sources, a
 - Write Laravel code the Laravel way — Eloquent models, Artisan commands, service classes. No raw frameworks-within-frameworks.
 - Commit working states. If something works, commit before moving to the next step.
 - When a step says "verify", actually verify. Run the query, check the browser, confirm the count.
+
+## Data Pipeline Best Practices
+
+### SCB PX-Web API
+- Base URL: `https://api.scb.se/OV0104/v1/doris/sv/ssd/`
+- Use POST with JSON query body; response is JSON-stat2 format
+- DeSO 2025 codes have `_DeSO2025` suffix in response — strip it with `extractDesoCode()`
+- When a table contains both old DeSO codes and DeSO2025 codes, prefer DeSO2025 versions
+- Employment data (`AM0207`) only goes to 2021 with old DeSO codes (5,835 matched)
+- All other indicators have 2024 data with DeSO 2025 codes (6,160 matched)
+- Need `memory_limit=1G` for large API responses
+
+### Bulk Database Operations
+- Use `DB::table()->upsert()` with chunks of 1000 for ingestion (not individual `updateOrCreate`)
+- Individual Eloquent `updateOrCreate` in loops causes memory exhaustion at scale (6,160+ rows × 8 indicators)
+- `PERCENT_RANK() OVER (ORDER BY raw_value)` for rank percentile normalization in PostgreSQL
+
+### Artisan Commands
+- `ingest:scb --all` — Ingest all SCB indicators (or `--indicator=slug --year=2024`)
+- `normalize:indicators --year=2024` — Normalize all active indicators
+- `compute:scores --year=2024` — Compute composite scores
+
+### Service Architecture
+- `ScbApiService` — Fetches and parses SCB PX-Web data
+- `NormalizationService` — Rank percentile, min-max, z-score normalization
+- `ScoringService` — Weighted composite scores with direction handling
+
+### Key Routes
+- `/api/deso/scores?year=2024` — Returns composite scores keyed by deso_code (1-hour cache)
+- `/admin/indicators` — Admin dashboard for indicator management
+- `/admin/indicators/{indicator}` — Update indicator weight/direction
+- `/admin/recompute` — Re-normalize and recompute all scores
 
 ===
 

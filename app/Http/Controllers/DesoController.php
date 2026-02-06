@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
@@ -53,5 +54,19 @@ class DesoController extends Controller
 
         return response()->json($geojson)
             ->header('Cache-Control', 'public, max-age=86400');
+    }
+
+    public function scores(Request $request): JsonResponse
+    {
+        $year = $request->integer('year', now()->year);
+
+        $scores = DB::table('composite_scores')
+            ->where('year', $year)
+            ->select('deso_code', 'score', 'trend_1y', 'factor_scores', 'top_positive', 'top_negative')
+            ->get()
+            ->keyBy('deso_code');
+
+        return response()->json($scores)
+            ->header('Cache-Control', 'public, max-age=3600');
     }
 }
