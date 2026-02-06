@@ -5,10 +5,12 @@ use App\Http\Controllers\AdminScoreController;
 use App\Http\Controllers\DesoController;
 use App\Http\Controllers\H3Controller;
 use App\Http\Controllers\MapController;
+use App\Http\Controllers\PageController;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
 Route::get('/', [MapController::class, 'index'])->name('map');
+Route::get('/methodology', [PageController::class, 'methodology'])->name('methodology');
 
 Route::get('/api/deso/geojson', [DesoController::class, 'geojson'])->name('deso.geojson');
 Route::get('/api/deso/scores', [DesoController::class, 'scores'])->name('deso.scores');
