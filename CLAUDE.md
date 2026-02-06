@@ -77,6 +77,21 @@ Read `data_pipeline_specification.md` for full business context, data sources, a
 - Values are percentages, rows by län, columns by year, CI in last 2 columns
 - Disaggregated to DeSO using inverted demographic weighting (safer areas get higher safety scores)
 
+### Kronofogden / Kolada API
+- **Kolada API** (`https://api.kolada.se/v3/`) is the primary source — clean JSON, no auth, all 290 kommuner
+- URL format: `/data/kpi/{kpiId}/year/{year}` (NOT `/municipality/all/year/`)
+- Key KPIs: `N00989` (debt rate %), `N00990` (median debt SEK), `U00958` (eviction rate per 100k)
+- Municipality list: `/municipality` — returns all entries; filter on `type === 'K'` and exclude `id === '0000'` (Riket)
+- Region codes (type "L") have 4-digit IDs too (e.g., "0001" = Region Stockholm) — don't rely on string length
+- Response shape: `values[]` → each has `municipality`, `period`, `values[]` (with `gender` T/M/K and `value`)
+- Disaggregation: kommun→DeSO using weighted propensity model (income 35%, employment 20%, education 15%, low_econ 15%, vulnerability 15%+10%)
+- Constraint: population-weighted DeSO average must match kommun rate exactly
+- Clamp estimates to 10%-300% of kommun rate before constraining
+- 3 indicators: `debt_rate_pct` (0.06), `eviction_rate` (0.04), `median_debt_sek` (0.02) — all direction=negative
+- `median_debt_sek` is kommun-level only (can't disaggregate a median) — flat for all DeSOs in kommun
+- R² = 0.4030 for cross-validation (demographics explain ~40% of variance)
+- Do NOT use `foreign_background_pct` in disaggregation formula
+
 ### Artisan Commands
 - `ingest:scb --all` — Ingest all SCB indicators (or `--indicator=slug --year=2024`)
 - `ingest:skolverket-schools` — Ingest school locations + metadata from Skolverket
@@ -86,6 +101,9 @@ Read `data_pipeline_specification.md` for full business context, data sources, a
 - `ingest:ntu --year=2025` — Ingest NTU survey data from Excel
 - `ingest:vulnerability-areas --year=2025` — Import police vulnerability area polygons
 - `disaggregate:crime --year=2024` — Disaggregate crime data from kommun/län to DeSO
+- `ingest:kronofogden --year=2024 --source=kolada` — Ingest Kronofogden debt data from Kolada API
+- `disaggregate:kronofogden --year=2024` — Disaggregate kommun debt rates to DeSO level
+- `aggregate:kronofogden-indicators --year=2024` — Create indicator values from disaggregation results
 - `normalize:indicators --year=2024` — Normalize all active indicators
 - `compute:scores --year=2024` — Compute composite scores
 
@@ -93,6 +111,7 @@ Read `data_pipeline_specification.md` for full business context, data sources, a
 - `ScbApiService` — Fetches and parses SCB PX-Web data
 - `SkolverketApiService` — Fetches school registry and statistics data
 - `BraDataService` — Parses BRÅ Excel/CSV, estimates category rates from national proportions
+- `KronofogdenService` — Fetches Kronofogden data from Kolada API (debt rates, median debt, evictions)
 - `NormalizationService` — Rank percentile, min-max, z-score normalization
 - `ScoringService` — Weighted composite scores with direction handling
 
@@ -100,6 +119,7 @@ Read `data_pipeline_specification.md` for full business context, data sources, a
 - `/api/deso/scores?year=2024` — Returns composite scores keyed by deso_code (1-hour cache)
 - `/api/deso/{desoCode}/schools` — Returns schools for a specific DeSO with latest statistics
 - `/api/deso/{desoCode}/crime` — Returns crime rates, vulnerability info, perceived safety for a DeSO
+- `/api/deso/{desoCode}/financial` — Returns estimated debt rate, eviction rate, kommun actual, high-distress flag
 - `/admin/indicators` — Admin dashboard for indicator management
 - `/admin/indicators/{indicator}` — Update indicator weight/direction
 - `/admin/recompute` — Re-normalize and recompute all scores

@@ -4,9 +4,11 @@ import {
     ArrowDown,
     ArrowRight,
     ArrowUp,
+    Landmark,
     MapPin,
     Shield,
     ShieldAlert,
+    TriangleAlert,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -66,6 +68,20 @@ interface CrimeData {
     } | null;
 }
 
+interface FinancialData {
+    deso_code: string;
+    year: number | null;
+    estimated_debt_rate: number | null;
+    estimated_eviction_rate: number | null;
+    kommun_actual_rate: number | null;
+    kommun_name: string | null;
+    kommun_median_debt: number | null;
+    kommun_eviction_rate: number | null;
+    national_avg_rate: number | null;
+    is_high_distress: boolean;
+    is_estimated: boolean;
+}
+
 const INDICATOR_LABELS: Record<string, string> = {
     median_income: 'Median Income',
     low_economic_standard_pct: 'Low Economic Standard',
@@ -83,6 +99,9 @@ const INDICATOR_LABELS: Record<string, string> = {
     crime_total_rate: 'Total Crime Rate',
     perceived_safety: 'Perceived Safety',
     vulnerability_flag: 'Vulnerability Area',
+    debt_rate_pct: 'Debt Rate (KFM)',
+    eviction_rate: 'Eviction Rate',
+    median_debt_sek: 'Median Debt',
 };
 
 function scoreColor(score: number): string {
@@ -390,6 +409,130 @@ function CrimeSection({
     );
 }
 
+function FinancialRateBar({
+    label,
+    value,
+    suffix,
+    maxValue,
+}: {
+    label: string;
+    value: number | null;
+    suffix: string;
+    maxValue: number;
+}) {
+    if (value === null) return null;
+
+    const pct = Math.min(100, (value / maxValue) * 100);
+    return (
+        <div className="space-y-0.5">
+            <div className="flex justify-between text-xs">
+                <span className="text-muted-foreground">{label}</span>
+                <span className="font-medium">
+                    {value.toLocaleString(undefined, { maximumFractionDigits: 1 })}
+                    {suffix}
+                </span>
+            </div>
+            <div className="h-2 w-full overflow-hidden rounded-full bg-gray-100">
+                <div
+                    className={`h-full rounded-full transition-all ${scoreBgColor(100 - pct)}`}
+                    style={{ width: `${pct}%` }}
+                />
+            </div>
+        </div>
+    );
+}
+
+function FinancialSection({
+    data,
+    loading,
+}: {
+    data: FinancialData | null;
+    loading: boolean;
+}) {
+    if (loading) {
+        return (
+            <div className="space-y-3">
+                <div className="h-16 animate-pulse rounded-lg bg-gray-100" />
+                <div className="h-24 animate-pulse rounded-lg bg-gray-100" />
+            </div>
+        );
+    }
+
+    if (!data || data.estimated_debt_rate === null) return null;
+
+    return (
+        <div className="space-y-3">
+            {data.is_high_distress && (
+                <div className="rounded-lg border-2 border-orange-300 bg-orange-50 p-3">
+                    <div className="flex items-start gap-2">
+                        <TriangleAlert className="mt-0.5 h-5 w-5 shrink-0 text-orange-600" />
+                        <div>
+                            <div className="text-sm font-semibold text-orange-800">
+                                Elevated Financial Distress
+                            </div>
+                            <div className="mt-1 text-xs text-orange-700">
+                                Estimated debt rate of {data.estimated_debt_rate}%,
+                                significantly above the national average of{' '}
+                                {data.national_avg_rate}%.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            <div>
+                <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    <Landmark className="h-3.5 w-3.5" />
+                    Financial Health
+                </div>
+                <div className="space-y-2.5">
+                    <FinancialRateBar
+                        label="Debt rate"
+                        value={data.estimated_debt_rate}
+                        suffix="%"
+                        maxValue={10}
+                    />
+                    {data.kommun_actual_rate !== null && (
+                        <div className="text-muted-foreground -mt-1.5 text-[10px]">
+                            kommun avg: {data.kommun_actual_rate}%
+                        </div>
+                    )}
+                    <FinancialRateBar
+                        label="Evictions"
+                        value={data.estimated_eviction_rate}
+                        suffix="/100k"
+                        maxValue={80}
+                    />
+                    {data.kommun_median_debt !== null && (
+                        <div className="space-y-0.5">
+                            <div className="flex justify-between text-xs">
+                                <span className="text-muted-foreground">
+                                    Median debt
+                                </span>
+                                <span className="font-medium">
+                                    {Math.round(
+                                        data.kommun_median_debt / 1000,
+                                    ).toLocaleString()}
+                                    k SEK
+                                </span>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            <div className="rounded border border-dashed border-gray-200 px-2.5 py-2 text-[10px] text-muted-foreground">
+                Estimated from kommun-level Kronofogden data
+                {data.kommun_name && <> ({data.kommun_name})</>} using demographic
+                weighting.
+                {data.kommun_actual_rate !== null && (
+                    <> Kommun actual rate: {data.kommun_actual_rate}%.</>
+                )}
+            </div>
+        </div>
+    );
+}
+
 export default function MapPage({ initialCenter, initialZoom }: MapPageProps) {
     const [selectedDeso, setSelectedDeso] = useState<DesoProperties | null>(null);
     const [selectedScore, setSelectedScore] = useState<DesoScore | null>(null);
@@ -397,6 +540,8 @@ export default function MapPage({ initialCenter, initialZoom }: MapPageProps) {
     const [schoolsLoading, setSchoolsLoading] = useState(false);
     const [crimeData, setCrimeData] = useState<CrimeData | null>(null);
     const [crimeLoading, setCrimeLoading] = useState(false);
+    const [financialData, setFinancialData] = useState<FinancialData | null>(null);
+    const [financialLoading, setFinancialLoading] = useState(false);
     const [highlightedSchool, setHighlightedSchool] = useState<string | null>(null);
     const schoolRefs = useRef<Record<string, HTMLDivElement | null>>({});
     const mapRef = useRef<{ updateSize: () => void; clearSchoolMarkers: () => void; setSchoolMarkers: (schools: School[]) => void } | null>(null);
@@ -410,6 +555,7 @@ export default function MapPage({ initialCenter, initialZoom }: MapPageProps) {
             if (properties) {
                 setSchoolsLoading(true);
                 setCrimeLoading(true);
+                setFinancialLoading(true);
 
                 fetch(`/api/deso/${properties.deso_code}/schools`)
                     .then((r) => r.json())
@@ -434,9 +580,21 @@ export default function MapPage({ initialCenter, initialZoom }: MapPageProps) {
                         setCrimeData(null);
                         setCrimeLoading(false);
                     });
+
+                fetch(`/api/deso/${properties.deso_code}/financial?year=2024`)
+                    .then((r) => r.json())
+                    .then((data: FinancialData) => {
+                        setFinancialData(data);
+                        setFinancialLoading(false);
+                    })
+                    .catch(() => {
+                        setFinancialData(null);
+                        setFinancialLoading(false);
+                    });
             } else {
                 setSchools([]);
                 setCrimeData(null);
+                setFinancialData(null);
                 mapRef.current?.clearSchoolMarkers();
             }
         },
@@ -547,6 +705,10 @@ export default function MapPage({ initialCenter, initialZoom }: MapPageProps) {
                             {/* Crime & Safety Section */}
                             <Separator />
                             <CrimeSection crimeData={crimeData} loading={crimeLoading} />
+
+                            {/* Financial Health Section */}
+                            <Separator />
+                            <FinancialSection data={financialData} loading={financialLoading} />
 
                             {/* Schools Section */}
                             <Separator />

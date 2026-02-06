@@ -13,6 +13,7 @@ Route::get('/api/deso/geojson', [DesoController::class, 'geojson'])->name('deso.
 Route::get('/api/deso/scores', [DesoController::class, 'scores'])->name('deso.scores');
 Route::get('/api/deso/{desoCode}/schools', [DesoController::class, 'schools'])->name('deso.schools');
 Route::get('/api/deso/{desoCode}/crime', [DesoController::class, 'crime'])->name('deso.crime');
+Route::get('/api/deso/{desoCode}/financial', [DesoController::class, 'financial'])->name('deso.financial');
 
 Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('dashboard', function () {

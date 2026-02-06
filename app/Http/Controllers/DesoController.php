@@ -2,7 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\DebtDisaggregationResult;
 use App\Models\DesoVulnerabilityMapping;
+use App\Models\KronofogdenStatistic;
 use App\Models\School;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -177,6 +179,50 @@ class DesoController extends Controller
                 'theft' => $kommunCrime->get('crime_theft')?->rate_per_100k ? round((float) $kommunCrime->get('crime_theft')->rate_per_100k, 1) : null,
             ],
             'vulnerability' => $vulnData,
+        ]);
+    }
+
+    public function financial(string $desoCode, Request $request): JsonResponse
+    {
+        $year = $request->integer('year', now()->year);
+
+        $disaggResult = DebtDisaggregationResult::query()
+            ->where('deso_code', $desoCode)
+            ->where('year', $year)
+            ->first();
+
+        if (! $disaggResult) {
+            // Try latest available year
+            $disaggResult = DebtDisaggregationResult::query()
+                ->where('deso_code', $desoCode)
+                ->latest('year')
+                ->first();
+        }
+
+        $kommunStats = null;
+        if ($disaggResult) {
+            $kommunStats = KronofogdenStatistic::query()
+                ->where('municipality_code', $disaggResult->municipality_code)
+                ->where('year', $disaggResult->year)
+                ->first();
+        }
+
+        $nationalAvg = KronofogdenStatistic::query()
+            ->where('year', $disaggResult?->year ?? $year)
+            ->avg('indebted_pct');
+
+        return response()->json([
+            'deso_code' => $desoCode,
+            'year' => $disaggResult?->year,
+            'estimated_debt_rate' => $disaggResult?->estimated_debt_rate ? round((float) $disaggResult->estimated_debt_rate, 2) : null,
+            'estimated_eviction_rate' => $disaggResult?->estimated_eviction_rate ? round((float) $disaggResult->estimated_eviction_rate, 1) : null,
+            'kommun_actual_rate' => $kommunStats?->indebted_pct ? round((float) $kommunStats->indebted_pct, 2) : null,
+            'kommun_name' => $kommunStats?->municipality_name,
+            'kommun_median_debt' => $kommunStats?->median_debt_sek ? round((float) $kommunStats->median_debt_sek, 0) : null,
+            'kommun_eviction_rate' => $kommunStats?->eviction_rate_per_100k ? round((float) $kommunStats->eviction_rate_per_100k, 1) : null,
+            'national_avg_rate' => $nationalAvg ? round((float) $nationalAvg, 2) : null,
+            'is_high_distress' => ($disaggResult?->estimated_debt_rate ?? 0) > (($nationalAvg ?? 0) * 2),
+            'is_estimated' => true,
         ]);
     }
 }
