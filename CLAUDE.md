@@ -44,18 +44,34 @@ Read `data_pipeline_specification.md` for full business context, data sources, a
 - Individual Eloquent `updateOrCreate` in loops causes memory exhaustion at scale (6,160+ rows × 8 indicators)
 - `PERCENT_RANK() OVER (ORDER BY raw_value)` for rank percentile normalization in PostgreSQL
 
+### Skolverket APIs
+- Two APIs: Skolenhetsregistret v2 (school registry) and Planned Educations v3 (statistics)
+- Planned Educations v3 max page size is ~100 (returns 404 on size=500)
+- Accept header required: `application/vnd.skolverket.plannededucations.api.v3.hal+json`
+- Statistics use Swedish decimal format (comma separator) — convert with `str_replace(',', '.', $value)`
+- `valueType` must be `EXISTS` for valid values; skip `.` and `..` placeholder values
+- `Http::pool()` returns `ConnectionException` for failed requests — always check `instanceof Response` before calling `->successful()`
+- Most school-level stats are from 2020/21 (Skolverket restricted publication after that)
+- Teacher certification data has much better coverage than merit/achievement data
+- Use `--academic-year=2020/21 --calendar-year=2024` for aggregation to align with SCB data year
+
 ### Artisan Commands
 - `ingest:scb --all` — Ingest all SCB indicators (or `--indicator=slug --year=2024`)
+- `ingest:skolverket-schools` — Ingest school locations + metadata from Skolverket
+- `ingest:skolverket-stats` — Ingest performance statistics per school
+- `aggregate:school-indicators --academic-year=2020/21 --calendar-year=2024` — Aggregate school stats to DeSO indicators
 - `normalize:indicators --year=2024` — Normalize all active indicators
 - `compute:scores --year=2024` — Compute composite scores
 
 ### Service Architecture
 - `ScbApiService` — Fetches and parses SCB PX-Web data
+- `SkolverketApiService` — Fetches school registry and statistics data
 - `NormalizationService` — Rank percentile, min-max, z-score normalization
 - `ScoringService` — Weighted composite scores with direction handling
 
 ### Key Routes
 - `/api/deso/scores?year=2024` — Returns composite scores keyed by deso_code (1-hour cache)
+- `/api/deso/{desoCode}/schools` — Returns schools for a specific DeSO with latest statistics
 - `/admin/indicators` — Admin dashboard for indicator management
 - `/admin/indicators/{indicator}` — Update indicator weight/direction
 - `/admin/recompute` — Re-normalize and recompute all scores

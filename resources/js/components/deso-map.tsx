@@ -1,16 +1,28 @@
 import Feature from 'ol/Feature';
 import Map from 'ol/Map';
+import Overlay from 'ol/Overlay';
 import View from 'ol/View';
 import GeoJSON from 'ol/format/GeoJSON';
+import Point from 'ol/geom/Point';
 import TileLayer from 'ol/layer/Tile';
 import VectorLayer from 'ol/layer/Vector';
 import { fromLonLat } from 'ol/proj';
 import OSM from 'ol/source/OSM';
 import VectorSource from 'ol/source/Vector';
+import CircleStyle from 'ol/style/Circle';
 import Fill from 'ol/style/Fill';
 import Stroke from 'ol/style/Stroke';
 import Style from 'ol/style/Style';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+    forwardRef,
+    useCallback,
+    useEffect,
+    useImperativeHandle,
+    useRef,
+    useState,
+} from 'react';
+
+import type { School } from '@/pages/map';
 
 import 'ol/ol.css';
 
@@ -33,6 +45,12 @@ export interface DesoScore {
     top_negative: string[] | null;
 }
 
+export interface DesoMapHandle {
+    updateSize: () => void;
+    clearSchoolMarkers: () => void;
+    setSchoolMarkers: (schools: School[]) => void;
+}
+
 interface DesoMapProps {
     initialCenter: [number, number];
     initialZoom: number;
@@ -40,15 +58,16 @@ interface DesoMapProps {
         properties: DesoProperties | null,
         score: DesoScore | null,
     ) => void;
+    onSchoolClick?: (schoolCode: string) => void;
 }
 
 // Color stops: purple(0) -> red-purple(25) -> yellow(50) -> light-green(75) -> deep-green(100)
 const COLOR_STOPS = [
-    { score: 0, r: 74, g: 0, b: 114 },    // #4a0072
-    { score: 25, r: 156, g: 29, b: 110 },  // #9c1d6e
-    { score: 50, r: 240, g: 192, b: 64 },  // #f0c040
-    { score: 75, r: 106, g: 191, b: 75 },  // #6abf4b
-    { score: 100, r: 26, g: 122, b: 46 },  // #1a7a2e
+    { score: 0, r: 74, g: 0, b: 114 }, // #4a0072
+    { score: 25, r: 156, g: 29, b: 110 }, // #9c1d6e
+    { score: 50, r: 240, g: 192, b: 64 }, // #f0c040
+    { score: 75, r: 106, g: 191, b: 75 }, // #6abf4b
+    { score: 100, r: 26, g: 122, b: 46 }, // #1a7a2e
 ];
 
 function interpolateColor(score: number): [number, number, number, number] {
@@ -75,6 +94,13 @@ function interpolateColor(score: number): [number, number, number, number] {
         Math.round(lower.b + (upper.b - lower.b) * t),
         180, // alpha
     ];
+}
+
+function schoolMarkerColor(merit: number | null): string {
+    if (merit === null) return 'rgba(156, 163, 175, 0.9)'; // gray
+    if (merit > 230) return 'rgba(34, 197, 94, 0.9)'; // green
+    if (merit >= 200) return 'rgba(234, 179, 8, 0.9)'; // yellow
+    return 'rgba(249, 115, 22, 0.9)'; // orange
 }
 
 const noDataStyle = new Style({
@@ -113,16 +139,19 @@ function ScoreLegend() {
     );
 }
 
-export default function DesoMap({
-    initialCenter,
-    initialZoom,
-    onFeatureSelect,
-}: DesoMapProps) {
-    const mapRef = useRef<HTMLDivElement>(null);
+const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
+    { initialCenter, initialZoom, onFeatureSelect, onSchoolClick },
+    ref,
+) {
+    const mapDivRef = useRef<HTMLDivElement>(null);
     const mapInstance = useRef<Map | null>(null);
     const hoveredFeature = useRef<Feature | null>(null);
     const selectedFeature = useRef<Feature | null>(null);
     const scoresRef = useRef<Record<string, DesoScore>>({});
+    const schoolLayerRef = useRef<VectorLayer | null>(null);
+    const schoolSourceRef = useRef<VectorSource | null>(null);
+    const tooltipRef = useRef<HTMLDivElement>(null);
+    const tooltipOverlayRef = useRef<Overlay | null>(null);
     const [loading, setLoading] = useState(true);
 
     const handleFeatureSelect = useCallback(
@@ -132,8 +161,46 @@ export default function DesoMap({
         [onFeatureSelect],
     );
 
+    useImperativeHandle(ref, () => ({
+        updateSize() {
+            mapInstance.current?.updateSize();
+        },
+        clearSchoolMarkers() {
+            schoolSourceRef.current?.clear();
+        },
+        setSchoolMarkers(schools: School[]) {
+            const source = schoolSourceRef.current;
+            if (!source) return;
+            source.clear();
+
+            const features = schools
+                .filter((s) => s.lat !== null && s.lng !== null)
+                .map((s) => {
+                    const feature = new Feature({
+                        geometry: new Point(fromLonLat([s.lng!, s.lat!])),
+                        school_unit_code: s.school_unit_code,
+                        name: s.name,
+                        merit_value: s.merit_value,
+                        type: s.type,
+                    });
+                    feature.setStyle(
+                        new Style({
+                            image: new CircleStyle({
+                                radius: 7,
+                                fill: new Fill({ color: schoolMarkerColor(s.merit_value) }),
+                                stroke: new Stroke({ color: '#fff', width: 2 }),
+                            }),
+                        }),
+                    );
+                    return feature;
+                });
+
+            source.addFeatures(features);
+        },
+    }));
+
     useEffect(() => {
-        if (!mapRef.current) return;
+        if (!mapDivRef.current || !tooltipRef.current) return;
 
         const vectorSource = new VectorSource();
 
@@ -145,7 +212,9 @@ export default function DesoMap({
 
             const [r, g, b, a] = interpolateColor(scoreData.score);
             return new Style({
-                fill: new Fill({ color: `rgba(${r}, ${g}, ${b}, ${a / 255})` }),
+                fill: new Fill({
+                    color: `rgba(${r}, ${g}, ${b}, ${a / 255})`,
+                }),
                 stroke: new Stroke({
                     color: `rgba(${Math.max(0, r - 30)}, ${Math.max(0, g - 30)}, ${Math.max(0, b - 30)}, 0.7)`,
                     width: 0.5,
@@ -158,14 +227,32 @@ export default function DesoMap({
             style: (feature) => styleForFeature(feature as Feature),
         });
 
+        // School markers layer (on top)
+        const schoolSource = new VectorSource();
+        schoolSourceRef.current = schoolSource;
+        const schoolLayer = new VectorLayer({
+            source: schoolSource,
+            zIndex: 10,
+        });
+        schoolLayerRef.current = schoolLayer;
+
+        // Tooltip overlay
+        const tooltipOverlay = new Overlay({
+            element: tooltipRef.current,
+            positioning: 'bottom-center',
+            offset: [0, -12],
+            stopEvent: false,
+        });
+        tooltipOverlayRef.current = tooltipOverlay;
+
         const map = new Map({
-            target: mapRef.current,
+            target: mapDivRef.current,
             layers: [
-                new TileLayer({
-                    source: new OSM(),
-                }),
+                new TileLayer({ source: new OSM() }),
                 vectorLayer,
+                schoolLayer,
             ],
+            overlays: [tooltipOverlay],
             view: new View({
                 center: fromLonLat([initialCenter[1], initialCenter[0]]),
                 zoom: initialZoom,
@@ -180,18 +267,21 @@ export default function DesoMap({
             fetch('/api/deso/scores?year=2024').then((r) => r.json()),
         ])
             .then(([geojson, scores]) => {
-                // Parse scores - they come as JSON strings from the API
                 const parsedScores: Record<string, DesoScore> = {};
                 for (const [code, data] of Object.entries(scores)) {
                     const d = data as Record<string, unknown>;
                     parsedScores[code] = {
                         deso_code: code,
                         score: Number(d.score),
-                        trend_1y: d.trend_1y != null ? Number(d.trend_1y) : null,
+                        trend_1y:
+                            d.trend_1y != null ? Number(d.trend_1y) : null,
                         factor_scores:
                             typeof d.factor_scores === 'string'
                                 ? JSON.parse(d.factor_scores)
-                                : (d.factor_scores as Record<string, number> | null),
+                                : (d.factor_scores as Record<
+                                      string,
+                                      number
+                                  > | null),
                         top_positive:
                             typeof d.top_positive === 'string'
                                 ? JSON.parse(d.top_positive)
@@ -220,9 +310,45 @@ export default function DesoMap({
         map.on('pointermove', (evt) => {
             if (evt.dragging) return;
 
+            // Check school markers first
+            const schoolFeature = map.forEachFeatureAtPixel(
+                evt.pixel,
+                (f) => f as Feature,
+                { layerFilter: (l) => l === schoolLayer },
+            );
+
+            if (schoolFeature) {
+                const name = schoolFeature.get('name');
+                const merit = schoolFeature.get('merit_value');
+                const tooltipEl = tooltipRef.current;
+                if (tooltipEl) {
+                    tooltipEl.innerHTML = `<strong>${name}</strong>${merit !== null ? `<br/>Meritvärde: ${merit}` : ''}`;
+                    tooltipEl.style.display = 'block';
+                }
+                tooltipOverlay.setPosition(evt.coordinate);
+                map.getTargetElement().style.cursor = 'pointer';
+
+                // Reset hovered DeSO
+                if (
+                    hoveredFeature.current &&
+                    hoveredFeature.current !== selectedFeature.current
+                ) {
+                    hoveredFeature.current.setStyle(undefined);
+                    hoveredFeature.current = null;
+                }
+                return;
+            }
+
+            // Hide tooltip when not on school
+            if (tooltipRef.current) {
+                tooltipRef.current.style.display = 'none';
+            }
+
+            // DeSO polygon hover
             const feature = map.forEachFeatureAtPixel(
                 evt.pixel,
                 (f) => f as Feature,
+                { layerFilter: (l) => l === vectorLayer },
             );
 
             if (
@@ -273,9 +399,26 @@ export default function DesoMap({
 
         // Click interaction
         map.on('click', (evt) => {
+            // Check school markers first
+            const schoolFeature = map.forEachFeatureAtPixel(
+                evt.pixel,
+                (f) => f as Feature,
+                { layerFilter: (l) => l === schoolLayer },
+            );
+
+            if (schoolFeature) {
+                const code = schoolFeature.get('school_unit_code');
+                if (code && onSchoolClick) {
+                    onSchoolClick(code);
+                }
+                return; // Don't deselect DeSO when clicking a school
+            }
+
+            // DeSO polygon click
             const feature = map.forEachFeatureAtPixel(
                 evt.pixel,
                 (f) => f as Feature,
+                { layerFilter: (l) => l === vectorLayer },
             );
 
             if (selectedFeature.current) {
@@ -311,11 +454,16 @@ export default function DesoMap({
         return () => {
             map.setTarget(undefined);
         };
-    }, [initialCenter, initialZoom, handleFeatureSelect]);
+    }, [initialCenter, initialZoom, handleFeatureSelect, onSchoolClick]);
 
     return (
         <div className="relative h-full w-full">
-            <div ref={mapRef} className="h-full w-full" />
+            <div ref={mapDivRef} className="h-full w-full" />
+            <div
+                ref={tooltipRef}
+                className="pointer-events-none rounded bg-gray-900 px-2 py-1 text-xs text-white shadow-lg"
+                style={{ display: 'none' }}
+            />
             <ScoreLegend />
             {loading && (
                 <div className="bg-background/80 absolute inset-0 flex items-center justify-center">
@@ -326,4 +474,6 @@ export default function DesoMap({
             )}
         </div>
     );
-}
+});
+
+export default DesoMap;

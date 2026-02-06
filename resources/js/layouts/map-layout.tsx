@@ -14,7 +14,9 @@ export default function MapLayout({ children }: MapLayoutProps) {
                     </h1>
                 </div>
             </header>
-            <main className="relative min-h-0 flex-1">{children}</main>
+            <main className="relative flex min-h-0 flex-1 flex-col md:flex-row">
+                {children}
+            </main>
         </div>
     );
 }

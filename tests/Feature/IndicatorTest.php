@@ -14,10 +14,13 @@ class IndicatorTest extends TestCase
     {
         $this->seed(\Database\Seeders\IndicatorSeeder::class);
 
-        $this->assertDatabaseCount('indicators', 8);
+        $this->assertDatabaseCount('indicators', 11);
         $this->assertDatabaseHas('indicators', ['slug' => 'median_income', 'direction' => 'positive']);
         $this->assertDatabaseHas('indicators', ['slug' => 'low_economic_standard_pct', 'direction' => 'negative']);
         $this->assertDatabaseHas('indicators', ['slug' => 'foreign_background_pct', 'direction' => 'neutral', 'weight' => 0.0]);
+        $this->assertDatabaseHas('indicators', ['slug' => 'school_merit_value_avg', 'source' => 'skolverket']);
+        $this->assertDatabaseHas('indicators', ['slug' => 'school_goal_achievement_avg', 'source' => 'skolverket']);
+        $this->assertDatabaseHas('indicators', ['slug' => 'school_teacher_certification_avg', 'source' => 'skolverket']);
     }
 
     public function test_indicator_seeder_is_idempotent(): void
@@ -25,7 +28,7 @@ class IndicatorTest extends TestCase
         $this->seed(\Database\Seeders\IndicatorSeeder::class);
         $this->seed(\Database\Seeders\IndicatorSeeder::class);
 
-        $this->assertDatabaseCount('indicators', 8);
+        $this->assertDatabaseCount('indicators', 11);
     }
 
     public function test_indicator_weight_sum_is_half(): void
@@ -34,7 +37,7 @@ class IndicatorTest extends TestCase
 
         $totalWeight = Indicator::query()->sum('weight');
 
-        $this->assertEquals(0.5, (float) $totalWeight);
+        $this->assertEquals(0.65, (float) $totalWeight);
     }
 
     public function test_indicator_has_values_relationship(): void

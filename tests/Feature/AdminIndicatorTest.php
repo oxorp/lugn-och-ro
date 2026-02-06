@@ -19,7 +19,7 @@ class AdminIndicatorTest extends TestCase
         $response->assertOk();
         $response->assertInertia(fn ($page) => $page
             ->component('admin/indicators')
-            ->has('indicators', 8)
+            ->has('indicators', 11)
         );
     }
 

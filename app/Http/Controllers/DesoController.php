@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\School;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -68,5 +69,28 @@ class DesoController extends Controller
 
         return response()->json($scores)
             ->header('Cache-Control', 'public, max-age=3600');
+    }
+
+    public function schools(string $desoCode): JsonResponse
+    {
+        $schools = School::query()
+            ->where('deso_code', $desoCode)
+            ->where('status', 'active')
+            ->with('latestStatistics')
+            ->get()
+            ->map(fn (School $school) => [
+                'school_unit_code' => $school->school_unit_code,
+                'name' => $school->name,
+                'type' => $school->type_of_schooling,
+                'operator_type' => $school->operator_type,
+                'lat' => $school->lat ? (float) $school->lat : null,
+                'lng' => $school->lng ? (float) $school->lng : null,
+                'merit_value' => $school->latestStatistics?->merit_value_17 ? (float) $school->latestStatistics->merit_value_17 : null,
+                'goal_achievement' => $school->latestStatistics?->goal_achievement_pct ? (float) $school->latestStatistics->goal_achievement_pct : null,
+                'teacher_certification' => $school->latestStatistics?->teacher_certification_pct ? (float) $school->latestStatistics->teacher_certification_pct : null,
+                'student_count' => $school->latestStatistics?->student_count,
+            ]);
+
+        return response()->json($schools);
     }
 }
