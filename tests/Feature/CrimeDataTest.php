@@ -7,6 +7,7 @@ use App\Models\DesoVulnerabilityMapping;
 use App\Models\Indicator;
 use App\Models\IndicatorValue;
 use App\Models\NtuSurveyData;
+use App\Models\User;
 use App\Models\VulnerabilityArea;
 use App\Services\BraDataService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -224,7 +225,9 @@ class CrimeDataTest extends TestCase
 
     public function test_crime_api_endpoint_returns_404_for_unknown_deso(): void
     {
-        $response = $this->getJson('/api/deso/UNKNOWN/crime?year=2024');
+        $admin = User::factory()->create(['is_admin' => true]);
+
+        $response = $this->actingAs($admin)->getJson('/api/deso/UNKNOWN/crime?year=2024');
 
         $response->assertNotFound();
     }
@@ -261,7 +264,9 @@ class CrimeDataTest extends TestCase
             'rate_per_100k' => 19108.00,
         ]);
 
-        $response = $this->getJson('/api/deso/0180C6250/crime?year=2024');
+        $admin = User::factory()->create(['is_admin' => true]);
+
+        $response = $this->actingAs($admin)->getJson('/api/deso/0180C6250/crime?year=2024');
 
         $response->assertOk();
         $response->assertJsonStructure([
@@ -302,7 +307,9 @@ class CrimeDataTest extends TestCase
             'tier' => 'sarskilt_utsatt',
         ]);
 
-        $response = $this->getJson('/api/deso/1280C1800/crime?year=2024');
+        $admin = User::factory()->create(['is_admin' => true]);
+
+        $response = $this->actingAs($admin)->getJson('/api/deso/1280C1800/crime?year=2024');
 
         $response->assertOk();
         $response->assertJsonPath('vulnerability.name', 'Rosengård');

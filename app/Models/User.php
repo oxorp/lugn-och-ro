@@ -4,6 +4,8 @@ namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Fortify\TwoFactorAuthenticatable;
@@ -22,6 +24,7 @@ class User extends Authenticatable
         'name',
         'email',
         'password',
+        'is_admin',
     ];
 
     /**
@@ -37,8 +40,6 @@ class User extends Authenticatable
     ];
 
     /**
-     * Get the attributes that should be cast.
-     *
      * @return array<string, string>
      */
     protected function casts(): array
@@ -47,6 +48,56 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'two_factor_confirmed_at' => 'datetime',
+            'is_admin' => 'boolean',
         ];
+    }
+
+    public function unlocks(): HasMany
+    {
+        return $this->hasMany(UserUnlock::class);
+    }
+
+    public function activeSubscription(): HasOne
+    {
+        return $this->hasOne(Subscription::class)
+            ->where('status', 'active')
+            ->where('current_period_end', '>', now());
+    }
+
+    public function isAdmin(): bool
+    {
+        return (bool) $this->is_admin;
+    }
+
+    public function hasActiveSubscription(): bool
+    {
+        return $this->activeSubscription()->exists();
+    }
+
+    public function hasUnlocked(string $desoCode): bool
+    {
+        // Check direct DeSO unlock
+        if ($this->unlocks()->where('unlock_type', 'deso')->where('unlock_code', $desoCode)->exists()) {
+            return true;
+        }
+
+        // Check kommun unlock (DeSO code starts with 4-digit kommun code)
+        $kommunCode = substr($desoCode, 0, 4);
+        if ($this->unlocks()->where('unlock_type', 'kommun')->where('unlock_code', $kommunCode)->exists()) {
+            return true;
+        }
+
+        // Check län unlock (first 2 digits)
+        $lanCode = substr($desoCode, 0, 2);
+        if ($this->unlocks()->where('unlock_type', 'lan')->where('unlock_code', $lanCode)->exists()) {
+            return true;
+        }
+
+        return false;
+    }
+
+    public function hasApiAccess(): bool
+    {
+        return (bool) $this->is_admin;
     }
 }

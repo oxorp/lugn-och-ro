@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\School;
 use App\Models\SchoolStatistic;
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -17,6 +18,11 @@ class SchoolTest extends TestCase
         parent::setUp();
 
         DB::statement('CREATE EXTENSION IF NOT EXISTS postgis');
+    }
+
+    private function actingAsAdmin(): static
+    {
+        return $this->actingAs(User::factory()->create(['is_admin' => true]));
     }
 
     public function test_school_can_be_created_with_factory(): void
@@ -82,15 +88,16 @@ class SchoolTest extends TestCase
             'merit_value_17' => 245.0,
         ]);
 
-        $response = $this->getJson('/api/deso/0114A0010/schools');
+        $response = $this->actingAsAdmin()->getJson('/api/deso/0114A0010/schools');
 
         $response->assertOk();
-        $response->assertJsonCount(1);
-        $response->assertJsonPath('0.school_unit_code', $school->school_unit_code);
-        $response->assertJsonPath('0.name', $school->name);
-        $response->assertJsonPath('0.school_forms', ['Grundskola']);
+        $response->assertJsonPath('school_count', 1);
+        $response->assertJsonCount(1, 'schools');
+        $response->assertJsonPath('schools.0.school_unit_code', $school->school_unit_code);
+        $response->assertJsonPath('schools.0.name', $school->name);
+        $response->assertJsonPath('schools.0.school_forms', ['Grundskola']);
         $data = $response->json();
-        $this->assertEquals(245.0, $data[0]['merit_value']);
+        $this->assertEquals(245.0, $data['schools'][0]['merit_value']);
     }
 
     public function test_schools_api_excludes_inactive_schools(): void
@@ -100,18 +107,19 @@ class SchoolTest extends TestCase
             'status' => 'inactive',
         ]);
 
-        $response = $this->getJson('/api/deso/0114A0010/schools');
+        $response = $this->actingAsAdmin()->getJson('/api/deso/0114A0010/schools');
 
         $response->assertOk();
-        $response->assertJsonCount(0);
+        $response->assertJsonPath('school_count', 0);
     }
 
     public function test_schools_api_returns_empty_for_deso_without_schools(): void
     {
-        $response = $this->getJson('/api/deso/9999Z9999/schools');
+        $response = $this->actingAsAdmin()->getJson('/api/deso/9999Z9999/schools');
 
         $response->assertOk();
-        $response->assertJsonCount(0);
+        $response->assertJsonPath('school_count', 0);
+        $response->assertJsonPath('schools', []);
     }
 
     public function test_schools_api_only_returns_schools_for_requested_deso(): void
@@ -119,10 +127,10 @@ class SchoolTest extends TestCase
         School::factory()->create(['deso_code' => '0114A0010', 'status' => 'active']);
         School::factory()->create(['deso_code' => '0180A0020', 'status' => 'active']);
 
-        $response = $this->getJson('/api/deso/0114A0010/schools');
+        $response = $this->actingAsAdmin()->getJson('/api/deso/0114A0010/schools');
 
         $response->assertOk();
-        $response->assertJsonCount(1);
+        $response->assertJsonCount(1, 'schools');
     }
 
     public function test_schools_api_includes_null_stats_when_no_statistics(): void
@@ -132,12 +140,12 @@ class SchoolTest extends TestCase
             'status' => 'active',
         ]);
 
-        $response = $this->getJson('/api/deso/0114A0010/schools');
+        $response = $this->actingAsAdmin()->getJson('/api/deso/0114A0010/schools');
 
         $response->assertOk();
-        $response->assertJsonCount(1);
-        $response->assertJsonPath('0.merit_value', null);
-        $response->assertJsonPath('0.goal_achievement', null);
+        $response->assertJsonCount(1, 'schools');
+        $response->assertJsonPath('schools.0.merit_value', null);
+        $response->assertJsonPath('schools.0.goal_achievement', null);
     }
 
     public function test_school_statistic_unique_constraint(): void
@@ -187,10 +195,10 @@ class SchoolTest extends TestCase
             'type_of_schooling' => 'Gymnasieskola',
         ]);
 
-        $response = $this->getJson('/api/deso/0114A0010/schools');
+        $response = $this->actingAsAdmin()->getJson('/api/deso/0114A0010/schools');
 
         $response->assertOk();
-        $response->assertJsonPath('0.school_forms', ['Gymnasieskola']);
+        $response->assertJsonPath('schools.0.school_forms', ['Gymnasieskola']);
     }
 
     public function test_schools_api_returns_all_school_forms(): void
@@ -208,9 +216,9 @@ class SchoolTest extends TestCase
             'type_of_schooling' => 'Gymnasieskola',
         ]);
 
-        $response = $this->getJson('/api/deso/0114A0010/schools');
+        $response = $this->actingAsAdmin()->getJson('/api/deso/0114A0010/schools');
 
         $response->assertOk();
-        $response->assertJsonCount(2);
+        $response->assertJsonCount(2, 'schools');
     }
 }

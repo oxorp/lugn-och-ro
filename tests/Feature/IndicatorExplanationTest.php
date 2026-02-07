@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Indicator;
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -18,6 +19,11 @@ class IndicatorExplanationTest extends TestCase
         $this->seed(\Database\Seeders\CrimeIndicatorSeeder::class);
         $this->seed(\Database\Seeders\KronofogdenIndicatorSeeder::class);
         $this->seed(\Database\Seeders\PoiIndicatorSeeder::class);
+    }
+
+    private function actingAsAdmin(): static
+    {
+        return $this->actingAs(User::factory()->create(['is_admin' => true]));
     }
 
     public function test_explanation_seeder_populates_all_indicators(): void
@@ -91,7 +97,7 @@ class IndicatorExplanationTest extends TestCase
 
         $indicator = Indicator::query()->where('slug', 'median_income')->first();
 
-        $response = $this->put(route('admin.indicators.update', $indicator), [
+        $response = $this->actingAsAdmin()->put(route('admin.indicators.update', $indicator), [
             'direction' => 'positive',
             'weight' => 0.065,
             'normalization' => 'rank_percentile',
@@ -122,7 +128,7 @@ class IndicatorExplanationTest extends TestCase
 
         $indicator = Indicator::query()->where('slug', 'median_income')->first();
 
-        $response = $this->put(route('admin.indicators.update', $indicator), [
+        $response = $this->actingAsAdmin()->put(route('admin.indicators.update', $indicator), [
             'direction' => 'positive',
             'weight' => 0.065,
             'normalization' => 'rank_percentile',
@@ -138,7 +144,7 @@ class IndicatorExplanationTest extends TestCase
     {
         $indicator = Indicator::query()->first();
 
-        $response = $this->put(route('admin.indicators.update', $indicator), [
+        $response = $this->actingAsAdmin()->put(route('admin.indicators.update', $indicator), [
             'direction' => $indicator->direction,
             'weight' => $indicator->weight,
             'normalization' => $indicator->normalization,
@@ -154,7 +160,7 @@ class IndicatorExplanationTest extends TestCase
     {
         $this->seed(\Database\Seeders\IndicatorExplanationSeeder::class);
 
-        $response = $this->get(route('admin.indicators'));
+        $response = $this->actingAsAdmin()->get(route('admin.indicators'));
 
         $response->assertOk();
         $response->assertInertia(fn ($page) => $page
@@ -168,7 +174,7 @@ class IndicatorExplanationTest extends TestCase
     {
         $indicator = Indicator::query()->where('slug', 'median_income')->first();
 
-        $response = $this->put(route('admin.indicators.update', $indicator), [
+        $response = $this->actingAsAdmin()->put(route('admin.indicators.update', $indicator), [
             'direction' => 'positive',
             'weight' => 0.065,
             'normalization' => 'rank_percentile',

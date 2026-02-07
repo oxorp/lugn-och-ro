@@ -2,10 +2,14 @@
 
 namespace Tests\Feature;
 
+use App\Models\User;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
 class LocaleTest extends TestCase
 {
+    use RefreshDatabase;
+
     public function test_root_url_serves_swedish_locale(): void
     {
         $response = $this->get('/');
@@ -111,7 +115,9 @@ class LocaleTest extends TestCase
 
     public function test_admin_routes_work_with_en_prefix(): void
     {
-        $response = $this->get('/en/admin/indicators');
+        $admin = User::factory()->create(['is_admin' => true]);
+
+        $response = $this->actingAs($admin)->get('/en/admin/indicators');
 
         $response->assertStatus(200);
         $this->assertEquals('en', app()->getLocale());
@@ -119,7 +125,9 @@ class LocaleTest extends TestCase
 
     public function test_admin_routes_work_with_sv_default(): void
     {
-        $response = $this->get('/admin/indicators');
+        $admin = User::factory()->create(['is_admin' => true]);
+
+        $response = $this->actingAs($admin)->get('/admin/indicators');
 
         $response->assertStatus(200);
         $this->assertEquals('sv', app()->getLocale());

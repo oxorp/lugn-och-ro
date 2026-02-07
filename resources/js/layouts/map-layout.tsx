@@ -1,4 +1,4 @@
-import { Link } from '@inertiajs/react';
+import { Link, router, usePage } from '@inertiajs/react';
 import { type ReactNode } from 'react';
 
 import LanguageSwitcher from '@/components/language-switcher';
@@ -6,6 +6,7 @@ import LocaleSync from '@/components/locale-sync';
 import { Toaster } from '@/components/ui/sonner';
 import { useTranslation } from '@/hooks/use-translation';
 import { map, methodology } from '@/routes';
+import type { SharedData } from '@/types';
 
 interface MapLayoutProps {
     children: ReactNode;
@@ -13,6 +14,10 @@ interface MapLayoutProps {
 
 export default function MapLayout({ children }: MapLayoutProps) {
     const { t } = useTranslation();
+    const { auth, appEnv } = usePage<SharedData & { appEnv: string }>().props;
+    const isLocal = appEnv === 'local';
+    const user = auth?.user;
+    const isAdmin = !!user?.is_admin;
 
     return (
         <div className="flex h-screen flex-col">
@@ -42,6 +47,18 @@ export default function MapLayout({ children }: MapLayoutProps) {
                             Pipeline
                         </Link>
                     </nav>
+                    {isLocal && user && (
+                        <button
+                            onClick={() => router.post('/dev/toggle-admin', {}, { preserveScroll: true })}
+                            className={`rounded-md border px-2 py-0.5 text-xs font-medium transition-colors ${
+                                isAdmin
+                                    ? 'border-amber-500/50 bg-amber-500/10 text-amber-600'
+                                    : 'border-border bg-muted text-muted-foreground'
+                            }`}
+                        >
+                            {isAdmin ? 'Admin' : 'User'}
+                        </button>
+                    )}
                     <LanguageSwitcher />
                 </div>
             </header>

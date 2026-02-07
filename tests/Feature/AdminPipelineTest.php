@@ -6,6 +6,7 @@ use App\Console\Concerns\LogsIngestion;
 use App\Jobs\RunFullPipeline;
 use App\Jobs\RunIngestionCommand;
 use App\Models\IngestionLog;
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
@@ -14,9 +15,14 @@ class AdminPipelineTest extends TestCase
 {
     use RefreshDatabase;
 
+    private function actingAsAdmin(): static
+    {
+        return $this->actingAs(User::factory()->create(['is_admin' => true]));
+    }
+
     public function test_pipeline_page_loads(): void
     {
-        $response = $this->get(route('admin.pipeline'));
+        $response = $this->actingAsAdmin()->get(route('admin.pipeline'));
 
         $response->assertOk();
         $response->assertInertia(fn ($page) => $page
@@ -31,7 +37,7 @@ class AdminPipelineTest extends TestCase
 
     public function test_pipeline_page_shows_all_configured_sources(): void
     {
-        $response = $this->get(route('admin.pipeline'));
+        $response = $this->actingAsAdmin()->get(route('admin.pipeline'));
 
         $response->assertOk();
         $response->assertInertia(fn ($page) => $page
@@ -41,7 +47,7 @@ class AdminPipelineTest extends TestCase
 
     public function test_pipeline_source_page_loads(): void
     {
-        $response = $this->get(route('admin.pipeline.show', 'scb'));
+        $response = $this->actingAsAdmin()->get(route('admin.pipeline.show', 'scb'));
 
         $response->assertOk();
         $response->assertInertia(fn ($page) => $page
@@ -54,14 +60,14 @@ class AdminPipelineTest extends TestCase
 
     public function test_pipeline_source_page_404_for_unknown_source(): void
     {
-        $response = $this->get(route('admin.pipeline.show', 'nonexistent'));
+        $response = $this->actingAsAdmin()->get(route('admin.pipeline.show', 'nonexistent'));
 
         $response->assertNotFound();
     }
 
     public function test_pipeline_health_is_unknown_when_never_run(): void
     {
-        $response = $this->get(route('admin.pipeline'));
+        $response = $this->actingAsAdmin()->get(route('admin.pipeline'));
 
         $response->assertOk();
         $response->assertInertia(fn ($page) => $page
@@ -79,7 +85,7 @@ class AdminPipelineTest extends TestCase
             'completed_at' => now(),
         ]);
 
-        $response = $this->get(route('admin.pipeline'));
+        $response = $this->actingAsAdmin()->get(route('admin.pipeline'));
 
         $response->assertOk();
         $response->assertInertia(fn ($page) => $page
@@ -96,7 +102,7 @@ class AdminPipelineTest extends TestCase
             'started_at' => now(),
         ]);
 
-        $response = $this->get(route('admin.pipeline'));
+        $response = $this->actingAsAdmin()->get(route('admin.pipeline'));
 
         $response->assertOk();
         $response->assertInertia(fn ($page) => $page
@@ -118,7 +124,7 @@ class AdminPipelineTest extends TestCase
             'summary' => 'Processed: 6160 | Updated: 6060',
         ]);
 
-        $response = $this->get(route('admin.pipeline.log', $log));
+        $response = $this->actingAsAdmin()->get(route('admin.pipeline.log', $log));
 
         $response->assertOk();
         $response->assertJsonFragment([
@@ -132,7 +138,7 @@ class AdminPipelineTest extends TestCase
     {
         Queue::fake();
 
-        $response = $this->post(route('admin.pipeline.run', 'scb'), [
+        $response = $this->actingAsAdmin()->post(route('admin.pipeline.run', 'scb'), [
             'command' => 'ingest',
         ]);
 
@@ -142,7 +148,7 @@ class AdminPipelineTest extends TestCase
 
     public function test_pipeline_run_rejects_unknown_command(): void
     {
-        $response = $this->post(route('admin.pipeline.run', 'scb'), [
+        $response = $this->actingAsAdmin()->post(route('admin.pipeline.run', 'scb'), [
             'command' => 'nonexistent',
         ]);
 
@@ -153,7 +159,7 @@ class AdminPipelineTest extends TestCase
     {
         Queue::fake();
 
-        $response = $this->post(route('admin.pipeline.run-all'));
+        $response = $this->actingAsAdmin()->post(route('admin.pipeline.run-all'));
 
         $response->assertRedirect();
         Queue::assertPushed(RunFullPipeline::class);
@@ -171,7 +177,7 @@ class AdminPipelineTest extends TestCase
             'summary' => 'Test run',
         ]);
 
-        $response = $this->get(route('admin.pipeline'));
+        $response = $this->actingAsAdmin()->get(route('admin.pipeline'));
 
         $response->assertOk();
         $response->assertInertia(fn ($page) => $page
@@ -198,7 +204,7 @@ class AdminPipelineTest extends TestCase
             'completed_at' => now(),
         ]);
 
-        $response = $this->get(route('admin.pipeline.show', 'scb'));
+        $response = $this->actingAsAdmin()->get(route('admin.pipeline.show', 'scb'));
 
         $response->assertOk();
         $response->assertInertia(fn ($page) => $page
@@ -296,7 +302,7 @@ class AdminPipelineTest extends TestCase
     {
         $this->seed(\Database\Seeders\IndicatorSeeder::class);
 
-        $response = $this->get(route('admin.pipeline'));
+        $response = $this->actingAsAdmin()->get(route('admin.pipeline'));
 
         $response->assertOk();
         $response->assertInertia(fn ($page) => $page

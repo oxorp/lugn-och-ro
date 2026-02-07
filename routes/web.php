@@ -16,11 +16,13 @@ use Inertia\Inertia;
 // API routes — no locale prefix, no locale middleware
 Route::get('/api/deso/geojson', [DesoController::class, 'geojson'])->name('deso.geojson');
 Route::get('/api/deso/scores', [DesoController::class, 'scores'])->name('deso.scores');
-Route::get('/api/deso/{desoCode}/schools', [DesoController::class, 'schools'])->name('deso.schools');
-Route::get('/api/deso/{desoCode}/crime', [DesoController::class, 'crime'])->name('deso.crime');
-Route::get('/api/deso/{desoCode}/financial', [DesoController::class, 'financial'])->name('deso.financial');
-Route::get('/api/deso/{desoCode}/pois', [DesoController::class, 'pois'])->name('deso.pois');
-Route::get('/api/deso/{desoCode}/indicators', [DesoController::class, 'indicators'])->name('deso.indicators');
+Route::middleware('throttle:deso-detail')->group(function () {
+    Route::get('/api/deso/{desoCode}/schools', [DesoController::class, 'schools'])->name('deso.schools');
+    Route::get('/api/deso/{desoCode}/crime', [DesoController::class, 'crime'])->name('deso.crime');
+    Route::get('/api/deso/{desoCode}/financial', [DesoController::class, 'financial'])->name('deso.financial');
+    Route::get('/api/deso/{desoCode}/pois', [DesoController::class, 'pois'])->name('deso.pois');
+    Route::get('/api/deso/{desoCode}/indicators', [DesoController::class, 'indicators'])->name('deso.indicators');
+});
 
 Route::get('/api/geocode/resolve-deso', [GeocodeController::class, 'resolveDeso'])->name('geocode.resolve-deso');
 
@@ -41,7 +43,7 @@ $webRoutes = function () {
         })->name('dashboard');
     });
 
-    Route::prefix('admin')->group(function () {
+    Route::prefix('admin')->middleware(['auth', 'admin'])->group(function () {
         Route::get('/indicators', [AdminIndicatorController::class, 'index'])->name('admin.indicators');
         Route::put('/indicators/{indicator}', [AdminIndicatorController::class, 'update'])->name('admin.indicators.update');
         Route::post('/recompute-scores', [AdminScoreController::class, 'recompute'])->name('admin.recompute');
@@ -63,5 +65,17 @@ Route::prefix('en')->middleware('set-locale:en')->as('en.')->group($webRoutes);
 
 // Swedish routes — no prefix (default)
 Route::middleware('set-locale:sv')->group($webRoutes);
+
+// Dev-only route to toggle admin status for testing tiering UI
+if (app()->isLocal()) {
+    Route::post('/dev/toggle-admin', function () {
+        $user = request()->user();
+        if ($user) {
+            $user->update(['is_admin' => ! $user->is_admin]);
+        }
+
+        return back();
+    })->middleware('auth')->name('dev.toggle-admin');
+}
 
 require __DIR__.'/settings.php';

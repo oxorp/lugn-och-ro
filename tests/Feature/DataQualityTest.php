@@ -9,6 +9,7 @@ use App\Models\IndicatorValue;
 use App\Models\IngestionLog;
 use App\Models\ScoreVersion;
 use App\Models\SentinelArea;
+use App\Models\User;
 use App\Models\ValidationRule;
 use App\Services\DataValidationService;
 use App\Services\ScoreDriftDetector;
@@ -550,7 +551,8 @@ class DataQualityTest extends TestCase
     public function test_data_quality_dashboard_loads(): void
     {
         $this->withoutVite();
-        $response = $this->get('/admin/data-quality');
+        $admin = User::factory()->create(['is_admin' => true]);
+        $response = $this->actingAs($admin)->get('/admin/data-quality');
         $response->assertOk();
     }
 

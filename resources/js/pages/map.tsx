@@ -1,4 +1,4 @@
-import { Head } from '@inertiajs/react';
+import { Head, Link } from '@inertiajs/react';
 import {
     AlertTriangle,
     ArrowDown,
@@ -8,6 +8,7 @@ import {
     Crosshair,
     Landmark,
     Loader2,
+    Lock,
     MapPin,
     Minus,
     Shield,
@@ -15,6 +16,7 @@ import {
     TriangleAlert,
     X,
 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -55,6 +57,8 @@ interface MapPageProps {
     initialZoom: number;
     indicatorScopes: Record<string, 'national' | 'urbanity_stratified'>;
     indicatorMeta: Record<string, IndicatorMeta>;
+    userTier: number;
+    isAuthenticated: boolean;
 }
 
 export interface School {
@@ -150,26 +154,59 @@ interface IndicatorTrendData {
 interface IndicatorDataItem {
     slug: string;
     name: string;
-    raw_value: number | null;
-    normalized_value: number | null;
-    unit: string | null;
-    direction: 'positive' | 'negative' | 'neutral';
-    normalization_scope: 'national' | 'urbanity_stratified';
-    trend: IndicatorTrendData | null;
-    history: Array<{ year: number; value: number | null }>;
+    raw_value?: number | null;
+    normalized_value?: number | null;
+    unit?: string | null;
+    direction?: 'positive' | 'negative' | 'neutral';
+    normalization_scope?: 'national' | 'urbanity_stratified';
+    trend?: IndicatorTrendData | null;
+    history?: Array<{ year: number; value: number | null }>;
+    // Tiered fields
+    locked?: boolean;
+    category?: string | null;
+    band?: string | null;
+    bar_width?: number;
+    trend_direction?: string | null;
+    percentile_band?: string | null;
+    raw_value_approx?: string | null;
+    trend_band?: string | null;
+    percentile?: number | null;
+    // Admin fields
+    weight?: number | null;
+    weighted_contribution?: number | null;
+    rank?: number | null;
+    rank_total?: number | null;
+    normalization_method?: string | null;
+    coverage_count?: number | null;
+    coverage_total?: number | null;
+    source_api_path?: string | null;
+    source_field_code?: string | null;
+    data_quality_notes?: string | null;
+    admin_notes?: string | null;
 }
 
 interface IndicatorResponse {
     deso_code: string;
     year: number;
+    tier: number;
     indicators: IndicatorDataItem[];
-    trend_eligible: boolean;
-    trend_meta: {
+    trend_eligible?: boolean;
+    trend_meta?: {
         eligible: boolean;
         reason: string | null;
         indicators_with_trends: number;
         indicators_total: number;
         period: string | null;
+    };
+    unlock_options?: {
+        deso: { code: string; price: number };
+        kommun: { code: string; name: string; price: number };
+    };
+    score_breakdown?: {
+        score: number;
+        factor_scores: Record<string, number>;
+        top_positive: string[];
+        top_negative: string[];
     };
 }
 
@@ -428,6 +465,258 @@ function FactorBar({
                 />
             </div>
         </div>
+    );
+}
+
+const bandLabels: Record<string, string> = {
+    very_high: 'Mycket hög',
+    high: 'Hög',
+    average: 'Medel',
+    low: 'Låg',
+    very_low: 'Mycket låg',
+};
+
+const bandColors: Record<string, string> = {
+    very_high: 'bg-green-500',
+    high: 'bg-green-400',
+    average: 'bg-yellow-400',
+    low: 'bg-red-400',
+    very_low: 'bg-red-500',
+};
+
+const wideBandLabels: Record<string, string> = {
+    top_5: 'Topp 5%',
+    top_10: 'Topp 10%',
+    top_25: 'Topp 25%',
+    upper_half: 'Övre halvan',
+    lower_half: 'Undre halvan',
+    bottom_25: 'Lägsta 25%',
+    bottom_10: 'Lägsta 10%',
+    bottom_5: 'Lägsta 5%',
+};
+
+function LockedIndicator({ name }: { name: string }) {
+    return (
+        <div className="flex items-center justify-between opacity-50">
+            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{name}</span>
+            <div className="h-1.5 w-24 animate-pulse rounded-full bg-muted" />
+        </div>
+    );
+}
+
+function BandIndicator({
+    name,
+    band,
+    barWidth,
+    direction,
+    trendDirection,
+}: {
+    name: string;
+    band: string | null;
+    barWidth: number;
+    direction: string;
+    trendDirection: string | null;
+}) {
+    if (!band) return null;
+
+    // For negative indicators, flip the band display
+    const displayBand = direction === 'negative'
+        ? (band === 'very_high' ? 'very_low' : band === 'high' ? 'low' : band === 'low' ? 'high' : band === 'very_low' ? 'very_high' : band)
+        : band;
+    const effectiveWidth = direction === 'negative' ? 1 - barWidth : barWidth;
+
+    return (
+        <div className="space-y-0.5">
+            <div className="flex items-center justify-between text-xs">
+                <span className="font-medium uppercase tracking-wide text-muted-foreground">{name}</span>
+                <span className="flex items-center gap-1.5">
+                    {trendDirection && trendDirection !== 'insufficient' && (
+                        <span className="text-[11px] text-muted-foreground">
+                            {trendDirection === 'rising' ? '↑' : trendDirection === 'falling' ? '↓' : '→'}
+                        </span>
+                    )}
+                    <span className="text-xs text-muted-foreground">{bandLabels[displayBand] ?? displayBand}</span>
+                </span>
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                <div
+                    className={`h-full rounded-full transition-all ${bandColors[displayBand] ?? 'bg-gray-400'}`}
+                    style={{ width: `${effectiveWidth * 100}%` }}
+                />
+            </div>
+        </div>
+    );
+}
+
+function UnlockedIndicator({
+    name,
+    percentileBand,
+    barWidth,
+    rawValueApprox,
+    direction,
+}: {
+    name: string;
+    percentileBand: string | null;
+    barWidth: number;
+    rawValueApprox: string | null;
+    direction: string;
+}) {
+    if (!percentileBand) return null;
+
+    const effectiveWidth = direction === 'negative' ? 1 - barWidth : barWidth;
+    const effectivePct = effectiveWidth * 100;
+
+    return (
+        <div className="space-y-0.5">
+            <div className="flex items-center justify-between text-xs">
+                <span className="font-medium uppercase tracking-wide text-muted-foreground">{name}</span>
+                <span className="text-xs text-muted-foreground">
+                    {wideBandLabels[percentileBand] ?? percentileBand}
+                    {rawValueApprox && <span className="ml-1">({rawValueApprox})</span>}
+                </span>
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                <div
+                    className="h-full rounded-full transition-all"
+                    style={{ width: `${effectivePct}%`, ...scoreBgStyle(effectivePct) }}
+                />
+            </div>
+        </div>
+    );
+}
+
+function UpgradeCTA({ isAuthenticated, unlockOptions }: {
+    isAuthenticated: boolean;
+    unlockOptions?: IndicatorResponse['unlock_options'];
+}) {
+    const { t } = useTranslation();
+
+    if (!isAuthenticated) {
+        // Public tier - sign up CTA
+        return (
+            <div className="rounded-lg border border-dashed border-border bg-muted/50 p-4 text-center">
+                <Lock className="mx-auto mb-2 h-6 w-6 text-muted-foreground" />
+                <p className="text-sm font-medium">{t('paywall.unlock_title', { defaultValue: 'Se hela analysen' })}</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                    {t('paywall.unlock_description', { defaultValue: 'Skapa ett gratis konto för att se indikatoröversikt, trender och mer.' })}
+                </p>
+                <Link href="/register">
+                    <Button className="mt-3" size="sm">
+                        {t('paywall.create_account', { defaultValue: 'Skapa konto' })}
+                    </Button>
+                </Link>
+            </div>
+        );
+    }
+
+    // Free account - upgrade CTA
+    return (
+        <div className="rounded-lg border border-blue-100 bg-gradient-to-r from-blue-50 to-indigo-50 p-3">
+            <p className="text-sm font-medium">{t('paywall.see_more', { defaultValue: 'Lås upp fullständig analys' })}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+                {t('paywall.see_more_description', { defaultValue: 'Se exakta percentiler, skolresultat, brottsstatistik och trender.' })}
+            </p>
+            <div className="mt-2 flex gap-2">
+                {unlockOptions && (
+                    <Button size="sm" variant="default" disabled>
+                        {t('paywall.unlock_area', { defaultValue: `Lås upp — ${(unlockOptions.deso.price / 100).toFixed(0)} kr` })}
+                    </Button>
+                )}
+                <Button size="sm" variant="outline" disabled>
+                    {t('paywall.subscribe', { defaultValue: 'Prenumerera' })}
+                </Button>
+            </div>
+            <p className="mt-1.5 text-[10px] text-muted-foreground italic">
+                {t('paywall.coming_soon', { defaultValue: 'Betalning kommer snart' })}
+            </p>
+        </div>
+    );
+}
+
+function AdminIndicatorTooltip({ indicator }: { indicator: IndicatorDataItem }) {
+    const [open, setOpen] = useState(false);
+
+    if (!indicator.weight && !indicator.admin_notes) return null;
+
+    return (
+        <TooltipProvider delayDuration={200}>
+            <Tooltip open={open} onOpenChange={setOpen}>
+                <TooltipTrigger asChild>
+                    <button
+                        className="ml-0.5 text-[10px] text-amber-600 hover:text-amber-700"
+                        onClick={() => setOpen(!open)}
+                    >
+                        [A]
+                    </button>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-80 text-xs" side="left" align="start" collisionPadding={16}>
+                    <div className="space-y-2">
+                        {indicator.admin_notes && (
+                            <div className="rounded bg-amber-50 p-1.5 text-amber-800">
+                                <div className="font-semibold">Admin Notes</div>
+                                <div>{indicator.admin_notes}</div>
+                            </div>
+                        )}
+                        {indicator.data_quality_notes && (
+                            <div>
+                                <span className="font-semibold">Data Quality: </span>
+                                {indicator.data_quality_notes}
+                            </div>
+                        )}
+                        <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px]">
+                            {indicator.weight !== null && indicator.weight !== undefined && (
+                                <>
+                                    <span className="text-muted-foreground">Weight:</span>
+                                    <span className="tabular-nums">{indicator.weight}</span>
+                                </>
+                            )}
+                            {indicator.weighted_contribution !== null && indicator.weighted_contribution !== undefined && (
+                                <>
+                                    <span className="text-muted-foreground">Contribution:</span>
+                                    <span className="tabular-nums">{indicator.weighted_contribution} pts</span>
+                                </>
+                            )}
+                            {indicator.rank !== null && indicator.rank_total !== null && (
+                                <>
+                                    <span className="text-muted-foreground">Rank:</span>
+                                    <span className="tabular-nums">{indicator.rank?.toLocaleString()} / {indicator.rank_total?.toLocaleString()}</span>
+                                </>
+                            )}
+                            {indicator.normalized_value !== null && indicator.normalized_value !== undefined && (
+                                <>
+                                    <span className="text-muted-foreground">Normalized:</span>
+                                    <span className="tabular-nums">{(indicator.normalized_value as number).toFixed(4)}</span>
+                                </>
+                            )}
+                            {indicator.normalization_method && (
+                                <>
+                                    <span className="text-muted-foreground">Method:</span>
+                                    <span>{indicator.normalization_method}</span>
+                                </>
+                            )}
+                            {indicator.coverage_count !== null && indicator.coverage_total !== null && (
+                                <>
+                                    <span className="text-muted-foreground">Coverage:</span>
+                                    <span className="tabular-nums">{indicator.coverage_count?.toLocaleString()} / {indicator.coverage_total?.toLocaleString()}</span>
+                                </>
+                            )}
+                            {indicator.source_api_path && (
+                                <>
+                                    <span className="text-muted-foreground">API Path:</span>
+                                    <span className="truncate">{indicator.source_api_path}</span>
+                                </>
+                            )}
+                            {indicator.source_field_code && (
+                                <>
+                                    <span className="text-muted-foreground">Field:</span>
+                                    <span>{indicator.source_field_code}</span>
+                                </>
+                            )}
+                        </div>
+                    </div>
+                </TooltipContent>
+            </Tooltip>
+        </TooltipProvider>
     );
 }
 
@@ -860,7 +1149,7 @@ function FinancialSection({
     );
 }
 
-export default function MapPage({ initialCenter, initialZoom, indicatorScopes, indicatorMeta }: MapPageProps) {
+export default function MapPage({ initialCenter, initialZoom, indicatorScopes, indicatorMeta, userTier, isAuthenticated }: MapPageProps) {
     const { t } = useTranslation();
     const scoreLabel = useScoreLabel();
 
@@ -921,10 +1210,20 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes, i
 
                 fetch(`/api/deso/${properties.deso_code}/schools`)
                     .then((r) => r.json())
-                    .then((data: School[]) => {
-                        setSchools(data);
+                    .then((data: { school_count?: number; schools?: School[]; tier?: number } | School[]) => {
+                        // Handle tiered response
+                        if (Array.isArray(data)) {
+                            setSchools(data);
+                            mapRef.current?.setSchoolMarkers(data);
+                        } else {
+                            setSchools(data.schools ?? []);
+                            if ((data.schools ?? []).length > 0) {
+                                mapRef.current?.setSchoolMarkers(data.schools ?? []);
+                            } else {
+                                mapRef.current?.clearSchoolMarkers();
+                            }
+                        }
                         setSchoolsLoading(false);
-                        mapRef.current?.setSchoolMarkers(data);
                     })
                     .catch(() => {
                         setSchools([]);
@@ -1478,8 +1777,38 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes, i
                                         </div>
                                     ) : indicatorData ? (
                                         <div className="space-y-2">
-                                            {indicatorData.indicators
-                                                .filter((ind) => ind.normalized_value !== null)
+                                            {/* Tier 0 - Public: Locked indicators */}
+                                            {indicatorData.tier === 0 && indicatorData.indicators.map((ind) => (
+                                                <LockedIndicator key={ind.slug} name={indicatorLabel(ind.slug)} />
+                                            ))}
+
+                                            {/* Tier 1 - Free Account: Band indicators */}
+                                            {indicatorData.tier === 1 && indicatorData.indicators.map((ind) => (
+                                                <BandIndicator
+                                                    key={ind.slug}
+                                                    name={indicatorLabel(ind.slug)}
+                                                    band={ind.band ?? null}
+                                                    barWidth={ind.bar_width ?? 0}
+                                                    direction={ind.direction ?? 'positive'}
+                                                    trendDirection={ind.trend_direction ?? null}
+                                                />
+                                            ))}
+
+                                            {/* Tier 2 - Unlocked: Wide band indicators */}
+                                            {indicatorData.tier === 2 && indicatorData.indicators.map((ind) => (
+                                                <UnlockedIndicator
+                                                    key={ind.slug}
+                                                    name={indicatorLabel(ind.slug)}
+                                                    percentileBand={ind.percentile_band ?? null}
+                                                    barWidth={ind.bar_width ?? 0}
+                                                    rawValueApprox={ind.raw_value_approx ?? null}
+                                                    direction={ind.direction ?? 'positive'}
+                                                />
+                                            ))}
+
+                                            {/* Tier 3+ (Subscriber/Enterprise/Admin): Full indicators */}
+                                            {indicatorData.tier >= 3 && indicatorData.indicators
+                                                .filter((ind) => ind.normalized_value !== null && ind.normalized_value !== undefined)
                                                 .map((ind) => (
                                                     <div key={ind.slug} className="flex items-start gap-1">
                                                         <div className="min-w-0 flex-1">
@@ -1489,16 +1818,30 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes, i
                                                                 scope={ind.normalization_scope}
                                                                 urbanityTier={selectedScore?.urbanity_tier}
                                                                 meta={indicatorMeta[ind.slug]}
-                                                                trend={ind.trend}
+                                                                trend={ind.trend ?? null}
                                                                 indicatorDirection={ind.direction}
                                                                 showTrend={indicatorData.trend_eligible}
                                                             />
                                                         </div>
-                                                        {indicatorData.trend_eligible && ind.history.length >= 2 && (
+                                                        {/* Admin tooltip */}
+                                                        {indicatorData.tier >= 99 && (
+                                                            <AdminIndicatorTooltip indicator={ind} />
+                                                        )}
+                                                        {indicatorData.trend_eligible && (ind.history ?? []).length >= 2 && (
                                                             <TrendDetailTooltip indicator={ind} />
                                                         )}
                                                     </div>
                                                 ))}
+
+                                            {/* Upgrade CTA for public and free tiers */}
+                                            {indicatorData.tier <= 1 && (
+                                                <div className="mt-3">
+                                                    <UpgradeCTA
+                                                        isAuthenticated={isAuthenticated}
+                                                        unlockOptions={indicatorData.unlock_options}
+                                                    />
+                                                </div>
+                                            )}
                                         </div>
                                     ) : selectedScore?.factor_scores ? (
                                         <div className="space-y-2">
@@ -1519,13 +1862,21 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes, i
                                 </div>
                             )}
 
-                            {/* Crime & Safety Section */}
-                            <Separator />
-                            <CrimeSection crimeData={crimeData} loading={crimeLoading} />
+                            {/* Crime & Safety Section — hidden for public */}
+                            {userTier >= 1 && (
+                                <>
+                                    <Separator />
+                                    <CrimeSection crimeData={crimeData} loading={crimeLoading} />
+                                </>
+                            )}
 
-                            {/* Financial Health Section */}
-                            <Separator />
-                            <FinancialSection data={financialData} loading={financialLoading} />
+                            {/* Financial Health Section — hidden for public */}
+                            {userTier >= 1 && (
+                                <>
+                                    <Separator />
+                                    <FinancialSection data={financialData} loading={financialLoading} />
+                                </>
+                            )}
 
                             {/* Schools Section */}
                             <Separator />
@@ -1590,8 +1941,8 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes, i
                                 })()}
                             </div>
 
-                            {/* Strengths / Weaknesses */}
-                            {(selectedScore?.top_positive?.length ||
+                            {/* Strengths / Weaknesses — hidden for public, limited for free */}
+                            {userTier >= 1 && (selectedScore?.top_positive?.length ||
                                 selectedScore?.top_negative?.length) && (
                                 <>
                                     <Separator />
@@ -1603,7 +1954,9 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes, i
                                                         {t('sidebar.strengths')}
                                                     </div>
                                                     <div className="flex flex-wrap gap-1">
-                                                        {selectedScore.top_positive.map((slug) => (
+                                                        {selectedScore.top_positive
+                                                            .slice(0, userTier === 1 ? 2 : undefined)
+                                                            .map((slug) => (
                                                             <Badge
                                                                 key={slug}
                                                                 className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700"
@@ -1623,7 +1976,9 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes, i
                                                         {t('sidebar.weaknesses')}
                                                     </div>
                                                     <div className="flex flex-wrap gap-1">
-                                                        {selectedScore.top_negative.map((slug) => (
+                                                        {selectedScore.top_negative
+                                                            .slice(0, userTier === 1 ? 2 : undefined)
+                                                            .map((slug) => (
                                                             <Badge
                                                                 key={slug}
                                                                 className="rounded-full border border-purple-200 bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-700"
@@ -1643,15 +1998,19 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes, i
                             <Separator />
                             <DataFreshness meta={indicatorMeta} />
 
-                            {/* Compare with button */}
-                            <Separator />
-                            <button
-                                onClick={enterCompareWithCurrent}
-                                className="flex w-full items-center justify-center gap-2 rounded-lg border border-border px-3 py-2.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
-                            >
-                                <ArrowLeftRight className="h-4 w-4" />
-                                {t('compare.compare_with')}
-                            </button>
+                            {/* Compare with button — only for authenticated users */}
+                            {userTier >= 1 && (
+                                <>
+                                    <Separator />
+                                    <button
+                                        onClick={enterCompareWithCurrent}
+                                        className="flex w-full items-center justify-center gap-2 rounded-lg border border-border px-3 py-2.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+                                    >
+                                        <ArrowLeftRight className="h-4 w-4" />
+                                        {t('compare.compare_with')}
+                                    </button>
+                                </>
+                            )}
                         </div>
                     ) : (
                         <div className="flex h-full items-center justify-center p-8 text-center">

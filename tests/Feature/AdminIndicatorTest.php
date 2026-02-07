@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Indicator;
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -10,11 +11,16 @@ class AdminIndicatorTest extends TestCase
 {
     use RefreshDatabase;
 
+    private function createAdmin(): User
+    {
+        return User::factory()->create(['is_admin' => true]);
+    }
+
     public function test_admin_indicators_page_loads(): void
     {
         $this->seed(\Database\Seeders\IndicatorSeeder::class);
 
-        $response = $this->get(route('admin.indicators'));
+        $response = $this->actingAs($this->createAdmin())->get(route('admin.indicators'));
 
         $response->assertOk();
         $response->assertInertia(fn ($page) => $page
@@ -29,7 +35,7 @@ class AdminIndicatorTest extends TestCase
 
         $indicator = Indicator::query()->where('slug', 'median_income')->first();
 
-        $response = $this->put(route('admin.indicators.update', $indicator), [
+        $response = $this->actingAs($this->createAdmin())->put(route('admin.indicators.update', $indicator), [
             'direction' => 'positive',
             'weight' => 0.25,
             'normalization' => 'rank_percentile',
@@ -49,7 +55,7 @@ class AdminIndicatorTest extends TestCase
 
         $indicator = Indicator::query()->where('slug', 'rental_tenure_pct')->first();
 
-        $response = $this->put(route('admin.indicators.update', $indicator), [
+        $response = $this->actingAs($this->createAdmin())->put(route('admin.indicators.update', $indicator), [
             'direction' => 'negative',
             'weight' => 0.05,
             'normalization' => 'rank_percentile',
@@ -70,7 +76,7 @@ class AdminIndicatorTest extends TestCase
 
         $indicator = Indicator::query()->where('slug', 'median_income')->first();
 
-        $response = $this->put(route('admin.indicators.update', $indicator), [
+        $response = $this->actingAs($this->createAdmin())->put(route('admin.indicators.update', $indicator), [
             'direction' => 'positive',
             'weight' => 0.09,
             'normalization' => 'rank_percentile',
@@ -90,7 +96,7 @@ class AdminIndicatorTest extends TestCase
 
         $indicator = Indicator::query()->where('slug', 'median_income')->first();
 
-        $response = $this->put(route('admin.indicators.update', $indicator), [
+        $response = $this->actingAs($this->createAdmin())->put(route('admin.indicators.update', $indicator), [
             'direction' => 'positive',
             'weight' => 0.09,
             'normalization' => 'rank_percentile',
@@ -107,7 +113,7 @@ class AdminIndicatorTest extends TestCase
 
         $indicator = Indicator::query()->where('slug', 'median_income')->first();
 
-        $response = $this->put(route('admin.indicators.update', $indicator), [
+        $response = $this->actingAs($this->createAdmin())->put(route('admin.indicators.update', $indicator), [
             'direction' => 'invalid',
             'weight' => 0.15,
             'normalization' => 'rank_percentile',
@@ -124,7 +130,7 @@ class AdminIndicatorTest extends TestCase
 
         $indicator = Indicator::query()->where('slug', 'median_income')->first();
 
-        $response = $this->put(route('admin.indicators.update', $indicator), [
+        $response = $this->actingAs($this->createAdmin())->put(route('admin.indicators.update', $indicator), [
             'direction' => 'positive',
             'weight' => 1.5,
             'normalization' => 'rank_percentile',
@@ -139,13 +145,29 @@ class AdminIndicatorTest extends TestCase
     {
         $this->seed(\Database\Seeders\IndicatorSeeder::class);
 
-        $response = $this->get(route('admin.indicators'));
+        $response = $this->actingAs($this->createAdmin())->get(route('admin.indicators'));
 
         $response->assertOk();
         $response->assertInertia(fn ($page) => $page
             ->component('admin/indicators')
             ->has('urbanityDistribution')
         );
+    }
+
+    public function test_non_admin_cannot_access_admin_routes(): void
+    {
+        $user = User::factory()->create(['is_admin' => false]);
+
+        $response = $this->actingAs($user)->get(route('admin.indicators'));
+
+        $response->assertForbidden();
+    }
+
+    public function test_guest_cannot_access_admin_routes(): void
+    {
+        $response = $this->get(route('admin.indicators'));
+
+        $response->assertRedirect();
     }
 
     public function test_scores_api_returns_json(): void

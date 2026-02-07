@@ -6,6 +6,7 @@ use App\Models\DesoArea;
 use App\Models\Indicator;
 use App\Models\IndicatorTrend;
 use App\Models\MethodologyChange;
+use App\Models\User;
 use App\Services\TrendService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -231,7 +232,9 @@ class TrendDataTest extends TestCase
             'confidence' => 1.0,
         ]);
 
-        $response = $this->getJson("/api/deso/{$deso->deso_code}/indicators?year=2024");
+        $admin = User::factory()->create(['is_admin' => true]);
+
+        $response = $this->actingAs($admin)->getJson("/api/deso/{$deso->deso_code}/indicators?year=2024");
 
         $response->assertOk();
         $response->assertJsonPath('trend_eligible', true);
@@ -254,7 +257,9 @@ class TrendDataTest extends TestCase
 
         $this->insertIndicatorValue($deso->deso_code, $indicator->id, 2024, 393500, 0.84);
 
-        $response = $this->getJson("/api/deso/{$deso->deso_code}/indicators?year=2024");
+        $admin = User::factory()->create(['is_admin' => true]);
+
+        $response = $this->actingAs($admin)->getJson("/api/deso/{$deso->deso_code}/indicators?year=2024");
 
         $response->assertOk();
         $response->assertJsonPath('trend_eligible', false);
@@ -319,7 +324,9 @@ class TrendDataTest extends TestCase
         $this->insertIndicatorValue($deso->deso_code, $indicator->id, 2023, 305000);
         $this->insertIndicatorValue($deso->deso_code, $indicator->id, 2024, 312300, 0.40);
 
-        $response = $this->getJson("/api/deso/{$deso->deso_code}/indicators?year=2024");
+        $admin = User::factory()->create(['is_admin' => true]);
+
+        $response = $this->actingAs($admin)->getJson("/api/deso/{$deso->deso_code}/indicators?year=2024");
 
         $response->assertOk();
 

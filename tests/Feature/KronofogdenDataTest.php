@@ -6,6 +6,7 @@ use App\Models\DebtDisaggregationResult;
 use App\Models\Indicator;
 use App\Models\IndicatorValue;
 use App\Models\KronofogdenStatistic;
+use App\Models\User;
 use App\Services\KronofogdenService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -230,7 +231,9 @@ class KronofogdenDataTest extends TestCase
             'model_version' => 'v1_weighted',
         ]);
 
-        $response = $this->getJson('/api/deso/0180C6250/financial?year=2024');
+        $admin = User::factory()->create(['is_admin' => true]);
+
+        $response = $this->actingAs($admin)->getJson('/api/deso/0180C6250/financial?year=2024');
 
         $response->assertOk();
         $response->assertJsonStructure([
@@ -274,7 +277,9 @@ class KronofogdenDataTest extends TestCase
             'is_constrained' => true,
         ]);
 
-        $response = $this->getJson('/api/deso/0180C6250/financial?year=2024');
+        $admin = User::factory()->create(['is_admin' => true]);
+
+        $response = $this->actingAs($admin)->getJson('/api/deso/0180C6250/financial?year=2024');
 
         $response->assertOk();
         $response->assertJsonPath('is_high_distress', true);
@@ -300,7 +305,9 @@ class KronofogdenDataTest extends TestCase
             'is_constrained' => true,
         ]);
 
-        $response = $this->getJson('/api/deso/1262C1080/financial?year=2024');
+        $admin = User::factory()->create(['is_admin' => true]);
+
+        $response = $this->actingAs($admin)->getJson('/api/deso/1262C1080/financial?year=2024');
 
         $response->assertOk();
         $response->assertJsonPath('is_high_distress', false);

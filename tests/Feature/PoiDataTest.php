@@ -6,6 +6,7 @@ use App\Models\Indicator;
 use App\Models\IndicatorValue;
 use App\Models\Poi;
 use App\Models\PoiCategory;
+use App\Models\User;
 use App\Services\OverpassService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Bus;
@@ -425,7 +426,9 @@ class PoiDataTest extends TestCase
 
     public function test_pois_api_endpoint_returns_404_for_unknown_deso(): void
     {
-        $response = $this->getJson('/api/deso/UNKNOWN/pois');
+        $admin = User::factory()->create(['is_admin' => true]);
+
+        $response = $this->actingAs($admin)->getJson('/api/deso/UNKNOWN/pois');
 
         $response->assertNotFound();
     }
@@ -450,7 +453,9 @@ class PoiDataTest extends TestCase
             DB::statement('UPDATE pois SET geom = ST_SetSRID(ST_MakePoint(lng, lat), 4326) WHERE id = ?', [$poi->id]);
         }
 
-        $response = $this->getJson('/api/deso/0180C6250/pois');
+        $admin = User::factory()->create(['is_admin' => true]);
+
+        $response = $this->actingAs($admin)->getJson('/api/deso/0180C6250/pois');
 
         $response->assertOk();
         $response->assertJsonStructure([
