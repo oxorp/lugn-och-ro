@@ -147,8 +147,8 @@ class DataValidationService
                     AND new_iv.year = ?
                     AND new_iv.raw_value IS NOT NULL
                     AND old_iv.raw_value IS NOT NULL
-                HAVING change_pct > ?
             ) sub
+            WHERE change_pct > ?
         ', [$prevYear, $rule->indicator_id, $year, $maxChangePct]);
 
         $violationCount = $largeChanges[0]->cnt ?? 0;

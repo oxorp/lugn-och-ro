@@ -3,7 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Models\DebtDisaggregationResult;
+use App\Models\DesoArea;
 use App\Models\DesoVulnerabilityMapping;
+use App\Models\Indicator;
 use App\Models\KronofogdenStatistic;
 use App\Models\School;
 use App\Models\ScoreVersion;
@@ -245,6 +247,99 @@ class DesoController extends Controller
         return response()->json([
             'deso_code' => $desoCode,
             'categories' => $grouped,
+        ]);
+    }
+
+    public function indicators(string $desoCode, Request $request): JsonResponse
+    {
+        $year = $request->integer('year', now()->year);
+
+        $deso = DesoArea::query()
+            ->where('deso_code', $desoCode)
+            ->first(['deso_code', 'trend_eligible']);
+
+        if (! $deso) {
+            return response()->json(['error' => 'DeSO not found'], 404);
+        }
+
+        $activeIndicators = Indicator::query()
+            ->where('is_active', true)
+            ->orderBy('display_order')
+            ->get();
+
+        $indicatorValues = DB::table('indicator_values')
+            ->where('deso_code', $desoCode)
+            ->where('year', $year)
+            ->whereIn('indicator_id', $activeIndicators->pluck('id'))
+            ->get()
+            ->keyBy('indicator_id');
+
+        // Get trends for this DeSO
+        $trends = DB::table('indicator_trends')
+            ->where('deso_code', $desoCode)
+            ->whereIn('indicator_id', $activeIndicators->pluck('id'))
+            ->orderByDesc('end_year')
+            ->get()
+            ->unique('indicator_id')
+            ->keyBy('indicator_id');
+
+        // Get historical values for tooltip (all years for this DeSO)
+        $historicalValues = DB::table('indicator_values')
+            ->where('deso_code', $desoCode)
+            ->whereIn('indicator_id', $activeIndicators->pluck('id'))
+            ->whereNotNull('raw_value')
+            ->orderBy('year')
+            ->get()
+            ->groupBy('indicator_id');
+
+        $indicators = $activeIndicators->map(function (Indicator $ind) use ($indicatorValues, $trends, $historicalValues) {
+            $iv = $indicatorValues->get($ind->id);
+            $trend = $trends->get($ind->id);
+
+            $history = ($historicalValues->get($ind->id) ?? collect())
+                ->map(fn ($row) => [
+                    'year' => $row->year,
+                    'value' => $row->raw_value !== null ? round((float) $row->raw_value, 2) : null,
+                ])
+                ->values()
+                ->all();
+
+            return [
+                'slug' => $ind->slug,
+                'name' => $ind->name,
+                'raw_value' => $iv?->raw_value !== null ? round((float) $iv->raw_value, 4) : null,
+                'normalized_value' => $iv?->normalized_value !== null ? round((float) $iv->normalized_value, 6) : null,
+                'unit' => $ind->unit,
+                'direction' => $ind->direction,
+                'normalization_scope' => $ind->normalization_scope,
+                'trend' => $trend ? [
+                    'direction' => $trend->direction,
+                    'percent_change' => $trend->percent_change !== null ? round((float) $trend->percent_change, 2) : null,
+                    'absolute_change' => $trend->absolute_change !== null ? round((float) $trend->absolute_change, 2) : null,
+                    'base_year' => $trend->base_year,
+                    'end_year' => $trend->end_year,
+                    'data_points' => $trend->data_points,
+                    'confidence' => $trend->confidence !== null ? round((float) $trend->confidence, 2) : null,
+                ] : null,
+                'history' => $history,
+            ];
+        });
+
+        $indicatorsWithTrends = $indicators->filter(fn ($i) => $i['trend'] !== null && $i['trend']['direction'] !== 'insufficient')->count();
+        $trendEntry = $trends->first();
+
+        return response()->json([
+            'deso_code' => $desoCode,
+            'year' => $year,
+            'indicators' => $indicators->values(),
+            'trend_eligible' => $deso->trend_eligible,
+            'trend_meta' => [
+                'eligible' => $deso->trend_eligible,
+                'reason' => $deso->trend_eligible ? null : 'Area boundaries changed in 2025 revision',
+                'indicators_with_trends' => $indicatorsWithTrends,
+                'indicators_total' => $activeIndicators->count(),
+                'period' => $trendEntry ? $trendEntry->base_year.'–'.$trendEntry->end_year : null,
+            ],
         ]);
     }
 

@@ -29,6 +29,7 @@ class DesoAreaFactory extends Factory
             'area_km2' => fake()->randomFloat(2, 0.1, 50.0),
             'population' => fake()->numberBetween(700, 2700),
             'urbanity_tier' => fake()->randomElement(['urban', 'semi_urban', 'rural']),
+            'trend_eligible' => true,
         ];
     }
 }

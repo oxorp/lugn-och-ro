@@ -61,6 +61,9 @@
         },
         "indicators": {
             "title": "Indikator\u00f6versikt",
+            "trend_subtitle": "Trender baserade p\u00e5 data fr\u00e5n {{period}} d\u00e4r tillg\u00e4ngligt",
+            "trend_ineligible": "Trenddata saknas f\u00f6r detta omr\u00e5de eftersom dess statistiska gr\u00e4nser reviderades 2025. Aktuella v\u00e4rden visas nedan.",
+            "no_trend_data": "ingen trend",
             "percentile_stratified": "{{value}}:e bland {{tier}}",
             "percentile_national": "{{value}}:e pctl",
             "labels": {
@@ -82,13 +85,28 @@
                 "vulnerability_flag": "Utsatt omr\u00e5de",
                 "debt_rate_pct": "Skulds\u00e4ttningsgrad (KFM)",
                 "eviction_rate": "Vr\u00e4kningsfrekvens",
-                "median_debt_sek": "Medianskuld"
+                "median_debt_sek": "Medianskuld",
+                "grocery_density": "Matbutiker",
+                "healthcare_density": "Sjukv\u00e5rd",
+                "restaurant_density": "Restauranger",
+                "fitness_density": "Tr\u00e4ning",
+                "transit_density": "Kollektivtrafik",
+                "gambling_density": "Spelverksamhet",
+                "pawn_shop_density": "Pantbanker",
+                "fast_food_density": "Snabbmat"
             }
         },
         "urbanity": {
             "urban": "urban",
             "semi_urban": "semi-urban",
             "rural": "landsbygd"
+        },
+        "trend_tooltip": {
+            "title": "{{name}} Trend",
+            "change": "F\u00f6r\u00e4ndring: {{change}} ({{percent}}%)",
+            "confidence_high": "S\u00e4kerhet: H\u00f6g ({{points}}/{{total}} \u00e5r)",
+            "confidence_medium": "S\u00e4kerhet: Medel ({{points}}/{{total}} \u00e5r)",
+            "confidence_low": "S\u00e4kerhet: L\u00e5g ({{points}}/{{total}} \u00e5r)"
         },
         "strengths": "Styrkor",
         "weaknesses": "Svagheter",

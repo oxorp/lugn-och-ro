@@ -96,6 +96,14 @@ class RunPipeline extends Command
         $this->info('=== Stage 5: Compute Scores ===');
         $this->call('compute:scores', ['--year' => $year]);
 
+        // Stage 5b: Compute trends
+        $this->newLine();
+        $this->info('=== Stage 5b: Compute Trends ===');
+        $this->call('compute:trends', [
+            '--base-year' => $year - 2,
+            '--end-year' => $year,
+        ]);
+
         $version = ScoreVersion::query()
             ->where('year', $year)
             ->latest('computed_at')

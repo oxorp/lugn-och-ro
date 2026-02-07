@@ -6,6 +6,7 @@ import {
     ArrowUp,
     Landmark,
     MapPin,
+    Minus,
     Shield,
     ShieldAlert,
     TriangleAlert,
@@ -24,12 +25,17 @@ import {
     NoDataTooltip,
     SchoolStatTooltip,
     ScoreTooltip,
-    TrendTooltip,
 } from '@/components/info-tooltip';
 import MapSearch from '@/components/map-search';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
+import {
+    Tooltip,
+    TooltipContent,
+    TooltipProvider,
+    TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { useTranslation } from '@/hooks/use-translation';
 import MapLayout from '@/layouts/map-layout';
 import {
@@ -101,6 +107,42 @@ interface FinancialData {
     is_estimated: boolean;
 }
 
+interface IndicatorTrendData {
+    direction: 'rising' | 'falling' | 'stable' | 'insufficient';
+    percent_change: number | null;
+    absolute_change: number | null;
+    base_year: number;
+    end_year: number;
+    data_points: number;
+    confidence: number | null;
+}
+
+interface IndicatorDataItem {
+    slug: string;
+    name: string;
+    raw_value: number | null;
+    normalized_value: number | null;
+    unit: string | null;
+    direction: 'positive' | 'negative' | 'neutral';
+    normalization_scope: 'national' | 'urbanity_stratified';
+    trend: IndicatorTrendData | null;
+    history: Array<{ year: number; value: number | null }>;
+}
+
+interface IndicatorResponse {
+    deso_code: string;
+    year: number;
+    indicators: IndicatorDataItem[];
+    trend_eligible: boolean;
+    trend_meta: {
+        eligible: boolean;
+        reason: string | null;
+        indicators_with_trends: number;
+        indicators_total: number;
+        period: string | null;
+    };
+}
+
 /** Returns an inline color style matching the score gradient (same as the map). */
 function scoreColorStyle(score: number): React.CSSProperties {
     return { color: interpolateScoreColor(score) };
@@ -122,13 +164,141 @@ function useScoreLabel(): (score: number) => string {
     };
 }
 
-function TrendIcon({ trend }: { trend: number | null }) {
-    if (trend === null) return <ArrowRight className="h-4 w-4 text-trend-stable" />;
-    if (trend > 1)
-        return <ArrowUp className="h-4 w-4 text-trend-positive" />;
-    if (trend < -1)
-        return <ArrowDown className="h-4 w-4 text-trend-negative" />;
-    return <ArrowRight className="h-4 w-4 text-trend-stable" />;
+function IndicatorTrendArrow({
+    trend,
+    indicatorDirection,
+    showLabel,
+}: {
+    trend: IndicatorTrendData | null;
+    indicatorDirection: 'positive' | 'negative' | 'neutral';
+    showLabel?: boolean;
+}) {
+    const { t } = useTranslation();
+    const minConfidence = 0.5;
+
+    if (!trend || trend.direction === 'insufficient' || (trend.confidence !== null && trend.confidence < minConfidence)) {
+        if (showLabel) {
+            return (
+                <span className="flex items-center gap-0.5 text-[11px] text-muted-foreground">
+                    <Minus className="h-3 w-3" />
+                    <span className="italic">{t('sidebar.indicators.no_trend_data')}</span>
+                </span>
+            );
+        }
+        return null;
+    }
+
+    // Determine if improving or worsening based on indicator direction
+    const isImproving =
+        (indicatorDirection === 'positive' && trend.direction === 'rising') ||
+        (indicatorDirection === 'negative' && trend.direction === 'falling');
+    const isWorsening =
+        (indicatorDirection === 'positive' && trend.direction === 'falling') ||
+        (indicatorDirection === 'negative' && trend.direction === 'rising');
+
+    const Icon = trend.direction === 'stable' ? ArrowRight : isImproving ? ArrowUp : ArrowDown;
+    const colorClass = trend.direction === 'stable'
+        ? 'text-muted-foreground'
+        : isImproving
+            ? 'text-trend-positive'
+            : 'text-trend-negative';
+
+    const pctStr = trend.percent_change !== null
+        ? `${trend.percent_change > 0 ? '+' : ''}${trend.percent_change.toFixed(1)}%`
+        : '';
+
+    const opacity = trend.confidence !== null && trend.confidence < 1 ? 'opacity-70' : '';
+
+    return (
+        <span className={`flex items-center gap-0.5 tabular-nums text-[11px] ${colorClass} ${opacity}`}>
+            <Icon className="h-3 w-3" />
+            {pctStr && <span>{pctStr}</span>}
+        </span>
+    );
+}
+
+function TrendDetailTooltip({
+    indicator,
+}: {
+    indicator: IndicatorDataItem;
+}) {
+    const { t } = useTranslation();
+    const [open, setOpen] = useState(false);
+
+    if (!indicator.trend && indicator.history.length < 2) return null;
+
+    const trend = indicator.trend;
+    const expectedYears = trend ? trend.end_year - trend.base_year + 1 : 3;
+
+    const confidenceLabel = !trend?.confidence
+        ? ''
+        : trend.confidence >= 1
+            ? t('sidebar.trend_tooltip.confidence_high', { points: trend.data_points, total: expectedYears })
+            : trend.confidence >= 0.5
+                ? t('sidebar.trend_tooltip.confidence_medium', { points: trend.data_points, total: expectedYears })
+                : t('sidebar.trend_tooltip.confidence_low', { points: trend.data_points, total: expectedYears });
+
+    return (
+        <TooltipProvider delayDuration={200}>
+            <Tooltip open={open} onOpenChange={setOpen}>
+                <TooltipTrigger asChild>
+                    <button
+                        className="ml-0.5 inline-flex items-center text-muted-foreground transition-colors hover:text-foreground"
+                        onClick={() => setOpen(!open)}
+                    >
+                        <IndicatorTrendArrow
+                            trend={indicator.trend}
+                            indicatorDirection={indicator.direction}
+                            showLabel={true}
+                        />
+                    </button>
+                </TooltipTrigger>
+                <TooltipContent
+                    className="max-w-72 text-sm"
+                    side="left"
+                    align="start"
+                    collisionPadding={16}
+                >
+                    <div className="space-y-2">
+                        <p className="font-medium">
+                            {t('sidebar.trend_tooltip.title', { name: indicator.name })}
+                        </p>
+                        <div className="space-y-0.5 text-xs">
+                            {indicator.history.map((h) => (
+                                <div key={h.year} className="flex justify-between gap-4">
+                                    <span className="text-muted-foreground">{h.year}:</span>
+                                    <span className="tabular-nums font-medium">
+                                        {h.value !== null
+                                            ? formatIndicatorValue(h.value, indicator.unit)
+                                            : t('sidebar.trend_tooltip.no_data_year', { defaultValue: 'No data' })}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                        {trend && trend.absolute_change !== null && trend.percent_change !== null && (
+                            <p className="text-xs text-muted-foreground">
+                                {t('sidebar.trend_tooltip.change', {
+                                    change: formatIndicatorValue(trend.absolute_change, indicator.unit),
+                                    percent: `${trend.percent_change > 0 ? '+' : ''}${trend.percent_change.toFixed(1)}`,
+                                })}
+                            </p>
+                        )}
+                        {confidenceLabel && (
+                            <p className="text-xs text-muted-foreground">{confidenceLabel}</p>
+                        )}
+                    </div>
+                </TooltipContent>
+            </Tooltip>
+        </TooltipProvider>
+    );
+}
+
+function formatIndicatorValue(value: number, unit: string | null): string {
+    if (unit === '%') return `${value.toFixed(1)}%`;
+    if (unit === 'SEK') return `${Math.round(value).toLocaleString()} SEK`;
+    if (unit === '/100k') return `${value.toFixed(1)}/100k`;
+    if (unit === '/1000') return `${value.toFixed(2)}/1000`;
+    return value.toLocaleString(undefined, { maximumFractionDigits: 1 });
 }
 
 function FactorBar({
@@ -137,15 +307,24 @@ function FactorBar({
     scope,
     urbanityTier,
     meta,
+    trend,
+    indicatorDirection,
+    showTrend,
 }: {
     label: string;
     value: number;
     scope?: 'national' | 'urbanity_stratified';
     urbanityTier?: string | null;
     meta?: IndicatorMeta;
+    trend?: IndicatorTrendData | null;
+    indicatorDirection?: 'positive' | 'negative' | 'neutral';
+    showTrend?: boolean;
 }) {
     const { t } = useTranslation();
-    const pct = Math.round(value * 100);
+    const rawPct = Math.round(value * 100);
+    // For negative-direction indicators, flip so the bar reflects "how favorable"
+    // e.g. 98th pctl crime → 2nd effective pctl (bad), shown with red/short bar
+    const effectivePct = indicatorDirection === 'negative' ? 100 - rawPct : rawPct;
     const isStratified = scope === 'urbanity_stratified' && urbanityTier;
     const tierLabel = urbanityTier
         ? t(`sidebar.urbanity.${urbanityTier}`, { defaultValue: urbanityTier })
@@ -153,21 +332,29 @@ function FactorBar({
 
     return (
         <div className="space-y-0.5">
-            <div className="flex justify-between text-xs">
+            <div className="flex items-center justify-between text-xs">
                 <span className="flex items-center font-medium uppercase tracking-wide text-muted-foreground">
                     {label}
                     {meta && <InfoTooltip indicator={meta} />}
                 </span>
-                <span className="tabular-nums font-semibold text-foreground">
-                    {isStratified
-                        ? t('sidebar.indicators.percentile_stratified', { value: pct, tier: tierLabel })
-                        : t('sidebar.indicators.percentile_national', { value: pct })}
+                <span className="flex items-center gap-1.5">
+                    {showTrend && trend && indicatorDirection && (
+                        <IndicatorTrendArrow
+                            trend={trend}
+                            indicatorDirection={indicatorDirection}
+                        />
+                    )}
+                    <span className="tabular-nums font-semibold text-foreground">
+                        {isStratified
+                            ? t('sidebar.indicators.percentile_stratified', { value: effectivePct, tier: tierLabel })
+                            : t('sidebar.indicators.percentile_national', { value: effectivePct })}
+                    </span>
                 </span>
             </div>
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
                 <div
                     className="h-full rounded-full transition-all"
-                    style={{ width: `${pct}%`, ...scoreBgStyle(pct) }}
+                    style={{ width: `${effectivePct}%`, ...scoreBgStyle(effectivePct) }}
                 />
             </div>
         </div>
@@ -612,6 +799,8 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes, i
     const [crimeLoading, setCrimeLoading] = useState(false);
     const [financialData, setFinancialData] = useState<FinancialData | null>(null);
     const [financialLoading, setFinancialLoading] = useState(false);
+    const [indicatorData, setIndicatorData] = useState<IndicatorResponse | null>(null);
+    const [indicatorLoading, setIndicatorLoading] = useState(false);
     const [highlightedSchool, setHighlightedSchool] = useState<string | null>(null);
     const [searchNotInDeso, setSearchNotInDeso] = useState(false);
     const schoolRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -633,6 +822,18 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes, i
                 setSchoolsLoading(true);
                 setCrimeLoading(true);
                 setFinancialLoading(true);
+                setIndicatorLoading(true);
+
+                fetch(`/api/deso/${properties.deso_code}/indicators?year=2024`)
+                    .then((r) => r.json())
+                    .then((data: IndicatorResponse) => {
+                        setIndicatorData(data);
+                        setIndicatorLoading(false);
+                    })
+                    .catch(() => {
+                        setIndicatorData(null);
+                        setIndicatorLoading(false);
+                    });
 
                 fetch(`/api/deso/${properties.deso_code}/schools`)
                     .then((r) => r.json())
@@ -672,6 +873,7 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes, i
                 setSchools([]);
                 setCrimeData(null);
                 setFinancialData(null);
+                setIndicatorData(null);
                 mapRef.current?.clearSchoolMarkers();
             }
         },
@@ -817,15 +1019,6 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes, i
                                                     scoreLabel={scoreLabel(selectedScore.score)}
                                                 />
                                             </div>
-                                            <div className="flex items-center justify-end gap-1">
-                                                <TrendIcon trend={selectedScore.trend_1y} />
-                                                <span className="tabular-nums text-xs text-muted-foreground">
-                                                    {selectedScore.trend_1y !== null
-                                                        ? `${selectedScore.trend_1y > 0 ? '+' : ''}${selectedScore.trend_1y.toFixed(1)}`
-                                                        : t('sidebar.score.na')}
-                                                </span>
-                                                <TrendTooltip trend={selectedScore.trend_1y} />
-                                            </div>
                                             <div className="mt-0.5 text-sm font-medium text-muted-foreground">
                                                 {scoreLabel(selectedScore.score)}
                                             </div>
@@ -836,25 +1029,70 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes, i
                             </div>
 
                             {/* Indicator Breakdown */}
-                            {selectedScore?.factor_scores && (
+                            {(indicatorData || selectedScore?.factor_scores) && (
                                 <div>
-                                    <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                    <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                                         {t('sidebar.indicators.title')}
                                     </div>
-                                    <div className="space-y-2">
-                                        {Object.entries(selectedScore.factor_scores).map(
-                                            ([slug, value]) => (
-                                                <FactorBar
-                                                    key={slug}
-                                                    label={indicatorLabel(slug)}
-                                                    value={value}
-                                                    scope={indicatorScopes[slug]}
-                                                    urbanityTier={selectedScore.urbanity_tier}
-                                                    meta={indicatorMeta[slug]}
-                                                />
-                                            ),
-                                        )}
-                                    </div>
+                                    {indicatorData?.trend_meta?.eligible && indicatorData.trend_meta.period && (
+                                        <p className="mb-2 text-[11px] text-muted-foreground">
+                                            {t('sidebar.indicators.trend_subtitle', { period: indicatorData.trend_meta.period })}
+                                        </p>
+                                    )}
+                                    {indicatorData && !indicatorData.trend_eligible && (
+                                        <p className="mb-2 text-[11px] italic text-muted-foreground">
+                                            {t('sidebar.indicators.trend_ineligible')}
+                                        </p>
+                                    )}
+                                    {indicatorLoading ? (
+                                        <div className="space-y-2">
+                                            {[1, 2, 3, 4, 5].map((i) => (
+                                                <div key={i} className="space-y-1">
+                                                    <div className="h-3 w-2/3 animate-pulse rounded bg-muted" />
+                                                    <div className="h-1.5 w-full animate-pulse rounded-full bg-muted" />
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : indicatorData ? (
+                                        <div className="space-y-2">
+                                            {indicatorData.indicators
+                                                .filter((ind) => ind.normalized_value !== null)
+                                                .map((ind) => (
+                                                    <div key={ind.slug} className="flex items-start gap-1">
+                                                        <div className="min-w-0 flex-1">
+                                                            <FactorBar
+                                                                label={indicatorLabel(ind.slug)}
+                                                                value={ind.normalized_value!}
+                                                                scope={ind.normalization_scope}
+                                                                urbanityTier={selectedScore?.urbanity_tier}
+                                                                meta={indicatorMeta[ind.slug]}
+                                                                trend={ind.trend}
+                                                                indicatorDirection={ind.direction}
+                                                                showTrend={indicatorData.trend_eligible}
+                                                            />
+                                                        </div>
+                                                        {indicatorData.trend_eligible && ind.history.length >= 2 && (
+                                                            <TrendDetailTooltip indicator={ind} />
+                                                        )}
+                                                    </div>
+                                                ))}
+                                        </div>
+                                    ) : selectedScore?.factor_scores ? (
+                                        <div className="space-y-2">
+                                            {Object.entries(selectedScore.factor_scores).map(
+                                                ([slug, value]) => (
+                                                    <FactorBar
+                                                        key={slug}
+                                                        label={indicatorLabel(slug)}
+                                                        value={value}
+                                                        scope={indicatorScopes[slug]}
+                                                        urbanityTier={selectedScore.urbanity_tier}
+                                                        meta={indicatorMeta[slug]}
+                                                    />
+                                                ),
+                                            )}
+                                        </div>
+                                    ) : null}
                                 </div>
                             )}
 

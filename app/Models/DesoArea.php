@@ -20,5 +20,13 @@ class DesoArea extends Model
         'area_km2',
         'population',
         'urbanity_tier',
+        'trend_eligible',
     ];
+
+    protected function casts(): array
+    {
+        return [
+            'trend_eligible' => 'boolean',
+        ];
+    }
 }

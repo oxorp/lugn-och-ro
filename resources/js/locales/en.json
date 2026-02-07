@@ -61,6 +61,9 @@
         },
         "indicators": {
             "title": "Indicator Breakdown",
+            "trend_subtitle": "Trends based on {{period}} data where available",
+            "trend_ineligible": "Trend data is not available for this area because its statistical boundaries were revised in 2025. Current values are shown below.",
+            "no_trend_data": "no trend",
             "percentile_stratified": "{{value}}th among {{tier}}",
             "percentile_national": "{{value}}th pctl",
             "labels": {
@@ -97,6 +100,14 @@
             "urban": "urban",
             "semi_urban": "semi-urban",
             "rural": "rural"
+        },
+        "trend_tooltip": {
+            "title": "{{name}} Trend",
+            "change": "Change: {{change}} ({{percent}}%)",
+            "confidence_high": "Confidence: High ({{points}}/{{total}} years)",
+            "confidence_medium": "Confidence: Medium ({{points}}/{{total}} years)",
+            "confidence_low": "Confidence: Low ({{points}}/{{total}} years)",
+            "no_data_year": "No data"
         },
         "strengths": "Strengths",
         "weaknesses": "Weaknesses",

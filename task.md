@@ -1,531 +1,793 @@
-# TASK: Design System — Typography, Colors & Visual Foundation
+# TASK: Trend Trajectories — Historical Data & Per-Indicator Trends
 
 ## Context
 
-The platform has functional UI built with shadcn/ui defaults. It works, but it doesn't have a cohesive visual identity. The map uses a purple→green score gradient, the sidebar shows data, and everything else is default shadcn gray. Before adding more features and pages (methodology, admin dashboard, reports), we need a design foundation that:
+The platform shows a snapshot: "this DeSO scores 72 right now." That's useful but incomplete. What users actually want to know is: "is this area getting better or worse?" A score of 72 that was 60 three years ago tells a completely different story than a 72 that was 85.
 
-1. Lets the data be the star — the map colors and score numbers should be the most visually prominent things on screen
-2. Feels trustworthy and professional — banks and mäklare are target customers
-3. Is information-dense without feeling cluttered — the sidebar packs a lot into 400px
-4. Is dark-mode-ready in architecture even though v1 ships light-only
+This task adds the time dimension. It fetches historical data (3 years back), computes per-indicator trends, and displays them honestly in the UI. Honestly means: if we only have trend data for 3 of 8 indicators, we show trends for those 3 and say nothing about the rest. We never extrapolate. We never fabricate a composite trend arrow from incomplete data.
 
-**This is not a redesign.** It's establishing the color tokens, typography, and component conventions so that everything built from here forward is consistent. Existing components should be updated to use the new tokens, but layout and functionality don't change.
+**There is one major structural problem:** SCB published a new DeSO version in 2025 (6,160 areas) that replaced the 2018 version (5,984 areas). Historical statistics use old codes; new statistics use new codes. About 500–1,000 DeSOs were affected (split, merged, redrawn, or recoded). For affected areas, year-over-year comparison is meaningless — you'd be comparing different geographies. Per your decision: **we exclude affected DeSOs from trend calculations entirely** and show "Trend data not available for this area" instead.
 
 ## Goals
 
-1. Define and implement color tokens (CSS custom properties via Tailwind)
-2. Set up typography (Inter, with tabular numbers for data)
-3. Establish component-level styling conventions for the sidebar, cards, indicators, and badges
-4. Ensure dark mode can be added later with minimal effort
-5. Apply the system to all existing pages (map, sidebar, admin)
+1. Fetch 3 years of historical data for all existing SCB indicators
+2. Fetch historical school statistics (Skolverket) where available
+3. Build a DeSO 2018→2025 correspondence table to identify changed areas
+4. Compute per-indicator trends for each DeSO (only where boundary is unchanged)
+5. Display individual indicator trends in the sidebar (arrows, percentages)
+6. No composite trend arrow on the map — individual indicator trends only for now
+7. Handle missing data honestly at every level
 
 ---
 
-## Step 1: Color System
+## Step 1: DeSO Boundary Change Detection
 
-### 1.1 Design Principles
+### 1.1 The Problem
 
-**The data is the color, the UI is the frame.**
+SCB published DeSO 2025 in January 2025. Changes include:
+- **Splits:** One DeSO 2018 became two or more DeSO 2025 areas (densely populated areas that grew past 2,700 people)
+- **Merges:** Two DeSO 2018 areas became one DeSO 2025 (depopulated mining areas in Norrbotten)
+- **Cosmetic changes:** Boundary adjusted to follow roads/water better, but same area conceptually
+- **Code changes:** Same geographic area but code changed (e.g., category changed from C to B)
+- **Unchanged:** Same code, same boundary — the majority (~5,000+)
 
-The score gradient (purple → yellow → green) is the most important visual element. It appears on the map, in the score number, and in indicator bars. Everything else — navbar, sidebar, text, borders — should be neutral enough that the data colors pop without competition.
+### 1.2 Download the Correspondence Data
 
-**Brand color is blue, used sparingly.**
+SCB publishes "Historiska förändringar i DeSO" as an Excel file on the DeSO geodata page:
+`https://www.scb.se/vara-tjanster/oppna-data/oppna-geodata/oppna-geodata-for-deso---demografiska-statistikomraden/`
 
-Blue is the only primary color absent from the score gradient. It reads as "interface" on a map (users are trained by Google Maps, Apple Maps). Use it only for interactive states: selected items, focused inputs, primary CTAs. Never for decoration.
+Download this file. It should contain a mapping between DeSO 2018 codes and DeSO 2025 codes, with a change type indicator.
 
-### 1.2 Color Tokens
+### 1.3 Boundary Changes Table
 
-Define these as CSS custom properties in the root, following shadcn's HSL convention. These extend/override shadcn's default theme.
-
-**Neutral palette (slate-based):**
-
-```css
-:root {
-  /* Base neutrals — slate family */
-  --background: 0 0% 100%;           /* White — page/sidebar background */
-  --foreground: 215 20% 27%;         /* slate-800 — primary text */
-  --muted: 215 16% 95%;              /* slate-100 — subtle backgrounds */
-  --muted-foreground: 215 13% 44%;   /* slate-500 — secondary text, labels */
-  --border: 215 16% 90%;             /* slate-200 — dividers, card borders */
-  --input: 215 16% 90%;              /* slate-200 — input borders */
-  --ring: 217 91% 60%;               /* blue-500 — focus rings */
-
-  /* Card surfaces */
-  --card: 0 0% 100%;                 /* White */
-  --card-foreground: 215 20% 27%;    /* slate-800 */
-
-  /* Popover/tooltip */
-  --popover: 0 0% 100%;
-  --popover-foreground: 215 20% 27%;
-}
+```php
+Schema::create('deso_boundary_changes', function (Blueprint $table) {
+    $table->id();
+    $table->string('deso_2018_code', 10)->index();
+    $table->string('deso_2025_code', 10)->index();
+    $table->string('change_type', 30);  // 'unchanged', 'split', 'merged', 'cosmetic', 'recoded', 'new'
+    $table->text('notes')->nullable();
+    $table->timestamps();
+});
 ```
 
-**Brand accent (blue):**
-
-```css
-:root {
-  --primary: 217 91% 60%;            /* #3b82f6 — blue-500 */
-  --primary-foreground: 0 0% 100%;   /* White text on blue */
-  --accent: 215 16% 95%;             /* slate-100 — hover backgrounds */
-  --accent-foreground: 215 20% 27%;  /* slate-800 */
-}
-```
-
-**Semantic colors:**
-
-```css
-:root {
-  /* Status */
-  --destructive: 0 72% 51%;          /* red-600 — errors, destructive actions */
-  --destructive-foreground: 0 0% 100%;
-
-  /* Trend indicators */
-  --trend-positive: 142 71% 35%;     /* A clear green — not the score green, slightly different */
-  --trend-negative: 347 77% 50%;     /* rose-500 — muted red, not alarming */
-  --trend-stable: 215 13% 64%;       /* slate-400 — quiet gray */
-  --trend-none: 215 13% 78%;         /* slate-300 — very subtle */
-}
-```
-
-**Score gradient (the most important colors in the system):**
-
-```css
-:root {
-  --score-0: 280 100% 22%;           /* #4a0072 — Deep purple */
-  --score-25: 330 70% 36%;           /* #9c1d6e — Red-purple */
-  --score-50: 45 85% 60%;            /* #f0c040 — Warm yellow */
-  --score-75: 100 50% 52%;           /* #6abf4b — Light green */
-  --score-100: 140 65% 29%;          /* #1a7a2e — Deep green */
-}
-```
-
-These score colors are used on the map, in the sidebar score number, in indicator bars, and in the legend. They must be identical everywhere — define once, reference everywhere.
-
-### 1.3 Dark Mode Tokens (Architecture Only — Not Shipped in v1)
-
-Define the dark mode overrides but keep them commented out or behind a feature flag. When dark mode is activated later, these swap in:
-
-```css
-.dark {
-  --background: 222 20% 10%;         /* Dark slate background */
-  --foreground: 210 16% 93%;         /* Light text */
-  --muted: 217 19% 17%;              /* Slightly lighter dark */
-  --muted-foreground: 215 13% 64%;   /* slate-400 */
-  --border: 217 19% 22%;             /* Subtle dark borders */
-  --card: 222 20% 13%;               /* Slightly lighter than background */
-  --card-foreground: 210 16% 93%;
-
-  /* Score gradient stays the same — it's data, not chrome */
-  /* But may need brightness boost for dark backgrounds — test when implementing */
-}
-```
-
-**Key rule:** The score gradient should NOT change between light and dark mode. The colors represent data, and changing them per-mode would confuse users who switch. If anything, slightly increase saturation on dark to compensate for reduced perceived brightness.
-
-### 1.4 Implementation
-
-Update `resources/css/app.css` (or wherever the Tailwind theme is configured) with the CSS custom properties. Shadcn already uses this pattern — just replace the default values.
-
-Ensure every component references tokens (`text-foreground`, `bg-muted`, `border-border`) instead of hardcoded Tailwind colors (`text-slate-700`, `bg-slate-100`). This is what makes dark mode a toggle later rather than a find-and-replace.
-
----
-
-## Step 2: Typography
-
-### 2.1 Font Selection: Inter
-
-**Inter** is the primary (and only) typeface. It was designed specifically for computer interfaces, with:
-- Excellent legibility at 12-14px (our sidebar data size)
-- Tabular number support via OpenType features
-- Tall x-height that works in dense layouts
-- Available on Google Fonts (free, CDN-served) or self-hosted
-
-**No secondary font.** One font reduces load time, eliminates pairing issues, and is visually cleaner. If you want hierarchy, use weight and size — not a different font.
-
-### 2.2 Installation
-
-Add Inter via Google Fonts or self-host:
-
-```html
-<!-- In app layout head -->
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-```
-
-Or self-host (better performance, no external dependency):
+### 1.4 Import Command
 
 ```bash
-npm install @fontsource/inter
+php artisan import:deso-changes
 ```
 
-```ts
-// In app.tsx or main entry
-import '@fontsource/inter/400.css';
-import '@fontsource/inter/500.css';
-import '@fontsource/inter/600.css';
-import '@fontsource/inter/700.css';
+Parses the SCB Excel file and populates `deso_boundary_changes`. If the Excel format isn't machine-friendly, the agent may need to interpret the data manually or cross-reference DeSO 2018 and DeSO 2025 code lists to detect:
+- Codes that exist in 2025 but not in 2018 → **new**
+- Codes that exist in 2018 but not in 2025 → **retired** (split, merged, or recoded)
+- Codes that exist in both → **unchanged** or **cosmetic**
+
+**Alternative approach if the Excel is unhelpful:** Download both DeSO 2018 and DeSO 2025 boundary files from SCB geodata. Compare code lists programmatically. For codes that don't match, use spatial intersection to determine whether it's a split, merge, or recode.
+
+### 1.5 Mark DeSOs as Trend-Eligible
+
+Add a column to `deso_areas`:
+
+```php
+$table->boolean('trend_eligible')->default(true);
 ```
 
-### 2.3 Tailwind Configuration
+Set `trend_eligible = false` for any DeSO 2025 code where:
+- The DeSO didn't exist in 2018 (`change_type = 'new'`)
+- The DeSO was created by splitting an old one (`change_type = 'split'`)
+- The DeSO was created by merging old ones (`change_type = 'merged'`)
 
-```js
-// tailwind.config.ts
-export default {
-  theme: {
-    fontFamily: {
-      sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
-    },
-  },
+Set `trend_eligible = true` for:
+- `unchanged`: Same code, same boundary
+- `cosmetic`: Minor boundary tweaks that don't materially affect the population or statistics
+- `recoded`: Same area, different code — we can map old→new
+
+**Expected result:** ~5,000–5,500 DeSOs are trend-eligible. ~600–1,200 are not.
+
+### 1.6 Code Mapping Table (for Recoded DeSOs)
+
+For DeSOs that were simply recoded (same geography, new code), we need a lookup to join historical data:
+
+```php
+Schema::create('deso_code_mappings', function (Blueprint $table) {
+    $table->id();
+    $table->string('old_code', 10)->index();     // DeSO 2018 code
+    $table->string('new_code', 10)->index();     // DeSO 2025 code
+    $table->string('mapping_type', 20);          // 'identical', 'recoded', 'cosmetic'
+    $table->timestamps();
+});
+```
+
+For `identical` DeSOs, old_code = new_code. For `recoded`, they differ. When fetching historical data, use this mapping to link old codes to current codes.
+
+---
+
+## Step 2: Historical Data Ingestion
+
+### 2.1 Extend the SCB Ingestion Command
+
+The current `ingest:scb` command fetches one year. Extend it to fetch multiple years:
+
+```bash
+php artisan ingest:scb --year=2022
+php artisan ingest:scb --year=2023
+php artisan ingest:scb --year=2024
+```
+
+Or with a range:
+
+```bash
+php artisan ingest:scb --from=2022 --to=2024
+```
+
+### 2.2 Historical Data is on DeSO 2018 Codes
+
+**Critical:** SCB explicitly states that historical tables remain on DeSO 2018 codes. Statistics published in 2025 use DeSO 2025 codes. This means:
+
+- Data for 2022, 2023: DeSO 2018 codes in the API response
+- Data for 2024 (published in 2025): DeSO 2025 codes in the API response
+
+The ingestion command must:
+1. Detect which code version the API response uses (check if codes match our deso_areas table)
+2. If historical (2018 codes): translate to 2025 codes using `deso_code_mappings`
+3. If codes can't be mapped (split/merged areas): skip and log
+4. Store in `indicator_values` using the DeSO 2025 code (our canonical code)
+
+```php
+// In IngestScbData, after parsing API response:
+foreach ($desoValues as $responseCode => $value) {
+    // Try direct match first (DeSO 2025 code or identical code)
+    $canonicalCode = $responseCode;
+
+    if (!DesoArea::where('deso_code', $responseCode)->exists()) {
+        // Try the mapping table
+        $mapping = DesoCodeMapping::where('old_code', $responseCode)->first();
+        if ($mapping) {
+            $canonicalCode = $mapping->new_code;
+        } else {
+            // Code doesn't exist in 2025 and has no mapping → skip
+            $this->unmappedCodes++;
+            continue;
+        }
+    }
+
+    IndicatorValue::updateOrCreate(
+        ['deso_code' => $canonicalCode, 'indicator_id' => $indicator->id, 'year' => $year],
+        ['raw_value' => $value]
+    );
 }
 ```
 
-### 2.4 Type Scale
+### 2.3 Available Historical Depth per Indicator
 
-Keep it tight. A data-dense sidebar doesn't need 8 font sizes.
+Check what years are available for each SCB table. The agent should query the API to discover available time periods:
 
-| Role | Size | Weight | Tailwind class | Usage |
-|---|---|---|---|---|
-| Page title | 24px / 1.5rem | 700 (bold) | `text-2xl font-bold` | Methodology page hero, admin page titles |
-| Section heading | 16px / 1rem | 600 (semibold) | `text-base font-semibold` | Sidebar section headers ("Schools in this area") |
-| Body text | 14px / 0.875rem | 400 (regular) | `text-sm` | Most sidebar content, descriptions |
-| Data label | 12px / 0.75rem | 500 (medium) | `text-xs font-medium` | "Median Income", "Employment Rate", category labels |
-| Data value | 14px / 0.875rem | 600 (semibold) | `text-sm font-semibold` | "287,000 SEK", "72.3%", score numbers |
-| Small / caption | 11px / 0.6875rem | 400 (regular) | `text-[11px]` | "Updated annually", "Source: SCB", timestamps |
-| Score display | 36px / 2.25rem | 700 (bold) | `text-4xl font-bold` | The big score number in sidebar header |
-
-### 2.5 Tabular Numbers
-
-Critical for data alignment. When showing indicator values in a column, numbers must align vertically.
-
-```css
-/* Apply globally to data contexts */
-.tabular-nums {
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum";
-}
+```
+POST https://api.scb.se/OV0104/v1/doris/en/ssd/{table_path}
 ```
 
-Or use Tailwind's built-in `tabular-nums` class on any element displaying numeric data.
+With an empty query body, the API returns metadata including available time periods.
 
-**Apply to:** Score numbers, indicator values (287,000 SEK), percentages (72.3%), percentile ranks (78th), school meritvärde (241), student counts.
+Expected availability (approximate):
 
-### 2.6 Line Height
-
-| Context | Line height | Tailwind |
+| Indicator | Available years (DeSO level) | Notes |
 |---|---|---|
-| Headings | 1.2 | `leading-tight` |
-| Sidebar body | 1.5 | `leading-normal` |
-| Methodology page prose | 1.7 | `leading-relaxed` |
-| Data labels (single line) | 1.0 | `leading-none` |
+| median_income | 2011–2023 | Excellent depth |
+| low_economic_standard_pct | 2011–2023 | Excellent depth |
+| employment_rate | 2018–2023 | Starts with DeSO creation |
+| education_post_secondary_pct | 2018–2023 | Starts with DeSO creation |
+| education_below_secondary_pct | 2018–2023 | Same |
+| foreign_background_pct | 2010–2024 | Longest series |
+| population | 2010–2024 | Longest series |
+| rental_tenure_pct | 2013–2023 | Good depth |
+
+For our 3-year window, we need 2022–2024. Most indicators should have this.
+
+### 2.4 Historical School Data
+
+Skolverket's school statistics are annual. The `ingest:skolverket-stats` command currently fetches the latest year. Extend to fetch historical:
+
+```bash
+php artisan ingest:skolverket-stats --academic-year=2021/22
+php artisan ingest:skolverket-stats --academic-year=2022/23
+php artisan ingest:skolverket-stats --academic-year=2023/24
+```
+
+The Planned Educations API may have historical data, or the agent may need to download historical Excel files from Skolverket's statistics page.
+
+After historical stats are loaded, re-run:
+```bash
+php artisan aggregate:school-indicators --academic-year=2022/23
+php artisan aggregate:school-indicators --academic-year=2023/24
+```
+
+### 2.5 POI Data: No History
+
+POIs (OSM, Google Places) have no historical snapshots. They represent current state only. **No trend is computed for POI-based indicators.** This is expected and correct. From this point forward, each monthly POI scrape is stored with a timestamp. In 12+ months, we'll have enough snapshots to compute a POI trend. But not at launch.
 
 ---
 
-## Step 3: Navbar
+## Step 3: Trend Computation
 
-### 3.1 Specifications
+### 3.1 Indicator Trend Table
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│  [Logo]   Map   Methodology            [Admin ▾]            │
-└──────────────────────────────────────────────────────────────┘
-```
+```php
+Schema::create('indicator_trends', function (Blueprint $table) {
+    $table->id();
+    $table->string('deso_code', 10)->index();
+    $table->foreignId('indicator_id')->constrained()->index();
+    $table->integer('base_year');                           // e.g., 2022
+    $table->integer('end_year');                            // e.g., 2024
+    $table->integer('data_points');                         // How many years of data we have
+    $table->decimal('absolute_change', 14, 4)->nullable();  // end_value - base_value
+    $table->decimal('percent_change', 8, 2)->nullable();    // ((end - base) / base) * 100
+    $table->string('direction', 10);                        // 'rising', 'falling', 'stable', 'insufficient'
+    $table->decimal('confidence', 3, 2)->nullable();        // 0.00-1.00 based on data completeness
+    $table->timestamps();
 
-- **Height:** 48px. Not 64, not 56. The map needs every pixel.
-- **Background:** `bg-background` (white) with a 1px `border-b border-border` bottom border. No shadow (shadows compete with the map).
-- **Logo:** Product name in `text-base font-semibold text-foreground`. No icon/symbol for now. Just the name as wordmark.
-- **Nav links:** `text-sm font-medium text-muted-foreground`. Active link: `text-foreground`. Hover: `text-foreground`. No underlines, no colored highlights. The active state is just darker text.
-- **Admin dropdown:** Same styling. Subtle chevron icon. Dropdown uses shadcn `DropdownMenu`.
-- **Spacing:** `px-4` horizontal padding. `gap-6` between nav links.
-- **Mobile:** Hamburger menu on < 768px. Standard shadcn `Sheet` sliding from left.
-
-### 3.2 No Colored Navbar
-
-Do not add a blue/colored top bar. The navbar is infrastructure, not branding. A colored navbar fights the map. White + thin border is correct.
-
----
-
-## Step 4: Sidebar Styling
-
-### 4.1 Overall
-
-- **Background:** `bg-background` (white). Clean.
-- **Width:** 400px on desktop (already specified in previous task).
-- **Padding:** `p-5` (20px). Consistent on all sides.
-- **Section spacing:** `space-y-6` between major sections (header, score, indicators, schools).
-- **Scroll:** `overflow-y-auto` with shadcn `ScrollArea` for styled scrollbar. Scrollbar should be thin and subtle (`w-1.5`).
-
-### 4.2 DeSO Header Section
-
-```
-Danderyd 0162C1010
-Danderyds kommun · Stockholms län
-Area: 1.2 km²
+    $table->unique(['deso_code', 'indicator_id', 'base_year', 'end_year']);
+});
 ```
 
-- DeSO name (if available) in `text-lg font-semibold text-foreground`
-- DeSO code in `text-xs font-medium text-muted-foreground` next to the name (not on its own line)
-- Kommun + län in `text-sm text-muted-foreground`
-- Area in `text-xs text-muted-foreground`
-- Separator: `border-b border-border` after the header
+### 3.2 Trend Computation Service
 
-### 4.3 Score Section
+Create `app/Services/TrendService.php`:
 
-```
-        72
-  Stable / Positive Outlook
-```
+```php
+class TrendService
+{
+    // Thresholds for "stable" vs "rising" vs "falling"
+    private const STABLE_THRESHOLD_PCT = 3.0;  // ±3% = stable
 
-- Score number: `text-4xl font-bold tabular-nums` in the **score gradient color** matching its value. This is the single most important visual connection between the sidebar and the map. A score of 72 should be the exact same green as the 72-colored polygon on the map.
-- Score label: `text-sm font-medium text-muted-foreground`
-- The score section should have slight vertical padding (`py-4`) and a bottom border
+    public function computeTrends(int $baseYear, int $endYear): void
+    {
+        $indicators = Indicator::where('is_active', true)
+            ->where('direction', '!=', 'neutral')  // Don't compute trends for neutral indicators
+            ->get();
 
-### 4.4 Indicator Bars
+        foreach ($indicators as $indicator) {
+            $this->computeIndicatorTrend($indicator, $baseYear, $endYear);
+        }
+    }
 
-```
-Median Income          ████████░░  78th   287,000 SEK   ↑ +8.2%
-```
+    private function computeIndicatorTrend(Indicator $indicator, int $baseYear, int $endYear): void
+    {
+        // Only for trend-eligible DeSOs
+        $results = DB::select("
+            SELECT
+                base.deso_code,
+                base.raw_value AS base_value,
+                latest.raw_value AS end_value,
+                (SELECT COUNT(*) FROM indicator_values iv
+                 WHERE iv.deso_code = base.deso_code
+                 AND iv.indicator_id = ?
+                 AND iv.year BETWEEN ? AND ?
+                 AND iv.raw_value IS NOT NULL) AS data_points
+            FROM indicator_values base
+            JOIN indicator_values latest
+                ON latest.deso_code = base.deso_code
+                AND latest.indicator_id = base.indicator_id
+                AND latest.year = ?
+            JOIN deso_areas da ON da.deso_code = base.deso_code
+            WHERE base.indicator_id = ?
+              AND base.year = ?
+              AND base.raw_value IS NOT NULL
+              AND latest.raw_value IS NOT NULL
+              AND da.trend_eligible = true
+        ", [$indicator->id, $baseYear, $endYear, $endYear, $indicator->id, $baseYear]);
 
-This is the densest UI element. Every pixel matters.
+        foreach ($results as $row) {
+            $absoluteChange = $row->end_value - $row->base_value;
+            $percentChange = $row->base_value != 0
+                ? ($absoluteChange / abs($row->base_value)) * 100
+                : null;
 
-- **Layout:** Single row per indicator. Name on the left, bar in the middle, values on the right.
-- **Name:** `text-xs font-medium text-muted-foreground uppercase tracking-wide`. All-caps labels are more scannable at small sizes.
-- **Bar:** Height 6px. Rounded (`rounded-full`). Fill color = score gradient color at the percentile position. Unfilled = `bg-muted` (slate-100). Width ~100px.
-- **Percentile:** `text-xs font-semibold tabular-nums text-foreground`. Show as "78th" not "0.78" or "78%".
-- **Raw value:** `text-xs tabular-nums text-muted-foreground`. In parentheses or after a separator. "287,000 SEK" or "72.3%".
-- **Trend arrow:** Small inline arrow icon (12px). Green `text-trend-positive` for improving, rose `text-trend-negative` for worsening, gray `text-trend-stable` for stable. Percentage in the same color, `text-xs tabular-nums`.
-- **No trend:** A muted dash "—" in `text-trend-none`.
+            $direction = $this->classifyDirection($percentChange, $row->data_points);
+            $confidence = $this->computeConfidence($row->data_points, $baseYear, $endYear);
 
-**Visual rhythm:** Each indicator row should be ~32-36px tall. With 8 indicators, the whole section is ~280px — scrollable but usually visible without scrolling on desktop.
+            IndicatorTrend::updateOrCreate(
+                [
+                    'deso_code' => $row->deso_code,
+                    'indicator_id' => $indicator->id,
+                    'base_year' => $baseYear,
+                    'end_year' => $endYear,
+                ],
+                [
+                    'data_points' => $row->data_points,
+                    'absolute_change' => $absoluteChange,
+                    'percent_change' => $percentChange,
+                    'direction' => $direction,
+                    'confidence' => $confidence,
+                ]
+            );
+        }
+    }
 
-### 4.5 School Cards
+    private function classifyDirection(?float $percentChange, int $dataPoints): string
+    {
+        if ($dataPoints < 2 || $percentChange === null) {
+            return 'insufficient';
+        }
+        if (abs($percentChange) <= self::STABLE_THRESHOLD_PCT) {
+            return 'stable';
+        }
+        return $percentChange > 0 ? 'rising' : 'falling';
+    }
 
-Already specified in the schools task. Apply these tokens:
-- Card: `bg-background border border-border rounded-lg p-3`
-- School name: `text-sm font-semibold text-foreground`
-- Type/operator: `text-xs text-muted-foreground`
-- Stats bars: Same as indicator bars but smaller (4px height)
-
-### 4.6 Badges
-
-For strengths/weaknesses and category labels:
-
-- **Strength badge:** `bg-emerald-50 text-emerald-700 border border-emerald-200` (light green chip)
-- **Weakness badge:** `bg-purple-50 text-purple-700 border border-purple-200` (light purple chip — matches the low-score map color)
-- **Neutral badge:** `bg-muted text-muted-foreground border border-border`
-- **All badges:** `text-xs font-medium px-2 py-0.5 rounded-full`
-
----
-
-## Step 5: Map Chrome
-
-### 5.1 Legend
-
-The score legend overlay on the map:
-
-- Position: bottom-left of the map area, `absolute` positioned
-- Background: `bg-background/90 backdrop-blur-sm` (white with slight transparency so map peeks through)
-- Border: `border border-border rounded-lg`
-- Padding: `px-3 py-2`
-- Gradient bar: 200px wide, 8px tall, using the score gradient
-- Labels: `text-[11px] text-muted-foreground` at each end: "High Risk" and "Strong Growth"
-- **Minimal.** No title, no extra decoration. Just the bar and two labels.
-
-### 5.2 Layer Controls (When H3 Is Implemented)
-
-- Position: top-right of the map area
-- Same card styling: `bg-background/90 backdrop-blur-sm border border-border rounded-lg`
-- Radio buttons and toggles use shadcn components
-- `text-xs` for labels
-
-### 5.3 Map Background
-
-The default map background (behind the DeSO polygons / H3 hexes) should be:
-- Light mode: `#f1f5f9` (slate-100) — a very light gray that distinguishes "no data" areas from the white sidebar
-- Water bodies (if rendered): `#e2e8f0` (slate-200) or a very subtle blue-gray
-
-This ensures that the colored score polygons are the dominant visual element.
-
----
-
-## Step 6: Admin Pages
-
-### 6.1 General Admin Styling
-
-Admin pages are internal tools — functional over beautiful. But they should still use the same tokens for consistency.
-
-- **Page background:** `bg-muted` (slate-100) — slightly gray to distinguish from the main app's white
-- **Content cards:** `bg-background` (white) cards on the gray background
-- **Tables:** Shadcn `Table` with default styling. Headers in `text-xs font-medium text-muted-foreground uppercase tracking-wide`. Rows in `text-sm`.
-- **Inputs:** Standard shadcn. No customization needed.
-
-### 6.2 Admin Navbar Distinction
-
-Subtle visual cue that you're in admin:
-- Add a small `text-xs font-medium text-muted-foreground bg-muted px-2 py-0.5 rounded` badge next to the admin link: "Admin"
-- Or use a slightly different background tint on admin pages
-
----
-
-## Step 7: Data Freshness Indicators
-
-### 7.1 Status Dots
-
-Used in the sidebar (data sources section) and admin dashboard:
-
-| Status | Dot | Text color |
-|---|---|---|
-| Current | `bg-emerald-500` (green) | `text-foreground` |
-| Stale | `bg-amber-500` (yellow) | `text-foreground` |
-| Outdated | `bg-red-500` (red) | `text-foreground` |
-| Unknown | `bg-muted-foreground` (gray) | `text-muted-foreground` |
-
-Dots are 8px circles, inline with the text label. `w-2 h-2 rounded-full`.
-
----
-
-## Step 8: Responsive Behavior
-
-### 8.1 Breakpoints
-
-| Breakpoint | Layout |
-|---|---|
-| ≥ 1024px (lg) | Map + sidebar (400px) side by side |
-| 768–1023px (md) | Map + sidebar (320px) side by side, slightly narrower |
-| < 768px (sm) | Map takes full width, sidebar becomes bottom sheet (40% height) |
-
-### 8.2 Mobile Bottom Sheet
-
-On mobile, the sidebar becomes a draggable bottom sheet:
-- Default state: shows score header + "drag up for details"
-- Expanded: scrollable, shows all sections
-- Map visible above (60% of viewport)
-- Use shadcn `Drawer` (Vaul) for the mobile sheet
-
-### 8.3 Typography Doesn't Change
-
-Don't scale fonts down on mobile. 14px body text and 12px labels are already mobile-friendly. Reducing them further hurts readability. The mobile sidebar is narrower (full-width minus padding = ~340px) but the same type scale works.
-
----
-
-## Step 9: Methodology Page Styling
-
-### 9.1 Reading Column
-
-The methodology page is prose, not data. Different styling:
-
-- **Max width:** 680px centered. `max-w-2xl mx-auto`.
-- **Paragraph text:** `text-base leading-relaxed text-foreground`. Slightly larger and more relaxed than sidebar text.
-- **Headings:** `text-xl font-bold text-foreground` for section headings, `text-lg font-semibold` for subsections.
-- **Data source cards:** `bg-background border border-border rounded-lg p-5`. Source name in `text-xs font-medium text-muted-foreground`. Frequency badge: `bg-muted text-muted-foreground text-xs px-2 py-0.5 rounded-full`.
-- **Score range table:** Left border in the score gradient color for each row. `border-l-4`. Cell padding `py-3`.
-- **FAQ accordion:** Shadcn default. Trigger in `text-base font-medium`. Content in `text-sm text-muted-foreground leading-relaxed`.
-
----
-
-## Step 10: Dark Mode Architecture (Prep Only)
-
-### 10.1 What to Do Now
-
-1. **All colors via CSS custom properties.** Never hardcode `text-slate-700` — use `text-foreground`. This is the single most important dark mode prep.
-2. **All backgrounds via tokens.** `bg-background`, `bg-card`, `bg-muted`. Never `bg-white` or `bg-slate-100`.
-3. **Score gradient colors in variables.** So they can be adjusted for dark backgrounds if needed.
-4. **Add `dark` class support in Tailwind config:**
-
-```js
-// tailwind.config.ts
-export default {
-  darkMode: 'class',  // Enables .dark class on <html>
-  // ...
+    private function computeConfidence(int $dataPoints, int $baseYear, int $endYear): float
+    {
+        $expectedPoints = $endYear - $baseYear + 1;
+        // Confidence based on data completeness
+        return min(1.0, $dataPoints / $expectedPoints);
+    }
 }
 ```
 
-5. **Comment the dark mode token overrides** in the CSS file with a note: "Uncomment and tune when dark mode is implemented."
+### 3.3 Direction Interpretation
 
-### 10.2 What NOT to Do Now
+The `direction` field here is about the raw value movement, not about whether it's good or bad. Interpretation depends on the indicator's `direction` property:
 
-- Don't implement a dark mode toggle in the UI
-- Don't test components in dark mode
-- Don't create dark mode variants of the score gradient
-- Don't add dark basemap tiles for the map
+| Indicator direction | Raw trend | Interpretation for user |
+|---|---|---|
+| positive (income) | rising | ↑ Improving |
+| positive (income) | falling | ↓ Declining |
+| negative (crime) | rising | ↓ Worsening |
+| negative (crime) | falling | ↑ Improving |
+| positive (employment) | stable | → Stable |
 
-### 10.3 When to Implement Dark Mode
+The UI applies this logic when rendering — the stored trend is just the raw direction.
 
-After launch, when you have user feedback. It's a half-day task if the token architecture is correct:
-1. Uncomment dark token overrides
-2. Add a toggle button (system preference / manual)
-3. Test score gradient legibility on dark background (may need saturation bump)
-4. Add dark map background color
-5. Test every component
+### 3.4 Artisan Command
+
+```bash
+php artisan compute:trends [--base-year=2022] [--end-year=2024]
+```
 
 ---
 
-## Step 11: Implementation Approach
+## Step 4: What About Composite Trends?
 
-### 11.1 Order of Operations
+### 4.1 The Decision: Not Yet
 
-1. **Set up color tokens and typography** — update CSS variables, install Inter, configure Tailwind
-2. **Update the navbar** — height, colors, spacing
-3. **Update the sidebar** — all sections (header, score, indicators, schools)
-4. **Update the map chrome** — legend, layer controls, background
-5. **Update admin pages** — tables, cards, forms
-6. **Update methodology page** — typography, cards, accordion
-7. **Audit for hardcoded colors** — search codebase for raw Tailwind colors (`text-gray-*`, `bg-slate-*`, etc.) and replace with token references
+Per your direction: **no composite trend arrow on the map for now.** The composite_scores table already has `trend_1y` and `trend_3y` columns from the original design, but we leave them NULL.
 
-### 11.2 Verification Checklist
+**Why this is the right call:**
+- Different indicators have different historical depth (income: 5+ years, POIs: 0 years)
+- Averaging a trend from 4 indicators that have data with 4 that don't is misleading
+- A "↑ Rising" badge on the map that's based on income alone (because that's all we have trend data for) would be deceptive
+- Better to show per-indicator arrows in the sidebar and let users form their own judgment
 
-- [ ] Inter font loads correctly (check network tab — no FOUT/FOIT)
-- [ ] Tabular numbers align in indicator value columns
-- [ ] Score number color matches the corresponding map polygon color for the same score value
-- [ ] Navbar is 48px, white background, thin border — no shadow, no color
-- [ ] Sidebar is clean white, readable at all scroll positions
-- [ ] Indicator bars use the score gradient fill
-- [ ] Trend arrows are color-coded (green/rose/gray)
-- [ ] Badges use the correct light-chip style
-- [ ] Admin pages have subtle gray background distinction
-- [ ] Legend is semi-transparent, positioned bottom-left, minimal
-- [ ] Methodology page has comfortable reading width (680px max)
-- [ ] Mobile: sidebar becomes bottom sheet at < 768px
-- [ ] No hardcoded color values in component files (all via tokens)
-- [ ] `darkMode: 'class'` is configured in Tailwind (even though dark mode isn't active)
-- [ ] Dark mode token overrides are in the CSS file (commented out)
+### 4.2 When to Add Composite Trends
+
+Once **at least 60% of the active weight budget** has trend data available (meaning indicators covering ≥ 0.60 of the total weight sum have 3-year history), we can consider a composite trend. This is probably ~6 months out, once BRÅ and Kronofogden are integrated.
+
+Add this threshold as a config value so it can be adjusted:
+
+```php
+// config/scoring.php
+return [
+    'composite_trend_min_weight_coverage' => 0.60,
+];
+```
+
+### 4.3 Future Implementation Note
+
+When composite trends are eventually computed:
+```
+composite_trend = Σ(weight_i × indicator_trend_direction_i × percent_change_i) / Σ(weight_i for indicators with trend data)
+```
+
+Only indicators with `direction != 'insufficient'` contribute. The confidence of the composite trend = sum of contributing weights / sum of all active weights.
+
+---
+
+## Step 5: API Changes
+
+### 5.1 Extend DeSO Detail Response
+
+When the sidebar loads data for a DeSO, include trend information:
+
+```php
+// In the DeSO detail / indicator breakdown response
+public function show(string $desoCode)
+{
+    $deso = DesoArea::where('deso_code', $desoCode)->firstOrFail();
+
+    $indicators = IndicatorValue::where('deso_code', $desoCode)
+        ->where('year', $this->currentYear)
+        ->with('indicator')
+        ->get()
+        ->map(function ($iv) use ($desoCode) {
+            $trend = IndicatorTrend::where('deso_code', $desoCode)
+                ->where('indicator_id', $iv->indicator_id)
+                ->latest('end_year')
+                ->first();
+
+            return [
+                'slug' => $iv->indicator->slug,
+                'name' => $iv->indicator->name,
+                'raw_value' => $iv->raw_value,
+                'normalized_value' => $iv->normalized_value,
+                'unit' => $iv->indicator->unit,
+                'direction' => $iv->indicator->direction,
+                'normalization_scope' => $iv->indicator->normalization_scope,
+                'trend' => $trend ? [
+                    'direction' => $trend->direction,       // 'rising', 'falling', 'stable', 'insufficient'
+                    'percent_change' => $trend->percent_change,
+                    'absolute_change' => $trend->absolute_change,
+                    'base_year' => $trend->base_year,
+                    'end_year' => $trend->end_year,
+                    'data_points' => $trend->data_points,
+                    'confidence' => $trend->confidence,
+                ] : null,
+            ];
+        });
+
+    return response()->json([
+        'deso' => [...],
+        'score' => [...],
+        'indicators' => $indicators,
+        'trend_eligible' => $deso->trend_eligible,
+    ]);
+}
+```
+
+### 5.2 New: Trend Metadata
+
+The sidebar should tell users about trend data availability:
+
+```php
+// Also return in the DeSO response:
+'trend_meta' => [
+    'eligible' => $deso->trend_eligible,
+    'reason' => $deso->trend_eligible ? null : 'Area boundaries changed in 2025 revision',
+    'indicators_with_trends' => $indicatorsWithTrendCount,
+    'indicators_total' => $indicatorsTotalCount,
+    'period' => $deso->trend_eligible ? '2022–2024' : null,
+],
+```
+
+---
+
+## Step 6: UI — Sidebar Trend Display
+
+### 6.1 Indicator Bars with Trend Arrows
+
+Each indicator in the sidebar already shows a bar. Add a trend arrow:
+
+```
+Median Income      ████████░░  78th   287,000 SEK   ↑ +8.2%
+Employment Rate    ██████░░░░  61st   72.3%         → +1.1%
+School Quality     █████████░  91st   242           ↓ -3.4%
+Grocery Access     ████████░░  82nd   1.2/1000      — (no trend)
+```
+
+**Arrow logic:**
+- `↑` green arrow: indicator is improving (respects indicator direction — rising income = improving, falling crime = improving)
+- `↓` red/purple arrow: indicator is worsening
+- `→` gray arrow: stable (< ±3% change)
+- `—` with "(no trend data)" in muted text: insufficient data
+
+**Percentage display:**
+- Show the raw percent change, not the normalized change
+- "+8.2%" for income means the median income rose 8.2% over the trend period
+- This is more meaningful to users than "normalized score moved from 0.73 to 0.78"
+
+### 6.2 Trend Period Label
+
+Above the indicator section, show a subtle label:
+
+```
+Indicator Breakdown
+Trends based on 2022–2024 data where available
+```
+
+### 6.3 Non-Eligible DeSOs
+
+For DeSOs where `trend_eligible = false`:
+
+```
+Indicator Breakdown
+⚠ Trend data is not available for this area because its statistical
+  boundaries were revised in 2025. Current values are shown below.
+
+Median Income      ████████░░  78th   287,000 SEK
+Employment Rate    ██████░░░░  61st   72.3%
+...
+```
+
+No arrows, no percentages. Just current values. Honest.
+
+### 6.4 Tooltip Detail
+
+Hovering/clicking a trend arrow shows a tooltip:
+
+```
+┌──────────────────────────────────────┐
+│ Median Income Trend                  │
+│                                      │
+│ 2022: 265,000 SEK                    │
+│ 2023: 274,000 SEK                    │
+│ 2024: 287,000 SEK                    │
+│                                      │
+│ Change: +22,000 SEK (+8.3%)          │
+│ Confidence: High (3/3 years)         │
+└──────────────────────────────────────┘
+```
+
+Shows the actual historical values year by year. The user can see the trajectory directly.
+
+If only 2 of 3 years have data:
+
+```
+┌──────────────────────────────────────┐
+│ School Quality Trend                 │
+│                                      │
+│ 2022: No data                        │
+│ 2023: 248 meritvärde                 │
+│ 2024: 242 meritvärde                 │
+│                                      │
+│ Change: -6 points (-2.4%)            │
+│ Confidence: Medium (2/3 years)       │
+└──────────────────────────────────────┘
+```
+
+### 6.5 No Composite Trend Badge
+
+The score section at the top of the sidebar currently has placeholder space for "Trend badge: ↑ +3.2 or ↓ -1.8". **Remove or hide this.** Don't show a composite trend until the data supports it. Show only the score number and label.
+
+If you want to show *something* in the header, show a subtle text like:
+
+```
+Score: 72
+Stable / Positive Outlook
+See individual indicator trends below ↓
+```
+
+---
+
+## Step 7: Confidence Display
+
+### 7.1 Confidence Levels
+
+| Data points | Confidence | Label | Visual |
+|---|---|---|---|
+| 3/3 years | 1.00 | High | Full arrow, normal weight |
+| 2/3 years | 0.67 | Medium | Slightly faded arrow |
+| 1/3 years | 0.33 | Low | Don't show trend — too unreliable |
+| 0/3 years | 0.00 | None | "—" with "no trend data" |
+
+**Rule: don't show a trend direction if confidence < 0.50.** A single data point gives you a delta between two years but that could be noise. Two or three points is the minimum for a directional claim.
+
+### 7.2 Implementation
+
+In the frontend, filter out low-confidence trends:
+
+```tsx
+const showTrend = trend && trend.confidence >= 0.50 && trend.direction !== 'insufficient';
+```
+
+---
+
+## Step 8: Handling Methodology Changes
+
+### 8.1 The Problem
+
+If SCB changes how they compute median income (e.g., changes the definition of "disposable income"), a year-over-year comparison is apples-to-oranges. The data jumps not because reality changed but because measurement changed.
+
+### 8.2 Methodology Change Registry
+
+```php
+Schema::create('methodology_changes', function (Blueprint $table) {
+    $table->id();
+    $table->string('source', 40);
+    $table->foreignId('indicator_id')->nullable()->constrained();
+    $table->integer('year_affected');            // The year the change took effect
+    $table->string('change_type', 30);           // 'definition_change', 'calculation_change', 'base_year_change'
+    $table->text('description');                  // Human-readable: "SCB changed income definition to include..."
+    $table->boolean('breaks_trend')->default(false);  // If true, don't compute trends across this year
+    $table->string('source_url')->nullable();     // Link to SCB/Skolverket documentation of the change
+    $table->timestamps();
+});
+```
+
+### 8.3 Usage
+
+When computing trends, if a `methodology_changes` entry with `breaks_trend = true` exists for an indicator and the change year falls within the trend window: **don't compute a trend for that indicator.** Set direction = 'insufficient' with a note.
+
+```php
+// In TrendService
+$methodologyBreak = MethodologyChange::where('indicator_id', $indicator->id)
+    ->where('breaks_trend', true)
+    ->whereBetween('year_affected', [$baseYear, $endYear])
+    ->exists();
+
+if ($methodologyBreak) {
+    // Store as 'insufficient' with note
+    return 'insufficient'; // methodology changed within trend window
+}
+```
+
+### 8.4 When to Populate
+
+The agent should check SCB release notes when fetching historical data. SCB usually documents methodology changes in the table footnotes or in separate PDFs. Note any changes in the `methodology_changes` table as they're discovered.
+
+For now, seed with known changes:
+- SCB employment statistics had a methodology change in 2019 ("new time series from 2019")
+- Meritvärde calculation has remained stable since 2012 (16-subject system extended to 17 with moderna språk)
+
+---
+
+## Step 9: Pipeline Integration
+
+### 9.1 Extended Pipeline Command
+
+Update `pipeline:run` to include historical data and trends:
+
+```bash
+php artisan pipeline:run --with-history --base-year=2022
+```
+
+Which adds these stages after scoring:
+
+```php
+// After compute:scores...
+
+// Stage: Compute trends
+$this->info("=== Stage: Compute Trends ===");
+$this->call('compute:trends', [
+    '--base-year' => $this->option('base-year') ?? now()->year - 3,
+    '--end-year' => now()->year - 1,
+]);
+```
+
+### 9.2 Historical Ingestion (One-Time)
+
+The historical data fetch is primarily a one-time operation. Once you have 2022–2024 data, subsequent pipeline runs only fetch the new year and add one more year of depth.
+
+```bash
+# One-time historical backfill:
+php artisan ingest:scb --year=2022
+php artisan ingest:scb --year=2023
+# 2024 should already be ingested from the current pipeline
+
+php artisan normalize:indicators --year=2022
+php artisan normalize:indicators --year=2023
+
+php artisan ingest:skolverket-stats --academic-year=2021/22
+php artisan ingest:skolverket-stats --academic-year=2022/23
+php artisan aggregate:school-indicators --academic-year=2022/23
+
+php artisan compute:trends --base-year=2022 --end-year=2024
+```
+
+---
+
+## Step 10: Verification
+
+### 10.1 Database Checks
+
+```sql
+-- Check historical data loaded
+SELECT i.slug, iv.year, COUNT(*) AS deso_count
+FROM indicator_values iv
+JOIN indicators i ON i.id = iv.indicator_id
+GROUP BY i.slug, iv.year
+ORDER BY i.slug, iv.year;
+-- Should see 3 rows per indicator (2022, 2023, 2024) each with ~5,500-6,160 DeSOs
+
+-- Check DeSO code mapping
+SELECT change_type, COUNT(*)
+FROM deso_boundary_changes
+GROUP BY change_type;
+
+-- Check trend-eligible count
+SELECT trend_eligible, COUNT(*)
+FROM deso_areas
+GROUP BY trend_eligible;
+-- Expect: true ~5,000-5,500, false ~600-1,200
+
+-- Check trends computed
+SELECT i.slug, it.direction, COUNT(*)
+FROM indicator_trends it
+JOIN indicators i ON i.id = it.indicator_id
+GROUP BY i.slug, it.direction
+ORDER BY i.slug;
+
+-- Spot check: Danderyd should have stable or rising income
+SELECT it.*, i.slug
+FROM indicator_trends it
+JOIN indicators i ON i.id = it.indicator_id
+JOIN deso_areas da ON da.deso_code = it.deso_code
+WHERE da.kommun_name LIKE '%Danderyd%'
+  AND i.slug = 'median_income';
+
+-- Areas with biggest positive changes
+SELECT it.deso_code, da.kommun_name, i.slug, it.percent_change
+FROM indicator_trends it
+JOIN indicators i ON i.id = it.indicator_id
+JOIN deso_areas da ON da.deso_code = it.deso_code
+WHERE i.slug = 'median_income'
+ORDER BY it.percent_change DESC LIMIT 10;
+
+-- Verify no trends computed for ineligible DeSOs
+SELECT COUNT(*)
+FROM indicator_trends it
+JOIN deso_areas da ON da.deso_code = it.deso_code
+WHERE da.trend_eligible = false;
+-- Must be 0
+```
+
+### 10.2 Visual Checklist
+
+- [ ] Sidebar shows trend arrows next to each indicator (where data exists)
+- [ ] Green ↑ for improving, red ↓ for worsening, gray → for stable
+- [ ] Percentage change shown next to arrow (+8.2%, -3.4%, etc.)
+- [ ] Indicators without trend data show "—" with "no trend data" label
+- [ ] POI indicators show no trend (as expected — current data only)
+- [ ] Clicking/hovering trend arrow shows year-by-year historical values
+- [ ] Non-trend-eligible DeSOs show explanation message instead of trend arrows
+- [ ] No composite trend arrow appears on the map or in the score header
+- [ ] Trend period label visible: "Trends based on 2022–2024 data"
+- [ ] Danderyd income trend: rising or stable (sanity check)
+- [ ] Known gentrifying areas (e.g., Södermalm, Hammarby Sjöstad) show positive trends on multiple indicators
 
 ---
 
 ## Notes for the Agent
 
-### Don't Over-Design
+### The DeSO Boundary Change Is the Hardest Part
 
-This is a data product, not a brand showcase. If you're debating between "clean and simple" and "visually interesting," always pick clean and simple. The map IS the visual interest.
+Don't underestimate this. The SCB Excel file for historical changes may be poorly formatted or ambiguous. The agent may need to:
+1. Download both DeSO 2018 and DeSO 2025 boundary GeoPackages from SCB
+2. Compare code lists programmatically
+3. For codes that exist in both versions, check if the geometries are substantially the same (ST_Equals or area overlap > 95%)
+4. For codes that exist only in 2018 or only in 2025, use spatial intersection to determine the relationship
 
-### The Score Color Connection Is Critical
+This is a one-time effort but it must be done correctly — wrong code mappings corrupt all trend data.
 
-When a user looks at a green polygon on the map and then sees the score "72" in the sidebar, that number MUST be the same green. Compute the score color with the same interpolation function in both places. If they're even slightly different, it feels broken.
+### Historical SCB API May Use Different Table Paths
 
-### shadcn Is Your Friend
+Some SCB tables have separate endpoints for different time periods or DeSO versions. When fetching 2022 data, the agent may need to use a different API path than for 2024 data. The 2018-vintage tables are listed separately from 2025-vintage tables in the statistics database.
 
-Don't build custom components where shadcn has one. Button, Card, Table, Input, Select, Switch, Badge, Accordion, DropdownMenu, ScrollArea, Drawer — all of these exist in shadcn and should be used. The design system is about configuring shadcn's tokens, not replacing its components.
+Check the DeSO tables listing page carefully:
+`https://www.scb.se/hitta-statistik/regional-statistik-och-kartor/regionala-indelningar/deso---demografiska-statistikomraden/deso-tabellerna-i-ssd--information-och-instruktioner/`
 
-### Don't Add a Logo Yet
+### Stable Threshold Tuning
 
-The product doesn't have a name yet. Use a text wordmark placeholder ("[Platform]" in `font-semibold`). A logo/icon is a branding task, not a design system task.
+The ±3% threshold for "stable" is a starting point. For some indicators it's too tight (income can swing 3-5% just from inflation), for others too loose. Consider making this configurable per indicator in the future. For v1, a single threshold is fine.
+
+### Don't Normalize Historical Data to Current Normalization
+
+When you have 2022 raw values, you could re-normalize them with the 2024 normalization (rank against the 2024 distribution). **Don't do this.** Each year's normalized_value should reflect that year's distribution. The trend is computed on **raw values**, not normalized values.
+
+Comparing "73rd percentile in 2022 vs 78th percentile in 2024" is misleading because the distribution itself may have shifted. Comparing "265,000 SEK in 2022 vs 287,000 SEK in 2024" is honest.
 
 ### What NOT to Do
 
-- Don't use more than one font
-- Don't use shadows on the navbar or sidebar (they compete with the map)
-- Don't make the navbar taller than 48px
-- Don't use red for the brand color (conflicts with score gradient)
-- Don't ship dark mode in v1
-- Don't use colored backgrounds for the sidebar
-- Don't use serif fonts anywhere
-- Don't add animations or transitions beyond what shadcn provides by default
+- Don't compute composite trend arrows (decision made: individual indicators only)
+- Don't show trends for DeSOs affected by boundary changes
+- Don't extrapolate from 1 data point
+- Don't normalize historical data using current-year normalization
+- Don't compute trends for neutral indicators (population, rental_tenure) — they're context, not scored
+- Don't compute trends for POI indicators (no historical data)
+- Don't show trend data that contradicts known methodology changes
 
 ### What to Prioritize
 
-1. Color tokens (CSS variables) — unblocks everything else
-2. Inter font setup — quick win, immediate visual improvement
-3. Sidebar indicator bars — the most data-dense, most-seen component
-4. Score color matching (sidebar ↔ map)
-5. Navbar cleanup
-6. Everything else
+1. DeSO boundary change detection and code mapping (unblocks everything)
+2. Historical SCB data ingestion (3 years back)
+3. Trend computation service
+4. Sidebar UI — arrows and percentages
+5. Trend tooltip with year-by-year values
+6. Confidence display
+7. Methodology change registry (important but can be populated incrementally)
+8. Historical school data (lower priority — school stats are less volatile)
+
+### Future Enhancements (Not This Task)
+
+- Composite trend arrow (when weight coverage threshold is met)
+- Mini sparkline chart in sidebar showing 3-5 year trajectory per indicator
+- Trend contribution to scoring (rising areas get a bonus, falling areas get a penalty)
+- Predictive trend: "based on current trajectory, this area's score in 2027 is estimated at..."
+- Trend-based alerts: "3 indicators in DeSO X flipped from rising to falling"

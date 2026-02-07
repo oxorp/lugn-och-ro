@@ -222,7 +222,8 @@ class ScbApiService
         $strides = $this->computeStrides($sizes);
 
         // Group values by region, collecting all values for each region.
-        // Track which codes came from DeSO2025 suffix to prefer them over old codes.
+        // Prefer DeSO2025 codes with non-null values over old codes.
+        // For historical years, DeSO2025 codes exist but have null values — fall back to 2018 codes.
         $regionValues = [];
         $isDeso2025 = [];
         foreach ($regionIndex as $regionCode => $regionPos) {
@@ -232,18 +233,38 @@ class ScbApiService
                 continue;
             }
 
-            // Prefer DeSO2025 codes over old codes when both exist
-            if (isset($regionValues[$desoCode]) && ($isDeso2025[$desoCode] ?? false) && ! $hasSuffix) {
-                continue;
-            }
-
-            $regionValues[$desoCode] = $this->extractRegionValues(
+            $extractedValues = $this->extractRegionValues(
                 $values,
                 $sizes,
                 $strides,
                 $regionDimIndex,
                 $regionPos
             );
+
+            $hasNonNull = collect($extractedValues)->contains(fn ($v) => $v !== null);
+
+            if (isset($regionValues[$desoCode])) {
+                $existingIsNew = $isDeso2025[$desoCode] ?? false;
+                $existingHasData = collect($regionValues[$desoCode])->contains(fn ($v) => $v !== null);
+
+                // Skip if existing entry already has data from DeSO2025 code
+                if ($existingIsNew && $existingHasData && ! $hasSuffix) {
+                    continue;
+                }
+                // Replace existing null DeSO2025 entry with old code that has data
+                if ($existingIsNew && ! $existingHasData && ! $hasSuffix && $hasNonNull) {
+                    $regionValues[$desoCode] = $extractedValues;
+                    $isDeso2025[$desoCode] = false;
+
+                    continue;
+                }
+                // Skip if current entry has no data and existing already has data
+                if ($existingHasData && ! $hasNonNull) {
+                    continue;
+                }
+            }
+
+            $regionValues[$desoCode] = $extractedValues;
             $isDeso2025[$desoCode] = $hasSuffix;
         }
 

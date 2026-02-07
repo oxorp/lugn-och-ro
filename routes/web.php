@@ -18,6 +18,7 @@ Route::get('/api/deso/{desoCode}/schools', [DesoController::class, 'schools'])->
 Route::get('/api/deso/{desoCode}/crime', [DesoController::class, 'crime'])->name('deso.crime');
 Route::get('/api/deso/{desoCode}/financial', [DesoController::class, 'financial'])->name('deso.financial');
 Route::get('/api/deso/{desoCode}/pois', [DesoController::class, 'pois'])->name('deso.pois');
+Route::get('/api/deso/{desoCode}/indicators', [DesoController::class, 'indicators'])->name('deso.indicators');
 
 Route::get('/api/geocode/resolve-deso', [GeocodeController::class, 'resolveDeso'])->name('geocode.resolve-deso');
 
