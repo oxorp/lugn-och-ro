@@ -85,6 +85,9 @@ class IngestPois extends Command
                         'external_id' => "osm_{$point['osm_type']}_{$point['osm_id']}",
                         'source' => $source,
                         'category' => $category->slug,
+                        'poi_type' => $category->slug,
+                        'display_tier' => $category->display_tier ?? 4,
+                        'sentiment' => $category->signal ?? 'neutral',
                         'name' => mb_substr($point['name'] ?? '', 0, 255) ?: null,
                         'lat' => round($point['lat'], 7),
                         'lng' => round($point['lng'], 7),
@@ -99,7 +102,7 @@ class IngestPois extends Command
                 DB::table('pois')->upsert(
                     $rows,
                     ['source', 'external_id'],
-                    ['category', 'name', 'lat', 'lng', 'tags', 'status', 'last_verified_at', 'updated_at']
+                    ['category', 'poi_type', 'display_tier', 'sentiment', 'name', 'lat', 'lng', 'tags', 'status', 'last_verified_at', 'updated_at']
                 );
             }
 

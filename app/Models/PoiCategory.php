@@ -14,12 +14,18 @@ class PoiCategory extends Model
         'osm_tags',
         'google_types',
         'catchment_km',
+        'display_tier',
+        'icon',
+        'color',
+        'impact_radius_km',
+        'category_group',
         'is_active',
+        'show_on_map',
         'description',
     ];
 
     /**
-     * @return array{osm_tags: 'array', google_types: 'array', is_active: 'boolean', catchment_km: 'decimal:2'}
+     * @return array{osm_tags: 'array', google_types: 'array', is_active: 'boolean', show_on_map: 'boolean', catchment_km: 'decimal:2'}
      */
     protected function casts(): array
     {
@@ -27,6 +33,7 @@ class PoiCategory extends Model
             'osm_tags' => 'array',
             'google_types' => 'array',
             'is_active' => 'boolean',
+            'show_on_map' => 'boolean',
             'catchment_km' => 'decimal:2',
         ];
     }

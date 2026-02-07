@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Indicator;
+use App\Models\PoiCategory;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -26,6 +27,7 @@ class AdminIndicatorTest extends TestCase
         $response->assertInertia(fn ($page) => $page
             ->component('admin/indicators')
             ->has('indicators', 11)
+            ->has('poiCategories')
         );
     }
 
@@ -168,6 +170,122 @@ class AdminIndicatorTest extends TestCase
         $response = $this->get(route('admin.indicators'));
 
         $response->assertRedirect();
+    }
+
+    public function test_admin_indicators_page_includes_poi_categories(): void
+    {
+        $this->seed(\Database\Seeders\IndicatorSeeder::class);
+        $this->seed(\Database\Seeders\PoiCategorySeeder::class);
+
+        $response = $this->actingAs($this->createAdmin())->get(route('admin.indicators'));
+
+        $response->assertOk();
+        $response->assertInertia(fn ($page) => $page
+            ->component('admin/indicators')
+            ->has('poiCategories')
+        );
+    }
+
+    public function test_admin_can_toggle_poi_category_show_on_map(): void
+    {
+        $category = PoiCategory::query()->create([
+            'slug' => 'test_quarry',
+            'name' => 'Test Quarry',
+            'signal' => 'negative',
+            'is_active' => true,
+            'show_on_map' => true,
+            'display_tier' => 3,
+            'icon' => 'mountain',
+            'color' => '#f97316',
+            'category_group' => 'noise',
+        ]);
+
+        $response = $this->actingAs($this->createAdmin())->put(route('admin.poi-categories.update', $category), [
+            'is_active' => true,
+            'show_on_map' => false,
+        ]);
+
+        $response->assertRedirect();
+
+        $category->refresh();
+        $this->assertTrue($category->is_active);
+        $this->assertFalse($category->show_on_map);
+    }
+
+    public function test_admin_can_toggle_poi_category_is_active(): void
+    {
+        $category = PoiCategory::query()->create([
+            'slug' => 'test_library',
+            'name' => 'Test Library',
+            'signal' => 'positive',
+            'is_active' => true,
+            'show_on_map' => true,
+            'display_tier' => 3,
+            'icon' => 'book-open',
+            'color' => '#16a34a',
+            'category_group' => 'culture',
+        ]);
+
+        $response = $this->actingAs($this->createAdmin())->put(route('admin.poi-categories.update', $category), [
+            'is_active' => false,
+            'show_on_map' => true,
+        ]);
+
+        $response->assertRedirect();
+
+        $category->refresh();
+        $this->assertFalse($category->is_active);
+        $this->assertTrue($category->show_on_map);
+    }
+
+    public function test_admin_can_update_poi_category_display_tier(): void
+    {
+        $category = PoiCategory::query()->create([
+            'slug' => 'test_park',
+            'name' => 'Test Park',
+            'signal' => 'positive',
+            'is_active' => true,
+            'show_on_map' => true,
+            'display_tier' => 4,
+            'icon' => 'tree-pine',
+            'color' => '#16a34a',
+            'category_group' => 'nature',
+        ]);
+
+        $response = $this->actingAs($this->createAdmin())->put(route('admin.poi-categories.update', $category), [
+            'is_active' => true,
+            'show_on_map' => true,
+            'display_tier' => 2,
+        ]);
+
+        $response->assertRedirect();
+
+        $category->refresh();
+        $this->assertEquals(2, $category->display_tier);
+    }
+
+    public function test_non_admin_cannot_update_poi_category(): void
+    {
+        $category = PoiCategory::query()->create([
+            'slug' => 'test_nonadmin',
+            'name' => 'Test',
+            'signal' => 'neutral',
+            'is_active' => true,
+            'show_on_map' => true,
+            'display_tier' => 3,
+            'icon' => 'circle',
+            'color' => '#666666',
+            'category_group' => 'test',
+        ]);
+
+        $user = User::factory()->create(['is_admin' => false]);
+
+        $response = $this->actingAs($user)->put(route('admin.poi-categories.update', $category), [
+            'is_active' => false,
+            'show_on_map' => false,
+        ]);
+
+        $response->assertForbidden();
     }
 
     public function test_scores_api_returns_json(): void

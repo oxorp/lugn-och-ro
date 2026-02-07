@@ -23,6 +23,27 @@ class PoiDataTest extends TestCase
         parent::setUp();
 
         DB::statement('CREATE EXTENSION IF NOT EXISTS postgis');
+
+        // Clear POI category caches to prevent stale data between tests
+        cache()->forget('poi-categories-display');
+        cache()->forget('poi-visible-category-slugs');
+    }
+
+    private function ensurePoiCategory(string $slug, string $signal = 'positive'): void
+    {
+        PoiCategory::query()->firstOrCreate(
+            ['slug' => $slug],
+            [
+                'name' => ucfirst($slug),
+                'signal' => $signal,
+                'is_active' => true,
+                'show_on_map' => true,
+                'display_tier' => 3,
+                'icon' => 'circle',
+                'color' => '#666666',
+                'category_group' => 'test',
+            ]
+        );
     }
 
     // --- Table existence tests ---
@@ -140,8 +161,16 @@ class PoiDataTest extends TestCase
         $this->assertDatabaseHas('poi_categories', ['slug' => 'gambling', 'signal' => 'negative']);
         $this->assertDatabaseHas('poi_categories', ['slug' => 'public_transport_stop', 'signal' => 'positive']);
 
-        $this->assertEquals(10, PoiCategory::query()->count());
-        $this->assertEquals(8, PoiCategory::query()->where('is_active', true)->count());
+        // New categories from POI expansion
+        $this->assertDatabaseHas('poi_categories', ['slug' => 'wastewater_plant', 'signal' => 'negative']);
+        $this->assertDatabaseHas('poi_categories', ['slug' => 'landfill', 'signal' => 'negative']);
+        $this->assertDatabaseHas('poi_categories', ['slug' => 'prison', 'signal' => 'negative']);
+        $this->assertDatabaseHas('poi_categories', ['slug' => 'library', 'signal' => 'positive']);
+        $this->assertDatabaseHas('poi_categories', ['slug' => 'park', 'signal' => 'positive']);
+        $this->assertDatabaseHas('poi_categories', ['slug' => 'nature_reserve', 'signal' => 'positive']);
+
+        $this->assertEquals(31, PoiCategory::query()->count());
+        $this->assertEquals(29, PoiCategory::query()->where('is_active', true)->count());
     }
 
     public function test_poi_indicator_seeder_creates_indicators(): void
@@ -479,6 +508,174 @@ class PoiDataTest extends TestCase
             'source' => 'osm',
             'status' => 'active',
         ]);
+    }
+
+    // --- Viewport API tests ---
+
+    public function test_viewport_api_returns_pois_within_bbox(): void
+    {
+        $this->ensurePoiCategory('grocery');
+
+        $poi = Poi::query()->create([
+            'external_id' => 'osm_node_viewport_1',
+            'source' => 'osm',
+            'category' => 'grocery',
+            'poi_type' => 'grocery',
+            'display_tier' => 4,
+            'sentiment' => 'positive',
+            'lat' => 59.35,
+            'lng' => 18.05,
+            'status' => 'active',
+        ]);
+        DB::statement('UPDATE pois SET geom = ST_SetSRID(ST_MakePoint(lng, lat), 4326) WHERE id = ?', [$poi->id]);
+
+        $response = $this->getJson('/api/pois?bbox=18.0,59.3,18.1,59.4&zoom=14');
+
+        $response->assertOk();
+        $data = $response->json();
+        $this->assertCount(1, $data);
+        $this->assertEquals('grocery', $data[0]['poi_type']);
+        $this->assertEquals('positive', $data[0]['sentiment']);
+    }
+
+    public function test_viewport_api_filters_by_zoom_tier(): void
+    {
+        $this->ensurePoiCategory('grocery');
+
+        // Tier 4 POI should not appear at zoom 10 (max tier 2)
+        $poi = Poi::query()->create([
+            'external_id' => 'osm_node_tier_test',
+            'source' => 'osm',
+            'category' => 'grocery',
+            'poi_type' => 'grocery',
+            'display_tier' => 4,
+            'sentiment' => 'positive',
+            'lat' => 59.35,
+            'lng' => 18.05,
+            'status' => 'active',
+        ]);
+        DB::statement('UPDATE pois SET geom = ST_SetSRID(ST_MakePoint(lng, lat), 4326) WHERE id = ?', [$poi->id]);
+
+        // Zoom 10 → max tier 2, so tier 4 POI should not appear
+        $response = $this->getJson('/api/pois?bbox=18.0,59.3,18.1,59.4&zoom=10');
+        $response->assertOk();
+        $this->assertCount(0, $response->json());
+
+        // Zoom 14 → max tier 4, so tier 4 POI should appear
+        $response = $this->getJson('/api/pois?bbox=18.0,59.3,18.1,59.4&zoom=14');
+        $response->assertOk();
+        $this->assertCount(1, $response->json());
+    }
+
+    public function test_viewport_api_filters_by_category(): void
+    {
+        $this->ensurePoiCategory('grocery');
+        $this->ensurePoiCategory('healthcare');
+
+        foreach (['grocery', 'healthcare'] as $cat) {
+            $poi = Poi::query()->create([
+                'external_id' => "osm_node_cat_{$cat}",
+                'source' => 'osm',
+                'category' => $cat,
+                'poi_type' => $cat,
+                'display_tier' => 2,
+                'sentiment' => 'positive',
+                'lat' => 59.35,
+                'lng' => 18.05,
+                'status' => 'active',
+            ]);
+            DB::statement('UPDATE pois SET geom = ST_SetSRID(ST_MakePoint(lng, lat), 4326) WHERE id = ?', [$poi->id]);
+        }
+
+        // Filter to only grocery
+        $response = $this->getJson('/api/pois?bbox=18.0,59.3,18.1,59.4&zoom=14&categories=grocery');
+        $response->assertOk();
+        $this->assertCount(1, $response->json());
+        $this->assertEquals('grocery', $response->json()[0]['category']);
+    }
+
+    public function test_viewport_api_excludes_pois_outside_bbox(): void
+    {
+        // POI outside bbox
+        $poi = Poi::query()->create([
+            'external_id' => 'osm_node_outside_bbox',
+            'source' => 'osm',
+            'category' => 'grocery',
+            'poi_type' => 'grocery',
+            'display_tier' => 2,
+            'sentiment' => 'positive',
+            'lat' => 55.0,
+            'lng' => 13.0,
+            'status' => 'active',
+        ]);
+        DB::statement('UPDATE pois SET geom = ST_SetSRID(ST_MakePoint(lng, lat), 4326) WHERE id = ?', [$poi->id]);
+
+        // Stockholm bbox
+        $response = $this->getJson('/api/pois?bbox=18.0,59.3,18.1,59.4&zoom=14');
+        $response->assertOk();
+        $this->assertCount(0, $response->json());
+    }
+
+    public function test_viewport_api_returns_no_pois_below_zoom_8(): void
+    {
+        $poi = Poi::query()->create([
+            'external_id' => 'osm_node_low_zoom',
+            'source' => 'osm',
+            'category' => 'prison',
+            'poi_type' => 'prison',
+            'display_tier' => 1,
+            'sentiment' => 'negative',
+            'lat' => 59.35,
+            'lng' => 18.05,
+            'status' => 'active',
+        ]);
+        DB::statement('UPDATE pois SET geom = ST_SetSRID(ST_MakePoint(lng, lat), 4326) WHERE id = ?', [$poi->id]);
+
+        $response = $this->getJson('/api/pois?bbox=18.0,59.3,18.1,59.4&zoom=7');
+        $response->assertOk();
+        $this->assertCount(0, $response->json());
+    }
+
+    public function test_poi_categories_api_returns_active_categories(): void
+    {
+        $this->artisan('db:seed', ['--class' => 'PoiCategorySeeder']);
+
+        $response = $this->getJson('/api/pois/categories');
+        $response->assertOk();
+
+        $data = $response->json();
+        $this->assertGreaterThanOrEqual(29, count($data));
+        $this->assertArrayHasKey('slug', $data[0]);
+        $this->assertArrayHasKey('display_tier', $data[0]);
+        $this->assertArrayHasKey('icon', $data[0]);
+        $this->assertArrayHasKey('color', $data[0]);
+    }
+
+    public function test_viewport_api_has_cache_control_header(): void
+    {
+        $response = $this->getJson('/api/pois?bbox=18.0,59.3,18.1,59.4&zoom=14');
+        $response->assertOk();
+        $response->assertHeader('Cache-Control');
+    }
+
+    // --- Compound tag filter tests ---
+
+    public function test_overpass_service_builds_compound_tag_filters(): void
+    {
+        $service = new OverpassService;
+        $reflection = new \ReflectionMethod($service, 'buildTagFilters');
+
+        // Simple tags (existing behavior)
+        $result = $reflection->invoke($service, ['shop' => ['supermarket', 'convenience']]);
+        $this->assertStringContainsString('nwr["shop"~"supermarket|convenience"](area.sweden);', $result);
+
+        // Compound tags with _and key
+        $result = $reflection->invoke($service, [
+            '_and' => [[['power', 'generator'], ['generator:source', 'wind']]],
+            'man_made' => ['windmill'],
+        ]);
+        $this->assertStringContainsString('nwr["power"="generator"]["generator:source"="wind"](area.sweden);', $result);
+        $this->assertStringContainsString('nwr["man_made"~"windmill"](area.sweden);', $result);
     }
 
     private function insertDesoWithGeometry(string $desoCode, string $kommunCode, string $lanCode, string $kommunName, ?int $population = null): void

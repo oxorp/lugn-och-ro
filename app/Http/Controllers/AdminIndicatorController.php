@@ -4,9 +4,13 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\UpdateIndicatorRequest;
 use App\Models\Indicator;
+use App\Models\PoiCategory;
 use App\Models\TenantIndicatorWeight;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -71,9 +75,36 @@ class AdminIndicatorController extends Controller
             ->groupBy('urbanity_tier')
             ->pluck('count', 'tier');
 
+        $poiCategories = PoiCategory::query()
+            ->orderBy('category_group')
+            ->orderBy('name')
+            ->get()
+            ->map(function (PoiCategory $cat) {
+                $poiCount = DB::table('pois')
+                    ->where('category', $cat->slug)
+                    ->where('status', 'active')
+                    ->count();
+
+                return [
+                    'id' => $cat->id,
+                    'slug' => $cat->slug,
+                    'name' => $cat->name,
+                    'signal' => $cat->signal,
+                    'icon' => $cat->icon,
+                    'color' => $cat->color,
+                    'display_tier' => $cat->display_tier,
+                    'category_group' => $cat->category_group,
+                    'indicator_slug' => $cat->indicator_slug,
+                    'is_active' => $cat->is_active,
+                    'show_on_map' => $cat->show_on_map,
+                    'poi_count' => $poiCount,
+                ];
+            });
+
         return Inertia::render('admin/indicators', [
             'indicators' => $indicators,
             'urbanityDistribution' => $urbanityDistribution,
+            'poiCategories' => $poiCategories,
         ]);
     }
 
@@ -116,5 +147,23 @@ class AdminIndicatorController extends Controller
         ]);
 
         return back()->with('success', "Updated {$indicator->name}");
+    }
+
+    public function updatePoiCategory(Request $request, PoiCategory $poiCategory): RedirectResponse
+    {
+        $validated = $request->validate([
+            'is_active' => ['required', 'boolean'],
+            'show_on_map' => ['required', 'boolean'],
+            'display_tier' => ['sometimes', 'integer', 'min:1', 'max:5'],
+            'signal' => ['sometimes', Rule::in(['positive', 'negative', 'neutral'])],
+        ]);
+
+        $poiCategory->update($validated);
+
+        // Clear cached category lists so changes take effect immediately
+        Cache::forget('poi-categories-display');
+        Cache::forget('poi-visible-category-slugs');
+
+        return back()->with('success', "Updated {$poiCategory->name}");
     }
 }

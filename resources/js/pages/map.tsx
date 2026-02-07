@@ -1,4 +1,5 @@
 import { Head, Link } from '@inertiajs/react';
+import type OLMap from 'ol/Map';
 import {
     AlertTriangle,
     ArrowDown,
@@ -35,6 +36,7 @@ import {
     ScoreTooltip,
 } from '@/components/info-tooltip';
 import MapSearch from '@/components/map-search';
+import PoiControls from '@/components/poi-controls';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
@@ -44,6 +46,7 @@ import {
     TooltipProvider,
     TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { usePoiLayer } from '@/hooks/use-poi-layer';
 import { useTranslation } from '@/hooks/use-translation';
 import MapLayout from '@/layouts/map-layout';
 import {
@@ -346,7 +349,7 @@ function TrendDetailTooltip({
     const { t } = useTranslation();
     const [open, setOpen] = useState(false);
 
-    if (!indicator.trend && indicator.history.length < 2) return null;
+    if (!indicator.trend && (!indicator.history || indicator.history.length < 2)) return null;
 
     const trend = indicator.trend;
     const expectedYears = trend ? trend.end_year - trend.base_year + 1 : 3;
@@ -368,8 +371,8 @@ function TrendDetailTooltip({
                         onClick={() => setOpen(!open)}
                     >
                         <IndicatorTrendArrow
-                            trend={indicator.trend}
-                            indicatorDirection={indicator.direction}
+                            trend={indicator.trend ?? null}
+                            indicatorDirection={indicator.direction ?? 'neutral'}
                             showLabel={true}
                         />
                     </button>
@@ -385,12 +388,12 @@ function TrendDetailTooltip({
                             {t('sidebar.trend_tooltip.title', { name: indicator.name })}
                         </p>
                         <div className="space-y-0.5 text-xs">
-                            {indicator.history.map((h) => (
+                            {(indicator.history ?? []).map((h) => (
                                 <div key={h.year} className="flex justify-between gap-4">
                                     <span className="text-muted-foreground">{h.year}:</span>
                                     <span className="tabular-nums font-medium">
                                         {h.value !== null
-                                            ? formatIndicatorValue(h.value, indicator.unit)
+                                            ? formatIndicatorValue(h.value, indicator.unit ?? null)
                                             : t('sidebar.trend_tooltip.no_data_year', { defaultValue: 'No data' })}
                                     </span>
                                 </div>
@@ -399,7 +402,7 @@ function TrendDetailTooltip({
                         {trend && trend.absolute_change !== null && trend.percent_change !== null && (
                             <p className="text-xs text-muted-foreground">
                                 {t('sidebar.trend_tooltip.change', {
-                                    change: formatIndicatorValue(trend.absolute_change, indicator.unit),
+                                    change: formatIndicatorValue(trend.absolute_change, indicator.unit ?? null),
                                     percent: `${trend.percent_change > 0 ? '+' : ''}${trend.percent_change.toFixed(1)}`,
                                 })}
                             </p>
@@ -1262,6 +1265,8 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes, i
     });
     const schoolRefs = useRef<Record<string, HTMLDivElement | null>>({});
     const mapRef = useRef<DesoMapHandle | null>(null);
+    const [olMap, setOlMap] = useState<OLMap | null>(null);
+    const poi = usePoiLayer(olMap);
 
     const indicatorLabel = useCallback(
         (slug: string) => t(`sidebar.indicators.labels.${slug}`, { defaultValue: slug }),
@@ -1270,6 +1275,7 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes, i
 
     const handleFeatureSelect = useCallback(
         (properties: DesoProperties | null, score: DesoScore | null) => {
+            poi.clearImpactRadius();
             setSelectedDeso(properties);
             setSelectedScore(score);
             setHighlightedSchool(null);
@@ -1673,10 +1679,29 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes, i
                     onSchoolClick={handleSchoolClick}
                     compareMode={compareState.active}
                     onCompareClick={handleCompareClick}
+                    onMapReady={setOlMap}
+                    onPoiClick={(feature) => {
+                        const sentiment = feature.get('sentiment');
+                        if (sentiment === 'negative') {
+                            poi.showImpactRadius(feature);
+                        } else {
+                            poi.clearImpactRadius();
+                        }
+                    }}
                 />
                 <MapSearch
                     onResultSelect={handleSearchResult}
                     onClear={handleSearchClear}
+                />
+                <PoiControls
+                    categories={poi.categories}
+                    enabledCategories={poi.enabledCategories}
+                    visibleCount={poi.visibleCount}
+                    onToggleCategory={poi.toggleCategory}
+                    onToggleGroup={poi.toggleGroup}
+                    onEnableAll={poi.enableAll}
+                    onDisableAll={poi.disableAll}
+                    onResetDefaults={poi.resetDefaults}
                 />
 
                 {/* Map control buttons (right side, below layer control) */}

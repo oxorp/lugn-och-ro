@@ -17,7 +17,13 @@ class OverpassService
     /**
      * Query OSM data for Sweden by tags.
      *
-     * @param  array<string, list<string>>  $tags  e.g. ['shop' => ['supermarket', 'convenience']]
+     * Tags format supports two modes:
+     * - Simple: ['shop' => ['supermarket', 'convenience']] → nwr["shop"~"supermarket|convenience"]
+     * - Compound (AND): '_and' key with arrays of [key, value(s)] pairs ANDed together
+     *   ['_and' => [[['power', 'generator'], ['generator:source', 'wind']]], 'man_made' => ['windmill']]
+     *   → nwr["power"~"generator"]["generator:source"~"wind"]; nwr["man_made"~"windmill"];
+     *
+     * @param  array<string, list<string>|list<list<array{0: string, 1: string}>>>  $tags
      * @return Collection<int, array{lat: float, lng: float, osm_id: int, osm_type: string, name: ?string, tags: array}>
      */
     public function querySweden(array $tags): Collection
@@ -71,12 +77,31 @@ class OverpassService
     /**
      * Build Overpass tag filter strings from an associative array.
      *
-     * @param  array<string, list<string>>  $tags
+     * @param  array<string, mixed>  $tags
      */
     private function buildTagFilters(array $tags): string
     {
         $filters = [];
+
         foreach ($tags as $key => $values) {
+            if ($key === '_and') {
+                // Compound queries: each group is an array of [key, value] pairs ANDed together
+                foreach ($values as $group) {
+                    $parts = [];
+                    foreach ($group as [$tagKey, $tagValue]) {
+                        if (str_contains($tagValue, '|')) {
+                            $parts[] = "\"{$tagKey}\"~\"{$tagValue}\"";
+                        } else {
+                            $parts[] = "\"{$tagKey}\"=\"{$tagValue}\"";
+                        }
+                    }
+                    $combined = implode('', array_map(fn ($p) => "[{$p}]", $parts));
+                    $filters[] = "nwr{$combined}(area.sweden);";
+                }
+
+                continue;
+            }
+
             $valueRegex = implode('|', $values);
             $filters[] = "nwr[\"{$key}\"~\"{$valueRegex}\"](area.sweden);";
         }

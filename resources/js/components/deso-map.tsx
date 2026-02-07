@@ -9,6 +9,7 @@ import Point from 'ol/geom/Point';
 import Polygon from 'ol/geom/Polygon';
 import TileLayer from 'ol/layer/Tile';
 import VectorLayer from 'ol/layer/Vector';
+import { createEmpty, extend } from 'ol/extent';
 import { fromLonLat, toLonLat, transformExtent } from 'ol/proj';
 import OSM from 'ol/source/OSM';
 import VectorSource from 'ol/source/Vector';
@@ -86,6 +87,8 @@ interface DesoMapProps {
     onSchoolClick?: (schoolCode: string) => void;
     compareMode?: boolean;
     onCompareClick?: (lat: number, lng: number) => void;
+    onMapReady?: (map: Map) => void;
+    onPoiClick?: (feature: Feature) => void;
 }
 
 // Color stops: purple(0) -> red-purple(25) -> yellow(50) -> light-green(75) -> deep-green(100)
@@ -261,7 +264,7 @@ function LoadingOverlay() {
 }
 
 const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
-    { initialCenter, initialZoom, onFeatureSelect, onSchoolClick, compareMode, onCompareClick },
+    { initialCenter, initialZoom, onFeatureSelect, onSchoolClick, compareMode, onCompareClick, onMapReady, onPoiClick },
     ref,
 ) {
     const mapDivRef = useRef<HTMLDivElement>(null);
@@ -291,6 +294,8 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
     const smoothedRef = useRef(true);
     const compareModeRef = useRef(false);
     const onCompareClickRef = useRef(onCompareClick);
+    const onMapReadyRef = useRef(onMapReady);
+    const onPoiClickRef = useRef(onPoiClick);
 
     const handleFeatureSelect = useCallback(
         (properties: DesoProperties | null, score: DesoScore | null) => {
@@ -319,6 +324,14 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
     useEffect(() => {
         onCompareClickRef.current = onCompareClick;
     }, [onCompareClick]);
+
+    useEffect(() => {
+        onMapReadyRef.current = onMapReady;
+    }, [onMapReady]);
+
+    useEffect(() => {
+        onPoiClickRef.current = onPoiClick;
+    }, [onPoiClick]);
 
     useImperativeHandle(ref, () => ({
         updateSize() {
@@ -771,6 +784,7 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
         });
 
         mapInstance.current = map;
+        onMapReadyRef.current?.(map);
 
         // Load DeSO GeoJSON + scores (for DeSO layer and sidebar data)
         Promise.all([
@@ -885,7 +899,55 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
                 return;
             }
 
-            // Hide tooltip when not on school
+            // Check POI markers (cluster or single)
+            const poiFeature = map.forEachFeatureAtPixel(
+                evt.pixel,
+                (f) => {
+                    const clustered = (f as Feature).get('features');
+                    if (clustered && clustered.length > 0 && clustered[0].get('is_poi')) {
+                        return f as Feature;
+                    }
+                    return null;
+                },
+            );
+
+            if (poiFeature) {
+                const clustered = poiFeature.get('features') as Feature[];
+                const tooltipEl = tooltipRef.current;
+                if (tooltipEl && clustered) {
+                    if (clustered.length === 1) {
+                        const poi = clustered[0];
+                        const name = poi.get('name') || poi.get('poi_type');
+                        const type = poi.get('poi_type')?.replace(/_/g, ' ') || '';
+                        tooltipEl.innerHTML = `<strong>${name}</strong><br/><span style="opacity:0.7">${type}</span>`;
+                    } else {
+                        const sentiments: Record<string, number> = {};
+                        for (const f of clustered) {
+                            const s = f.get('sentiment') || 'neutral';
+                            sentiments[s] = (sentiments[s] || 0) + 1;
+                        }
+                        const parts = [];
+                        if (sentiments.negative) parts.push(`${sentiments.negative} nuisance${sentiments.negative > 1 ? 's' : ''}`);
+                        if (sentiments.positive) parts.push(`${sentiments.positive} amenit${sentiments.positive > 1 ? 'ies' : 'y'}`);
+                        if (sentiments.neutral) parts.push(`${sentiments.neutral} other`);
+                        tooltipEl.innerHTML = `<strong>${clustered.length} POIs</strong><br/><span style="opacity:0.7">${parts.join(' · ')}</span>`;
+                    }
+                    tooltipEl.style.display = 'block';
+                }
+                tooltipOverlay.setPosition(evt.coordinate);
+                map.getTargetElement().style.cursor = 'pointer';
+
+                if (
+                    hoveredFeature.current &&
+                    hoveredFeature.current !== selectedFeature.current
+                ) {
+                    hoveredFeature.current.setStyle(undefined);
+                    hoveredFeature.current = null;
+                }
+                return;
+            }
+
+            // Hide tooltip when not on school or POI
             if (tooltipRef.current) {
                 tooltipRef.current.style.display = 'none';
             }
@@ -984,6 +1046,39 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
                 const code = schoolFeature.get('school_unit_code');
                 if (code && onSchoolClick) {
                     onSchoolClick(code);
+                }
+                return;
+            }
+
+            // Check POI clusters — click to zoom in
+            const poiClickFeature = map.forEachFeatureAtPixel(
+                evt.pixel,
+                (f) => {
+                    const clustered = (f as Feature).get('features');
+                    if (clustered && clustered.length > 0 && clustered[0].get('is_poi')) {
+                        return f as Feature;
+                    }
+                    return null;
+                },
+            );
+
+            if (poiClickFeature) {
+                const clustered = poiClickFeature.get('features') as Feature[];
+                if (clustered && clustered.length > 1) {
+                    // Zoom to cluster extent
+                    const extent = createEmpty();
+                    for (const f of clustered) {
+                        const geom = f.getGeometry();
+                        if (geom) extend(extent, geom.getExtent());
+                    }
+                    map.getView().fit(extent, {
+                        padding: [60, 60, 60, 60],
+                        maxZoom: 16,
+                        duration: 500,
+                    });
+                } else if (clustered && clustered.length === 1) {
+                    // Single POI click — show impact radius
+                    onPoiClickRef.current?.(clustered[0]);
                 }
                 return;
             }

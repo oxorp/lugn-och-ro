@@ -10,6 +10,7 @@ use App\Http\Controllers\GeocodeController;
 use App\Http\Controllers\H3Controller;
 use App\Http\Controllers\MapController;
 use App\Http\Controllers\PageController;
+use App\Http\Controllers\PoiController;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
@@ -32,6 +33,9 @@ Route::get('/api/h3/scores', [H3Controller::class, 'scores'])->name('h3.scores')
 Route::get('/api/h3/viewport', [H3Controller::class, 'viewport'])->name('h3.viewport');
 Route::get('/api/h3/smoothing-configs', [H3Controller::class, 'smoothingConfigs'])->name('h3.smoothing-configs');
 
+Route::get('/api/pois', [PoiController::class, 'index'])->name('pois.index');
+Route::get('/api/pois/categories', [PoiController::class, 'categories'])->name('pois.categories');
+
 // Shared route definitions (used for both Swedish and English)
 $webRoutes = function () {
     Route::get('/', [MapController::class, 'index'])->name('map');
@@ -46,6 +50,7 @@ $webRoutes = function () {
     Route::prefix('admin')->middleware(['auth', 'admin'])->group(function () {
         Route::get('/indicators', [AdminIndicatorController::class, 'index'])->name('admin.indicators');
         Route::put('/indicators/{indicator}', [AdminIndicatorController::class, 'update'])->name('admin.indicators.update');
+        Route::put('/poi-categories/{poiCategory}', [AdminIndicatorController::class, 'updatePoiCategory'])->name('admin.poi-categories.update');
         Route::post('/recompute-scores', [AdminScoreController::class, 'recompute'])->name('admin.recompute');
 
         Route::get('/data-quality', [AdminDataQualityController::class, 'index'])->name('admin.data-quality');

@@ -1,5 +1,5 @@
 import { Head, router } from '@inertiajs/react';
-import { Info, Pencil, RefreshCw } from 'lucide-react';
+import { Eye, EyeOff, Info, MapPin, Pencil, RefreshCw } from 'lucide-react';
 import { useState } from 'react';
 
 import LocaleSync from '@/components/locale-sync';
@@ -62,9 +62,25 @@ interface Indicator {
     update_frequency: string | null;
 }
 
+interface PoiCategoryItem {
+    id: number;
+    slug: string;
+    name: string;
+    signal: 'positive' | 'negative' | 'neutral';
+    icon: string;
+    color: string;
+    display_tier: number;
+    category_group: string;
+    indicator_slug: string | null;
+    is_active: boolean;
+    show_on_map: boolean;
+    poi_count: number;
+}
+
 interface Props {
     indicators: Indicator[];
     urbanityDistribution: Record<string, number>;
+    poiCategories: PoiCategoryItem[];
 }
 
 interface ExplanationForm {
@@ -85,7 +101,21 @@ const categoryColors: Record<string, string> = {
     housing: 'bg-rose-100 text-rose-800',
 };
 
-export default function IndicatorsPage({ indicators, urbanityDistribution }: Props) {
+const signalColors: Record<string, string> = {
+    positive: 'bg-green-100 text-green-800',
+    negative: 'bg-red-100 text-red-800',
+    neutral: 'bg-gray-100 text-gray-800',
+};
+
+const tierLabels: Record<number, string> = {
+    1: 'Zoom 8+ (Major)',
+    2: 'Zoom 10+ (Significant)',
+    3: 'Zoom 12+ (Local)',
+    4: 'Zoom 14+ (Neighborhood)',
+    5: 'Zoom 16+ (Street)',
+};
+
+export default function IndicatorsPage({ indicators, urbanityDistribution, poiCategories }: Props) {
     const { t } = useTranslation();
     const [recomputing, setRecomputing] = useState(false);
     const [editingIndicator, setEditingIndicator] = useState<Indicator | null>(null);
@@ -178,6 +208,27 @@ export default function IndicatorsPage({ indicators, urbanityDistribution }: Pro
                     setEditingIndicator(null);
                 },
             },
+        );
+    }
+
+    function handlePoiCategoryUpdate(
+        id: number,
+        field: string,
+        value: boolean | number | string,
+    ) {
+        const cat = poiCategories.find((c) => c.id === id);
+        if (!cat) return;
+
+        router.put(
+            `/admin/poi-categories/${id}`,
+            {
+                is_active: cat.is_active,
+                show_on_map: cat.show_on_map,
+                display_tier: cat.display_tier,
+                signal: cat.signal,
+                [field]: value,
+            },
+            { preserveScroll: true },
         );
     }
 
@@ -448,6 +499,138 @@ export default function IndicatorsPage({ indicators, urbanityDistribution }: Pro
                                     >
                                         <Pencil className="h-3.5 w-3.5" />
                                     </Button>
+                                </TableCell>
+                            </TableRow>
+                        ))}
+                    </TableBody>
+                </Table>
+            </Card>
+
+            {/* POI Categories Section */}
+            <Card className="mt-6">
+                <CardHeader className="pb-3">
+                    <CardTitle className="flex items-center gap-2 text-sm font-medium">
+                        <MapPin className="h-4 w-4" />
+                        POI Categories
+                        <span className="text-muted-foreground font-normal">
+                            ({poiCategories.length} categories, {poiCategories.reduce((s, c) => s + c.poi_count, 0).toLocaleString()} total POIs)
+                        </span>
+                    </CardTitle>
+                </CardHeader>
+                <Table>
+                    <TableHeader>
+                        <TableRow>
+                            <TableHead>Name</TableHead>
+                            <TableHead>Slug</TableHead>
+                            <TableHead>Signal</TableHead>
+                            <TableHead>Group</TableHead>
+                            <TableHead>Tier</TableHead>
+                            <TableHead>POIs</TableHead>
+                            <TableHead>Indicator</TableHead>
+                            <TableHead>
+                                <TooltipProvider>
+                                    <Tooltip>
+                                        <TooltipTrigger className="flex items-center gap-1">
+                                            Scoring
+                                            <Info className="h-3 w-3" />
+                                        </TooltipTrigger>
+                                        <TooltipContent>
+                                            <p className="max-w-xs text-xs">
+                                                Controls whether this category is included in score computation and ingestion pipeline
+                                            </p>
+                                        </TooltipContent>
+                                    </Tooltip>
+                                </TooltipProvider>
+                            </TableHead>
+                            <TableHead>
+                                <TooltipProvider>
+                                    <Tooltip>
+                                        <TooltipTrigger className="flex items-center gap-1">
+                                            Map
+                                            <Info className="h-3 w-3" />
+                                        </TooltipTrigger>
+                                        <TooltipContent>
+                                            <p className="max-w-xs text-xs">
+                                                Controls whether POIs of this category are visible on the map
+                                            </p>
+                                        </TooltipContent>
+                                    </Tooltip>
+                                </TooltipProvider>
+                            </TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        {poiCategories.map((cat) => (
+                            <TableRow key={cat.id} className={!cat.is_active && !cat.show_on_map ? 'opacity-50' : ''}>
+                                <TableCell className="font-medium">
+                                    <div className="flex items-center gap-2">
+                                        <span
+                                            className="inline-block h-3 w-3 rounded-full"
+                                            style={{ backgroundColor: cat.color }}
+                                        />
+                                        {cat.name}
+                                    </div>
+                                </TableCell>
+                                <TableCell>
+                                    <code className="text-xs">{cat.slug}</code>
+                                </TableCell>
+                                <TableCell>
+                                    <Badge
+                                        className={signalColors[cat.signal] || ''}
+                                        variant="secondary"
+                                    >
+                                        {cat.signal}
+                                    </Badge>
+                                </TableCell>
+                                <TableCell className="text-muted-foreground text-sm">
+                                    {cat.category_group}
+                                </TableCell>
+                                <TableCell>
+                                    <Select
+                                        value={String(cat.display_tier)}
+                                        onValueChange={(v) =>
+                                            handlePoiCategoryUpdate(cat.id, 'display_tier', parseInt(v))
+                                        }
+                                    >
+                                        <SelectTrigger className="w-44">
+                                            <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {[1, 2, 3, 4, 5].map((tier) => (
+                                                <SelectItem key={tier} value={String(tier)}>
+                                                    {tierLabels[tier]}
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </TableCell>
+                                <TableCell className="text-muted-foreground tabular-nums text-sm">
+                                    {cat.poi_count.toLocaleString()}
+                                </TableCell>
+                                <TableCell>
+                                    {cat.indicator_slug ? (
+                                        <code className="rounded bg-blue-50 px-1.5 py-0.5 text-xs text-blue-700">
+                                            {cat.indicator_slug}
+                                        </code>
+                                    ) : (
+                                        <span className="text-muted-foreground text-xs">{'\u2014'}</span>
+                                    )}
+                                </TableCell>
+                                <TableCell>
+                                    <Switch
+                                        checked={cat.is_active}
+                                        onCheckedChange={(v) =>
+                                            handlePoiCategoryUpdate(cat.id, 'is_active', v)
+                                        }
+                                    />
+                                </TableCell>
+                                <TableCell>
+                                    <Switch
+                                        checked={cat.show_on_map}
+                                        onCheckedChange={(v) =>
+                                            handlePoiCategoryUpdate(cat.id, 'show_on_map', v)
+                                        }
+                                    />
                                 </TableCell>
                             </TableRow>
                         ))}
