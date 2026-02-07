@@ -182,6 +182,7 @@ export default function IndicatorsPage({ indicators, urbanityDistribution }: Pro
     }
 
     return (
+        <div className="min-h-screen bg-muted">
         <div className="mx-auto max-w-7xl p-6">
             <LocaleSync />
             <Head title={t('admin.indicators.head_title')} />
@@ -208,7 +209,7 @@ export default function IndicatorsPage({ indicators, urbanityDistribution }: Pro
                     </CardTitle>
                 </CardHeader>
                 <CardContent>
-                    <div className="mb-2 h-4 w-full overflow-hidden rounded-full bg-gray-100">
+                    <div className="mb-2 h-4 w-full overflow-hidden rounded-full bg-muted">
                         <div
                             className="h-full rounded-full bg-emerald-500 transition-all"
                             style={{ width: `${Math.min(totalWeight * 100, 100)}%` }}
@@ -540,6 +541,7 @@ export default function IndicatorsPage({ indicators, urbanityDistribution }: Pro
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+        </div>
         </div>
     );
 }

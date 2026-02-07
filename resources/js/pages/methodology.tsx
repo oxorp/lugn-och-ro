@@ -178,7 +178,7 @@ export default function Methodology() {
         <MapLayout>
             <Head title="Methodology" />
             <div className="flex-1 overflow-y-auto">
-                <div className="mx-auto max-w-3xl px-6 py-12 md:py-16">
+                <div className="mx-auto max-w-2xl px-6 py-12 md:py-16">
 
                     {/* Section 1: Hero */}
                     <section className="mb-16">

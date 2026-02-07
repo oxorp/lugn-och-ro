@@ -16,21 +16,21 @@ export default function MapLayout({ children }: MapLayoutProps) {
     return (
         <div className="flex h-screen flex-col">
             <LocaleSync />
-            <header className="bg-background border-b px-4 py-2">
-                <div className="flex items-center gap-6">
-                    <h1 className="text-sm font-semibold tracking-tight">
+            <header className="bg-background flex h-12 shrink-0 items-center border-b border-border px-4">
+                <div className="flex w-full items-center gap-6">
+                    <span className="text-base font-semibold text-foreground">
                         {t('app.title')}
-                    </h1>
-                    <nav className="flex flex-1 items-center gap-4">
+                    </span>
+                    <nav className="flex flex-1 items-center gap-6">
                         <Link
                             href={map().url}
-                            className="text-muted-foreground hover:text-foreground text-sm transition-colors"
+                            className="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
                         >
                             {t('nav.map')}
                         </Link>
                         <Link
                             href={methodology().url}
-                            className="text-muted-foreground hover:text-foreground text-sm transition-colors"
+                            className="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
                         >
                             {t('nav.methodology')}
                         </Link>

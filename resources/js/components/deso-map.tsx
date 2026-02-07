@@ -113,11 +113,21 @@ function interpolateColor(score: number): [number, number, number, number] {
     ];
 }
 
+/**
+ * Returns a hex color string for a given score (0-100).
+ * Uses the same interpolation as the map polygons.
+ * Exported so the sidebar can match colors exactly.
+ */
+export function interpolateScoreColor(score: number): string {
+    const [r, g, b] = interpolateColor(score);
+    return `rgb(${r}, ${g}, ${b})`;
+}
+
 function schoolMarkerColor(merit: number | null): string {
-    if (merit === null) return 'rgba(156, 163, 175, 0.9)'; // gray
-    if (merit > 230) return 'rgba(34, 197, 94, 0.9)'; // green
-    if (merit >= 200) return 'rgba(234, 179, 8, 0.9)'; // yellow
-    return 'rgba(249, 115, 22, 0.9)'; // orange
+    if (merit === null) return 'rgba(148, 163, 184, 0.9)';
+    if (merit > 230) return 'rgba(34, 197, 94, 0.9)';
+    if (merit >= 200) return 'rgba(234, 179, 8, 0.9)';
+    return 'rgba(249, 115, 22, 0.9)';
 }
 
 const noDataStyle = new Style({
@@ -130,8 +140,8 @@ const noDataStyle = new Style({
 });
 
 const selectedStyle = new Style({
-    fill: new Fill({ color: 'rgba(255, 165, 0, 0.5)' }),
-    stroke: new Stroke({ color: 'rgba(255, 140, 0, 1)', width: 2.5 }),
+    fill: new Fill({ color: 'rgba(59, 130, 246, 0.25)' }),
+    stroke: new Stroke({ color: 'rgba(59, 130, 246, 0.9)', width: 2.5 }),
 });
 
 function h3ToFeature(h3Index: string, score: number, primaryDesoCode: string | null): Feature {
@@ -152,20 +162,16 @@ function ScoreLegend() {
     const { t } = useTranslation();
 
     return (
-        <div className="absolute bottom-6 left-6 z-10 rounded-lg bg-white/90 px-4 py-3 shadow-lg backdrop-blur-sm">
-            <div className="mb-1.5 text-xs font-medium text-gray-700">
-                {t('map.legend.title')}
-            </div>
+        <div className="absolute bottom-6 left-6 z-10 rounded-lg border border-border bg-background/90 px-3 py-2 backdrop-blur-sm">
             <div
-                className="mb-1 h-3 w-48 rounded-sm"
+                className="mb-1 h-2 w-48 rounded-sm"
                 style={{
                     background:
                         'linear-gradient(to right, #4a0072, #9c1d6e, #f0c040, #6abf4b, #1a7a2e)',
                 }}
             />
-            <div className="flex justify-between text-[10px] text-gray-500">
+            <div className="flex justify-between text-[11px] text-muted-foreground">
                 <span>{t('map.legend.high_risk')}</span>
-                <span>{t('map.legend.mixed')}</span>
                 <span>{t('map.legend.strong')}</span>
             </div>
         </div>
@@ -188,41 +194,41 @@ function LayerControl({
     const { t } = useTranslation();
 
     return (
-        <div className="absolute top-4 right-4 z-10 rounded-lg bg-white/90 px-3 py-2.5 shadow-lg backdrop-blur-sm">
-            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-500">
+        <div className="absolute top-4 right-4 z-10 rounded-lg border border-border bg-background/90 px-3 py-2.5 backdrop-blur-sm">
+            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                 {t('map.layer_control.view')}
             </div>
             <div className="space-y-1">
-                <label className="flex cursor-pointer items-center gap-2 text-xs">
+                <label className="flex cursor-pointer items-center gap-2 text-xs text-foreground">
                     <input
                         type="radio"
                         name="layer"
                         checked={mode === 'hexagons'}
                         onChange={() => onModeChange('hexagons')}
-                        className="h-3 w-3 text-blue-600"
+                        className="h-3 w-3 accent-primary"
                     />
                     {t('map.layer_control.hexagons')}
                 </label>
-                <label className="flex cursor-pointer items-center gap-2 text-xs">
+                <label className="flex cursor-pointer items-center gap-2 text-xs text-foreground">
                     <input
                         type="radio"
                         name="layer"
                         checked={mode === 'deso'}
                         onChange={() => onModeChange('deso')}
-                        className="h-3 w-3 text-blue-600"
+                        className="h-3 w-3 accent-primary"
                     />
                     {t('map.layer_control.statistical_areas')}
                 </label>
             </div>
             {showSmoothing && mode === 'hexagons' && (
                 <>
-                    <div className="my-1.5 border-t border-gray-200" />
-                    <label className="flex cursor-pointer items-center gap-2 text-xs">
+                    <div className="my-1.5 border-t border-border" />
+                    <label className="flex cursor-pointer items-center gap-2 text-xs text-foreground">
                         <input
                             type="checkbox"
                             checked={!smoothed}
                             onChange={() => onSmoothedChange(!smoothed)}
-                            className="h-3 w-3 rounded text-blue-600"
+                            className="h-3 w-3 rounded accent-primary"
                         />
                         {t('map.layer_control.raw_scores')}
                     </label>
@@ -236,8 +242,8 @@ function LoadingOverlay() {
     const { t } = useTranslation();
 
     return (
-        <div className="bg-background/80 absolute inset-0 flex items-center justify-center">
-            <div className="text-muted-foreground text-sm">
+        <div className="absolute inset-0 flex items-center justify-center bg-background/80">
+            <div className="text-sm text-muted-foreground">
                 {t('map.loading')}
             </div>
         </div>
@@ -875,10 +881,10 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
             <div ref={mapDivRef} className="h-full w-full" />
             <div
                 ref={tooltipRef}
-                className="pointer-events-none rounded bg-gray-900 px-2 py-1 text-xs text-white shadow-lg"
+                className="pointer-events-none rounded bg-foreground px-2 py-1 text-xs text-background shadow-lg"
                 style={{ display: 'none' }}
             />
-            <div className="absolute bottom-6 right-6 z-10 rounded bg-black/70 px-2 py-1 font-mono text-xs text-white">
+            <div className="absolute bottom-6 right-6 z-10 rounded bg-foreground/70 px-2 py-1 font-mono text-xs text-background">
                 Z {debugZoom}
             </div>
             <ScoreLegend />

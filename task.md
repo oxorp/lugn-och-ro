@@ -1,491 +1,531 @@
-# TASK: Score Explanation Tooltips — Make Every Data Point Self-Documenting
+# TASK: Design System — Typography, Colors & Visual Foundation
 
 ## Context
 
-The sidebar shows "Median Income: 78th percentile (287,000 SEK)" — but a normal person doesn't know what this means. What's the 78th percentile relative to? When was this measured? When was it last updated? Is 287,000 SEK good or bad? What does this indicator actually measure?
+The platform has functional UI built with shadcn/ui defaults. It works, but it doesn't have a cohesive visual identity. The map uses a purple→green score gradient, the sidebar shows data, and everything else is default shadcn gray. Before adding more features and pages (methodology, admin dashboard, reports), we need a design foundation that:
 
-Every number on the screen should be one hover/tap away from a clear, human-readable explanation. This task adds contextual tooltips to all score-related UI elements: the composite score, each indicator bar, trend arrows, and school statistics.
+1. Lets the data be the star — the map colors and score numbers should be the most visually prominent things on screen
+2. Feels trustworthy and professional — banks and mäklare are target customers
+3. Is information-dense without feeling cluttered — the sidebar packs a lot into 400px
+4. Is dark-mode-ready in architecture even though v1 ships light-only
 
-**Principle: No number without context.** If a user sees a number, they should be able to understand it without leaving the page. The tooltip is the "explain it to me like I'm buying my first apartment" layer.
+**This is not a redesign.** It's establishing the color tokens, typography, and component conventions so that everything built from here forward is consistent. Existing components should be updated to use the new tokens, but layout and functionality don't change.
+
+## Goals
+
+1. Define and implement color tokens (CSS custom properties via Tailwind)
+2. Set up typography (Inter, with tabular numbers for data)
+3. Establish component-level styling conventions for the sidebar, cards, indicators, and badges
+4. Ensure dark mode can be added later with minimal effort
+5. Apply the system to all existing pages (map, sidebar, admin)
 
 ---
 
-## Step 1: Define What Needs Explanation
+## Step 1: Color System
 
-### 1.1 Elements That Need Tooltips
+### 1.1 Design Principles
 
-Every data-bearing element in the sidebar gets a tooltip. Here's the complete inventory:
+**The data is the color, the UI is the frame.**
 
-| Element | Current display | What user needs to know |
+The score gradient (purple → yellow → green) is the most important visual element. It appears on the map, in the score number, and in indicator bars. Everything else — navbar, sidebar, text, borders — should be neutral enough that the data colors pop without competition.
+
+**Brand color is blue, used sparingly.**
+
+Blue is the only primary color absent from the score gradient. It reads as "interface" on a map (users are trained by Google Maps, Apple Maps). Use it only for interactive states: selected items, focused inputs, primary CTAs. Never for decoration.
+
+### 1.2 Color Tokens
+
+Define these as CSS custom properties in the root, following shadcn's HSL convention. These extend/override shadcn's default theme.
+
+**Neutral palette (slate-based):**
+
+```css
+:root {
+  /* Base neutrals — slate family */
+  --background: 0 0% 100%;           /* White — page/sidebar background */
+  --foreground: 215 20% 27%;         /* slate-800 — primary text */
+  --muted: 215 16% 95%;              /* slate-100 — subtle backgrounds */
+  --muted-foreground: 215 13% 44%;   /* slate-500 — secondary text, labels */
+  --border: 215 16% 90%;             /* slate-200 — dividers, card borders */
+  --input: 215 16% 90%;              /* slate-200 — input borders */
+  --ring: 217 91% 60%;               /* blue-500 — focus rings */
+
+  /* Card surfaces */
+  --card: 0 0% 100%;                 /* White */
+  --card-foreground: 215 20% 27%;    /* slate-800 */
+
+  /* Popover/tooltip */
+  --popover: 0 0% 100%;
+  --popover-foreground: 215 20% 27%;
+}
+```
+
+**Brand accent (blue):**
+
+```css
+:root {
+  --primary: 217 91% 60%;            /* #3b82f6 — blue-500 */
+  --primary-foreground: 0 0% 100%;   /* White text on blue */
+  --accent: 215 16% 95%;             /* slate-100 — hover backgrounds */
+  --accent-foreground: 215 20% 27%;  /* slate-800 */
+}
+```
+
+**Semantic colors:**
+
+```css
+:root {
+  /* Status */
+  --destructive: 0 72% 51%;          /* red-600 — errors, destructive actions */
+  --destructive-foreground: 0 0% 100%;
+
+  /* Trend indicators */
+  --trend-positive: 142 71% 35%;     /* A clear green — not the score green, slightly different */
+  --trend-negative: 347 77% 50%;     /* rose-500 — muted red, not alarming */
+  --trend-stable: 215 13% 64%;       /* slate-400 — quiet gray */
+  --trend-none: 215 13% 78%;         /* slate-300 — very subtle */
+}
+```
+
+**Score gradient (the most important colors in the system):**
+
+```css
+:root {
+  --score-0: 280 100% 22%;           /* #4a0072 — Deep purple */
+  --score-25: 330 70% 36%;           /* #9c1d6e — Red-purple */
+  --score-50: 45 85% 60%;            /* #f0c040 — Warm yellow */
+  --score-75: 100 50% 52%;           /* #6abf4b — Light green */
+  --score-100: 140 65% 29%;          /* #1a7a2e — Deep green */
+}
+```
+
+These score colors are used on the map, in the sidebar score number, in indicator bars, and in the legend. They must be identical everywhere — define once, reference everywhere.
+
+### 1.3 Dark Mode Tokens (Architecture Only — Not Shipped in v1)
+
+Define the dark mode overrides but keep them commented out or behind a feature flag. When dark mode is activated later, these swap in:
+
+```css
+.dark {
+  --background: 222 20% 10%;         /* Dark slate background */
+  --foreground: 210 16% 93%;         /* Light text */
+  --muted: 217 19% 17%;              /* Slightly lighter dark */
+  --muted-foreground: 215 13% 64%;   /* slate-400 */
+  --border: 217 19% 22%;             /* Subtle dark borders */
+  --card: 222 20% 13%;               /* Slightly lighter than background */
+  --card-foreground: 210 16% 93%;
+
+  /* Score gradient stays the same — it's data, not chrome */
+  /* But may need brightness boost for dark backgrounds — test when implementing */
+}
+```
+
+**Key rule:** The score gradient should NOT change between light and dark mode. The colors represent data, and changing them per-mode would confuse users who switch. If anything, slightly increase saturation on dark to compensate for reduced perceived brightness.
+
+### 1.4 Implementation
+
+Update `resources/css/app.css` (or wherever the Tailwind theme is configured) with the CSS custom properties. Shadcn already uses this pattern — just replace the default values.
+
+Ensure every component references tokens (`text-foreground`, `bg-muted`, `border-border`) instead of hardcoded Tailwind colors (`text-slate-700`, `bg-slate-100`). This is what makes dark mode a toggle later rather than a find-and-replace.
+
+---
+
+## Step 2: Typography
+
+### 2.1 Font Selection: Inter
+
+**Inter** is the primary (and only) typeface. It was designed specifically for computer interfaces, with:
+- Excellent legibility at 12-14px (our sidebar data size)
+- Tabular number support via OpenType features
+- Tall x-height that works in dense layouts
+- Available on Google Fonts (free, CDN-served) or self-hosted
+
+**No secondary font.** One font reduces load time, eliminates pairing issues, and is visually cleaner. If you want hierarchy, use weight and size — not a different font.
+
+### 2.2 Installation
+
+Add Inter via Google Fonts or self-host:
+
+```html
+<!-- In app layout head -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+```
+
+Or self-host (better performance, no external dependency):
+
+```bash
+npm install @fontsource/inter
+```
+
+```ts
+// In app.tsx or main entry
+import '@fontsource/inter/400.css';
+import '@fontsource/inter/500.css';
+import '@fontsource/inter/600.css';
+import '@fontsource/inter/700.css';
+```
+
+### 2.3 Tailwind Configuration
+
+```js
+// tailwind.config.ts
+export default {
+  theme: {
+    fontFamily: {
+      sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+    },
+  },
+}
+```
+
+### 2.4 Type Scale
+
+Keep it tight. A data-dense sidebar doesn't need 8 font sizes.
+
+| Role | Size | Weight | Tailwind class | Usage |
+|---|---|---|---|---|
+| Page title | 24px / 1.5rem | 700 (bold) | `text-2xl font-bold` | Methodology page hero, admin page titles |
+| Section heading | 16px / 1rem | 600 (semibold) | `text-base font-semibold` | Sidebar section headers ("Schools in this area") |
+| Body text | 14px / 0.875rem | 400 (regular) | `text-sm` | Most sidebar content, descriptions |
+| Data label | 12px / 0.75rem | 500 (medium) | `text-xs font-medium` | "Median Income", "Employment Rate", category labels |
+| Data value | 14px / 0.875rem | 600 (semibold) | `text-sm font-semibold` | "287,000 SEK", "72.3%", score numbers |
+| Small / caption | 11px / 0.6875rem | 400 (regular) | `text-[11px]` | "Updated annually", "Source: SCB", timestamps |
+| Score display | 36px / 2.25rem | 700 (bold) | `text-4xl font-bold` | The big score number in sidebar header |
+
+### 2.5 Tabular Numbers
+
+Critical for data alignment. When showing indicator values in a column, numbers must align vertically.
+
+```css
+/* Apply globally to data contexts */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+```
+
+Or use Tailwind's built-in `tabular-nums` class on any element displaying numeric data.
+
+**Apply to:** Score numbers, indicator values (287,000 SEK), percentages (72.3%), percentile ranks (78th), school meritvärde (241), student counts.
+
+### 2.6 Line Height
+
+| Context | Line height | Tailwind |
 |---|---|---|
-| Composite score (72) | Big number + color | What does 72 mean? What's the range? How is it computed? |
-| Score label ("Stable / Positive Outlook") | Text badge | What defines this category? What are the thresholds? |
-| Trend arrow (↑ +3.2) | Arrow + number | What changed, over what period, is this significant? |
-| Indicator bar (Median Income: 78th, 287,000 SEK) | Bar + percentile + raw value | What does this indicator measure? What's the national average? When was this data collected? When did we last refresh it? |
-| School card (Meritvärde: 241) | Number in school card | What is meritvärde? What's the scale? What's average? |
-| "No data" states | Gray bar or "—" | Why is data missing? When might it become available? |
-
-### 1.2 Two Levels of Explanation
-
-Each element gets **two** levels:
-
-**Level 1 — Inline hint (always visible):**
-Small info icon (ⓘ) next to the element. Subtle, slate-400 color, 14px. Doesn't clutter the UI.
-
-**Level 2 — Tooltip (on hover/tap):**
-A popover that appears on hover (desktop) or tap (mobile). Contains the full explanation. Disappears when the user moves away or taps elsewhere.
+| Headings | 1.2 | `leading-tight` |
+| Sidebar body | 1.5 | `leading-normal` |
+| Methodology page prose | 1.7 | `leading-relaxed` |
+| Data labels (single line) | 1.0 | `leading-none` |
 
 ---
 
-## Step 2: Tooltip Content Schema
+## Step 3: Navbar
 
-### 2.1 Data Model Extension
-
-Each indicator in the database needs explanation metadata. Extend the `indicators` table:
-
-```php
-Schema::table('indicators', function (Blueprint $table) {
-    $table->text('description_short')->nullable();      // One-line: "How much households earn after tax"
-    $table->text('description_long')->nullable();        // 2-3 sentences explaining the indicator
-    $table->text('methodology_note')->nullable();        // How it's measured: "Median of all individuals aged 20+ in the area"
-    $table->string('national_context')->nullable();      // "National average: 248,000 SEK (2024)"
-    $table->string('data_vintage')->nullable();          // "2024" — the year the data describes
-    $table->timestamp('data_last_ingested_at')->nullable(); // When we last pulled from the source
-    $table->string('source_name')->nullable();           // "Statistics Sweden (SCB)"
-    $table->string('source_url')->nullable();            // "https://www.scb.se/..."
-    $table->string('update_frequency')->nullable();      // "Annually (published Q1)"
-});
-```
-
-### 2.2 Seed the Explanations
-
-Populate via seeder or migration. Here are the exact texts for each current indicator:
-
-**median_income:**
-```
-description_short: "Median disposable income per person"
-description_long: "The median annual disposable income (after taxes and transfers) for individuals aged 20+ living in this area. This captures the economic standing of the typical resident — not skewed by a few very high or very low earners."
-methodology_note: "Disposable income = earned income + capital income + transfers − taxes. Median = the middle value when all residents are ranked."
-national_context: "National median: ~248,000 SEK (2024)"
-source_name: "Statistics Sweden (SCB)"
-source_url: "https://www.scb.se"
-update_frequency: "Published annually, typically in Q1 for the previous year"
-```
-
-**low_economic_standard_pct:**
-```
-description_short: "Share of residents with low economic standard"
-description_long: "The percentage of individuals whose household disposable income (adjusted for household size) falls below 60% of the national median. This is the EU standard definition of relative poverty risk."
-methodology_note: "Uses the modified OECD equivalence scale to adjust for household composition."
-national_context: "National average: ~14% (2024)"
-source_name: "Statistics Sweden (SCB)"
-update_frequency: "Published annually"
-```
-
-**employment_rate:**
-```
-description_short: "Share of working-age residents who are employed"
-description_long: "The percentage of residents aged 16–64 who are gainfully employed. High employment means stable household finances, which supports mortgage payments and local business activity."
-methodology_note: "Includes all forms of employment (full-time, part-time, self-employed). Measured in November each year."
-national_context: "National average: ~68% (2024)"
-source_name: "Statistics Sweden (SCB)"
-update_frequency: "Published annually"
-```
-
-**education_post_secondary_pct:**
-```
-description_short: "Share of adults with university education"
-description_long: "The percentage of residents aged 25–64 who have completed at least 3 years of post-secondary education (university degree or equivalent). A long-term predictor of area trajectory — highly educated populations attract employers and sustain higher incomes."
-methodology_note: "Based on the Swedish education register (Utbildningsregistret). Includes both Swedish and foreign degrees."
-national_context: "National average: ~29% (2024)"
-source_name: "Statistics Sweden (SCB)"
-update_frequency: "Published annually"
-```
-
-**education_below_secondary_pct:**
-```
-description_short: "Share of adults without upper secondary education"
-description_long: "The percentage of residents aged 25–64 who have not completed gymnasieutbildning (upper secondary school). A higher share indicates economic vulnerability — these residents have limited access to the modern labor market."
-methodology_note: "Includes individuals with only grundskola (9-year compulsory school) or less."
-national_context: "National average: ~12% (2024)"
-source_name: "Statistics Sweden (SCB)"
-update_frequency: "Published annually"
-```
-
-**school_merit_value_avg:**
-```
-description_short: "Average final grades of local primary schools"
-description_long: "The average meritvärde (merit value) across all grundskolor physically located in this area, weighted by student count. Meritvärde is computed from students' best 16 subject grades plus an optional 17th (moderna språk). It's the primary measure of school quality in Sweden and a major driver of where families choose to live."
-methodology_note: "Sum of 16 best grades (A=20, B=17.5 ... F=0) + optional 17th subject. Maximum possible: 340. Only grundskola (years F-9) included in this score."
-national_context: "National average: ~228 points (2024). Top schools: 270+. Struggling schools: <180."
-source_name: "Swedish National Agency for Education (Skolverket)"
-source_url: "https://www.skolverket.se"
-update_frequency: "Published annually, typically in autumn"
-```
-
-**school_goal_achievement_avg:**
-```
-description_short: "Share of students achieving passing grades in all subjects"
-description_long: "The average percentage of year-9 students who achieved at least grade E in all subjects, across all grundskolor in this area. This measures how well schools serve their entire student population, not just top performers."
-national_context: "National average: ~76% (2024)"
-source_name: "Swedish National Agency for Education (Skolverket)"
-update_frequency: "Published annually"
-```
-
-**school_teacher_certification_avg:**
-```
-description_short: "Share of teachers with proper certification"
-description_long: "The average percentage of teachers who are 'behöriga' (certified/qualified) to teach their assigned subjects. Higher certification rates correlate with better student outcomes and indicate a school that can attract qualified staff."
-national_context: "National average: ~72% (2024)"
-source_name: "Swedish National Agency for Education (Skolverket)"
-update_frequency: "Published annually"
-```
-
-**foreign_background_pct / population / rental_tenure_pct:**
-These are neutral indicators (weight 0, not scored). They still need tooltips explaining what they are, but the tooltip should note: "This indicator provides context but does not contribute to the composite score."
-
-### 2.3 Composite Score Explanation
-
-The composite score tooltip is special — it's not a single indicator. Content:
+### 3.1 Specifications
 
 ```
-description_short: "Overall neighborhood trajectory score"
-description_long: "A composite score from 0 to 100 that combines multiple indicators — income, employment, education, school quality, and more — into a single number. Each indicator is ranked against all ~6,160 areas in Sweden, then combined using weights based on their relevance to real estate outcomes. A score of 72 means this area outperforms roughly 72% of all areas nationwide."
-
-Score ranges:
-  80-100: Strong Growth Area
-  60-79:  Stable / Positive Outlook
-  40-59:  Mixed Signals
-  20-39:  Elevated Risk
-  0-19:   High Risk / Declining
-
-"Last computed: [date]. Based on data from [year range]."
+┌──────────────────────────────────────────────────────────────┐
+│  [Logo]   Map   Methodology            [Admin ▾]            │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-### 2.4 Trend Explanation
+- **Height:** 48px. Not 64, not 56. The map needs every pixel.
+- **Background:** `bg-background` (white) with a 1px `border-b border-border` bottom border. No shadow (shadows compete with the map).
+- **Logo:** Product name in `text-base font-semibold text-foreground`. No icon/symbol for now. Just the name as wordmark.
+- **Nav links:** `text-sm font-medium text-muted-foreground`. Active link: `text-foreground`. Hover: `text-foreground`. No underlines, no colored highlights. The active state is just darker text.
+- **Admin dropdown:** Same styling. Subtle chevron icon. Dropdown uses shadcn `DropdownMenu`.
+- **Spacing:** `px-4` horizontal padding. `gap-6` between nav links.
+- **Mobile:** Hamburger menu on < 768px. Standard shadcn `Sheet` sliding from left.
 
-Trend arrows need context too:
+### 3.2 No Colored Navbar
 
-```
-"Change in this indicator over the past [N] years. Based on comparing [year] to [year] values.
-↑ means the value has increased (by the shown percentage).
-A green arrow means the change is positive for the area's score.
-A red arrow means the change is negative."
-
-If no trend available:
-"Trend data not available for this area. This can happen when the area's boundaries changed between measurement periods."
-```
+Do not add a blue/colored top bar. The navbar is infrastructure, not branding. A colored navbar fights the map. White + thin border is correct.
 
 ---
 
-## Step 3: API Extension
+## Step 4: Sidebar Styling
 
-### 3.1 Include Metadata in Score Responses
+### 4.1 Overall
 
-Extend the DeSO/H3 score API to include indicator metadata:
+- **Background:** `bg-background` (white). Clean.
+- **Width:** 400px on desktop (already specified in previous task).
+- **Padding:** `p-5` (20px). Consistent on all sides.
+- **Section spacing:** `space-y-6` between major sections (header, score, indicators, schools).
+- **Scroll:** `overflow-y-auto` with shadcn `ScrollArea` for styled scrollbar. Scrollbar should be thin and subtle (`w-1.5`).
 
-```php
-// In the score detail response (when a specific area is selected)
-public function scoreDetail(string $identifier)
-{
-    // ... existing score lookup ...
+### 4.2 DeSO Header Section
 
-    $indicators = Indicator::where('is_active', true)
-        ->orderBy('display_order')
-        ->get()
-        ->map(fn ($ind) => [
-            'slug' => $ind->slug,
-            'name' => $ind->name,
-            'description_short' => $ind->description_short,
-            'description_long' => $ind->description_long,
-            'methodology_note' => $ind->methodology_note,
-            'national_context' => $ind->national_context,
-            'source_name' => $ind->source_name,
-            'source_url' => $ind->source_url,
-            'update_frequency' => $ind->update_frequency,
-            'data_vintage' => $ind->data_vintage,
-            'data_last_ingested_at' => $ind->data_last_ingested_at?->toIso8601String(),
-            'unit' => $ind->unit,
-            'direction' => $ind->direction,
-            'category' => $ind->category,
-            // per-area values
-            'raw_value' => $values[$ind->slug]->raw_value ?? null,
-            'percentile' => $values[$ind->slug]->percentile ?? null,
-            'trend' => $trends[$ind->slug] ?? null,
-        ]);
+```
+Danderyd 0162C1010
+Danderyds kommun · Stockholms län
+Area: 1.2 km²
+```
 
-    return response()->json([
-        // ... existing fields ...
-        'indicators' => $indicators,
-        'score_computed_at' => $compositeScore->computed_at,
-    ]);
+- DeSO name (if available) in `text-lg font-semibold text-foreground`
+- DeSO code in `text-xs font-medium text-muted-foreground` next to the name (not on its own line)
+- Kommun + län in `text-sm text-muted-foreground`
+- Area in `text-xs text-muted-foreground`
+- Separator: `border-b border-border` after the header
+
+### 4.3 Score Section
+
+```
+        72
+  Stable / Positive Outlook
+```
+
+- Score number: `text-4xl font-bold tabular-nums` in the **score gradient color** matching its value. This is the single most important visual connection between the sidebar and the map. A score of 72 should be the exact same green as the 72-colored polygon on the map.
+- Score label: `text-sm font-medium text-muted-foreground`
+- The score section should have slight vertical padding (`py-4`) and a bottom border
+
+### 4.4 Indicator Bars
+
+```
+Median Income          ████████░░  78th   287,000 SEK   ↑ +8.2%
+```
+
+This is the densest UI element. Every pixel matters.
+
+- **Layout:** Single row per indicator. Name on the left, bar in the middle, values on the right.
+- **Name:** `text-xs font-medium text-muted-foreground uppercase tracking-wide`. All-caps labels are more scannable at small sizes.
+- **Bar:** Height 6px. Rounded (`rounded-full`). Fill color = score gradient color at the percentile position. Unfilled = `bg-muted` (slate-100). Width ~100px.
+- **Percentile:** `text-xs font-semibold tabular-nums text-foreground`. Show as "78th" not "0.78" or "78%".
+- **Raw value:** `text-xs tabular-nums text-muted-foreground`. In parentheses or after a separator. "287,000 SEK" or "72.3%".
+- **Trend arrow:** Small inline arrow icon (12px). Green `text-trend-positive` for improving, rose `text-trend-negative` for worsening, gray `text-trend-stable` for stable. Percentage in the same color, `text-xs tabular-nums`.
+- **No trend:** A muted dash "—" in `text-trend-none`.
+
+**Visual rhythm:** Each indicator row should be ~32-36px tall. With 8 indicators, the whole section is ~280px — scrollable but usually visible without scrolling on desktop.
+
+### 4.5 School Cards
+
+Already specified in the schools task. Apply these tokens:
+- Card: `bg-background border border-border rounded-lg p-3`
+- School name: `text-sm font-semibold text-foreground`
+- Type/operator: `text-xs text-muted-foreground`
+- Stats bars: Same as indicator bars but smaller (4px height)
+
+### 4.6 Badges
+
+For strengths/weaknesses and category labels:
+
+- **Strength badge:** `bg-emerald-50 text-emerald-700 border border-emerald-200` (light green chip)
+- **Weakness badge:** `bg-purple-50 text-purple-700 border border-purple-200` (light purple chip — matches the low-score map color)
+- **Neutral badge:** `bg-muted text-muted-foreground border border-border`
+- **All badges:** `text-xs font-medium px-2 py-0.5 rounded-full`
+
+---
+
+## Step 5: Map Chrome
+
+### 5.1 Legend
+
+The score legend overlay on the map:
+
+- Position: bottom-left of the map area, `absolute` positioned
+- Background: `bg-background/90 backdrop-blur-sm` (white with slight transparency so map peeks through)
+- Border: `border border-border rounded-lg`
+- Padding: `px-3 py-2`
+- Gradient bar: 200px wide, 8px tall, using the score gradient
+- Labels: `text-[11px] text-muted-foreground` at each end: "High Risk" and "Strong Growth"
+- **Minimal.** No title, no extra decoration. Just the bar and two labels.
+
+### 5.2 Layer Controls (When H3 Is Implemented)
+
+- Position: top-right of the map area
+- Same card styling: `bg-background/90 backdrop-blur-sm border border-border rounded-lg`
+- Radio buttons and toggles use shadcn components
+- `text-xs` for labels
+
+### 5.3 Map Background
+
+The default map background (behind the DeSO polygons / H3 hexes) should be:
+- Light mode: `#f1f5f9` (slate-100) — a very light gray that distinguishes "no data" areas from the white sidebar
+- Water bodies (if rendered): `#e2e8f0` (slate-200) or a very subtle blue-gray
+
+This ensures that the colored score polygons are the dominant visual element.
+
+---
+
+## Step 6: Admin Pages
+
+### 6.1 General Admin Styling
+
+Admin pages are internal tools — functional over beautiful. But they should still use the same tokens for consistency.
+
+- **Page background:** `bg-muted` (slate-100) — slightly gray to distinguish from the main app's white
+- **Content cards:** `bg-background` (white) cards on the gray background
+- **Tables:** Shadcn `Table` with default styling. Headers in `text-xs font-medium text-muted-foreground uppercase tracking-wide`. Rows in `text-sm`.
+- **Inputs:** Standard shadcn. No customization needed.
+
+### 6.2 Admin Navbar Distinction
+
+Subtle visual cue that you're in admin:
+- Add a small `text-xs font-medium text-muted-foreground bg-muted px-2 py-0.5 rounded` badge next to the admin link: "Admin"
+- Or use a slightly different background tint on admin pages
+
+---
+
+## Step 7: Data Freshness Indicators
+
+### 7.1 Status Dots
+
+Used in the sidebar (data sources section) and admin dashboard:
+
+| Status | Dot | Text color |
+|---|---|---|
+| Current | `bg-emerald-500` (green) | `text-foreground` |
+| Stale | `bg-amber-500` (yellow) | `text-foreground` |
+| Outdated | `bg-red-500` (red) | `text-foreground` |
+| Unknown | `bg-muted-foreground` (gray) | `text-muted-foreground` |
+
+Dots are 8px circles, inline with the text label. `w-2 h-2 rounded-full`.
+
+---
+
+## Step 8: Responsive Behavior
+
+### 8.1 Breakpoints
+
+| Breakpoint | Layout |
+|---|---|
+| ≥ 1024px (lg) | Map + sidebar (400px) side by side |
+| 768–1023px (md) | Map + sidebar (320px) side by side, slightly narrower |
+| < 768px (sm) | Map takes full width, sidebar becomes bottom sheet (40% height) |
+
+### 8.2 Mobile Bottom Sheet
+
+On mobile, the sidebar becomes a draggable bottom sheet:
+- Default state: shows score header + "drag up for details"
+- Expanded: scrollable, shows all sections
+- Map visible above (60% of viewport)
+- Use shadcn `Drawer` (Vaul) for the mobile sheet
+
+### 8.3 Typography Doesn't Change
+
+Don't scale fonts down on mobile. 14px body text and 12px labels are already mobile-friendly. Reducing them further hurts readability. The mobile sidebar is narrower (full-width minus padding = ~340px) but the same type scale works.
+
+---
+
+## Step 9: Methodology Page Styling
+
+### 9.1 Reading Column
+
+The methodology page is prose, not data. Different styling:
+
+- **Max width:** 680px centered. `max-w-2xl mx-auto`.
+- **Paragraph text:** `text-base leading-relaxed text-foreground`. Slightly larger and more relaxed than sidebar text.
+- **Headings:** `text-xl font-bold text-foreground` for section headings, `text-lg font-semibold` for subsections.
+- **Data source cards:** `bg-background border border-border rounded-lg p-5`. Source name in `text-xs font-medium text-muted-foreground`. Frequency badge: `bg-muted text-muted-foreground text-xs px-2 py-0.5 rounded-full`.
+- **Score range table:** Left border in the score gradient color for each row. `border-l-4`. Cell padding `py-3`.
+- **FAQ accordion:** Shadcn default. Trigger in `text-base font-medium`. Content in `text-sm text-muted-foreground leading-relaxed`.
+
+---
+
+## Step 10: Dark Mode Architecture (Prep Only)
+
+### 10.1 What to Do Now
+
+1. **All colors via CSS custom properties.** Never hardcode `text-slate-700` — use `text-foreground`. This is the single most important dark mode prep.
+2. **All backgrounds via tokens.** `bg-background`, `bg-card`, `bg-muted`. Never `bg-white` or `bg-slate-100`.
+3. **Score gradient colors in variables.** So they can be adjusted for dark backgrounds if needed.
+4. **Add `dark` class support in Tailwind config:**
+
+```js
+// tailwind.config.ts
+export default {
+  darkMode: 'class',  // Enables .dark class on <html>
+  // ...
 }
 ```
 
-### 3.2 Caching
+5. **Comment the dark mode token overrides** in the CSS file with a note: "Uncomment and tune when dark mode is implemented."
 
-The indicator metadata (descriptions, source info) is static — it only changes when we update the seed data. Cache it aggressively. The per-area values are already cached from the existing score endpoint. No new performance concerns.
+### 10.2 What NOT to Do Now
 
----
+- Don't implement a dark mode toggle in the UI
+- Don't test components in dark mode
+- Don't create dark mode variants of the score gradient
+- Don't add dark basemap tiles for the map
 
-## Step 4: Tooltip Component
+### 10.3 When to Implement Dark Mode
 
-### 4.1 InfoTooltip Component
-
-Build a reusable tooltip component using shadcn's `Tooltip` or `Popover`:
-
-```tsx
-interface InfoTooltipProps {
-  indicator: IndicatorMeta;
-  children?: React.ReactNode;
-}
-
-function InfoTooltip({ indicator }: InfoTooltipProps) {
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <button className="inline-flex items-center text-muted-foreground hover:text-foreground transition-colors ml-1">
-          <InfoIcon className="h-3.5 w-3.5" />
-        </button>
-      </PopoverTrigger>
-      <PopoverContent className="w-80 text-sm" side="left" align="start">
-        <div className="space-y-2">
-          <p className="font-medium">{indicator.name}</p>
-          <p className="text-muted-foreground">{indicator.description_long}</p>
-
-          {indicator.national_context && (
-            <p className="text-xs text-muted-foreground border-l-2 border-muted pl-2">
-              {indicator.national_context}
-            </p>
-          )}
-
-          <div className="flex items-center gap-4 text-xs text-muted-foreground pt-1 border-t">
-            <span>Source: {indicator.source_name}</span>
-            <span>Data from: {indicator.data_vintage}</span>
-          </div>
-
-          {indicator.data_last_ingested_at && (
-            <p className="text-xs text-muted-foreground">
-              Last updated: {formatRelativeDate(indicator.data_last_ingested_at)}
-            </p>
-          )}
-        </div>
-      </PopoverContent>
-    </Popover>
-  );
-}
-```
-
-### 4.2 Use Popover, Not Tooltip
-
-shadcn's `Tooltip` disappears on mouse leave, which is fine for simple labels but bad for longer text that users might want to read. Use `Popover` instead — it stays open until the user clicks elsewhere or presses Escape. This also works better on mobile (tap to open, tap elsewhere to close).
-
-### 4.3 Positioning
-
-Popovers should open to the **left** of the info icon (toward the map) when in the sidebar, since the sidebar is on the right edge of the screen. Use `side="left"` to avoid the popover being cut off by the viewport edge.
-
-On mobile (bottom sheet), popovers should open **above** the trigger: `side="top"`.
+After launch, when you have user feedback. It's a half-day task if the token architecture is correct:
+1. Uncomment dark token overrides
+2. Add a toggle button (system preference / manual)
+3. Test score gradient legibility on dark background (may need saturation bump)
+4. Add dark map background color
+5. Test every component
 
 ---
 
-## Step 5: Apply Tooltips to All Elements
+## Step 11: Implementation Approach
 
-### 5.1 Indicator Bars
+### 11.1 Order of Operations
 
-Current:
-```
-Median Income          ████████░░  78th (287,000 SEK)
-```
+1. **Set up color tokens and typography** — update CSS variables, install Inter, configure Tailwind
+2. **Update the navbar** — height, colors, spacing
+3. **Update the sidebar** — all sections (header, score, indicators, schools)
+4. **Update the map chrome** — legend, layer controls, background
+5. **Update admin pages** — tables, cards, forms
+6. **Update methodology page** — typography, cards, accordion
+7. **Audit for hardcoded colors** — search codebase for raw Tailwind colors (`text-gray-*`, `bg-slate-*`, etc.) and replace with token references
 
-New:
-```
-Median Income  ⓘ      ████████░░  78th (287,000 SEK)
-```
+### 11.2 Verification Checklist
 
-The ⓘ icon appears after the indicator name. Clicking/hovering shows the full explanation.
-
-### 5.2 Composite Score
-
-Current:
-```
-72
-Stable / Positive Outlook
-```
-
-New:
-```
-72  ⓘ
-Stable / Positive Outlook
-```
-
-The ⓘ next to the score number. Tooltip explains the composite score methodology, shows the score range table, and the computation date.
-
-### 5.3 Trend Arrows
-
-Current:
-```
-↑ +3.2
-```
-
-New:
-```
-↑ +3.2  ⓘ
-```
-
-Tooltip explains: "Median Income increased by 3.2% from 2022 to 2024. This trend is based on 3 years of data from SCB."
-
-### 5.4 School Cards
-
-Each stat in the school card gets its own tooltip:
-
-```
-Meritvärde    ████████░░  241  ⓘ
-Goal ach.     █████████░  94%  ⓘ
-Teachers      ███████░░░  78%  ⓘ
-Students      342
-```
-
-The meritvärde tooltip is especially important — most non-Swedish-education-system users have no idea what it means.
-
-### 5.5 "No Data" States
-
-When an indicator shows "—" or "No data":
-
-```
-School Quality    — No data  ⓘ
-```
-
-Tooltip: "No schools are located within this area. School quality data is based on grundskolor physically within the area boundary. The nearest school is [name], [distance] away."
-
-Or: "Data for this indicator is not yet available for this area. This can happen for newly created statistical areas or areas where the source agency suppresses data for privacy reasons."
-
----
-
-## Step 6: Data Freshness Display
-
-### 6.1 Freshness in Sidebar Footer
-
-At the bottom of the sidebar, below all indicators, add a subtle "Data freshness" section:
-
-```
-─────────────────────────────
-Data sources:
-  SCB Demographics    2024  •  Refreshed Jan 2025
-  Skolverket Schools  2024  •  Refreshed Dec 2024
-  Last score computation: Feb 1, 2025
-```
-
-This is always visible (not behind a tooltip). Small text, muted color. It answers the "is this up to date?" question without requiring any interaction.
-
-### 6.2 Freshness Dot in Indicator Bars
-
-Each indicator bar can optionally show a tiny colored dot indicating freshness:
-- **Green dot (8px):** Data is from the most recent available year
-- **Yellow dot:** Data is 1 year behind the most recent
-- **Gray dot:** Data is 2+ years old or metadata missing
-
-This is a subtle visual cue. Only show it if the data is NOT from the latest year (i.e., default is no dot = fresh). Only show yellow/gray dots as warnings.
-
-### 6.3 How to Get the Dates
-
-The `data_vintage` field on the indicator tells you which year the data describes. The `data_last_ingested_at` tells you when we last pulled it. The `computed_at` on composite_scores tells you when the score was last calculated.
-
-Pass all three through the API response. The frontend decides what to show.
-
----
-
-## Step 7: Mobile Behavior
-
-### 7.1 Mobile Tooltips
-
-On mobile, the info icon tap opens the same `Popover` but sized for the screen:
-- Full width minus 32px padding
-- Positioned above the trigger element
-- Max height 300px with scroll if content is long
-- Close button (×) in top-right of popover
-
-### 7.2 Bottom Sheet Integration
-
-In the bottom sheet on mobile, tooltips should not cause the bottom sheet to jump or resize. They overlay on top of the bottom sheet content.
-
----
-
-## Step 8: Admin — Manage Explanations
-
-### 8.1 Edit Explanations in Admin Dashboard
-
-On the existing `/admin/indicators` page, add an "Edit" button for each indicator that opens a form to edit the explanation fields:
-
-- description_short (input, max 100 chars)
-- description_long (textarea, max 500 chars)
-- methodology_note (textarea, max 300 chars)
-- national_context (input, max 100 chars)
-- source_name (input)
-- source_url (input, URL)
-- update_frequency (input)
-
-This lets the admin refine explanations without code deploys. The texts are stored in the database and served via the API.
-
----
-
-## Step 9: Verification
-
-### 9.1 Checklist
-
-- [ ] Every indicator bar in the sidebar has an ⓘ icon
-- [ ] Clicking ⓘ opens a popover with description, national context, source, and dates
-- [ ] Composite score has a tooltip explaining the methodology and score ranges
-- [ ] Trend arrows have tooltips explaining the change period and significance
-- [ ] School card stats have tooltips (especially meritvärde)
-- [ ] "No data" states have explanatory tooltips
-- [ ] Data freshness section appears at bottom of sidebar
-- [ ] Popovers position correctly (left on desktop, top on mobile)
-- [ ] Popovers don't get cut off by viewport edges
-- [ ] Mobile: tap to open, tap elsewhere to close
-- [ ] Admin can edit explanation texts on /admin/indicators
-- [ ] All explanation fields are seeded with real content
-- [ ] Source URLs are clickable links
-- [ ] National context values are approximately correct
-
-### 9.2 Content Review
-
-Have someone unfamiliar with Swedish real estate read each tooltip and confirm they understand:
-1. What the number means
-2. Whether the value is good or bad relative to the country
-3. Where the data comes from
-4. How recent the data is
-
-If any of these four questions can't be answered from the tooltip, the text needs work.
+- [ ] Inter font loads correctly (check network tab — no FOUT/FOIT)
+- [ ] Tabular numbers align in indicator value columns
+- [ ] Score number color matches the corresponding map polygon color for the same score value
+- [ ] Navbar is 48px, white background, thin border — no shadow, no color
+- [ ] Sidebar is clean white, readable at all scroll positions
+- [ ] Indicator bars use the score gradient fill
+- [ ] Trend arrows are color-coded (green/rose/gray)
+- [ ] Badges use the correct light-chip style
+- [ ] Admin pages have subtle gray background distinction
+- [ ] Legend is semi-transparent, positioned bottom-left, minimal
+- [ ] Methodology page has comfortable reading width (680px max)
+- [ ] Mobile: sidebar becomes bottom sheet at < 768px
+- [ ] No hardcoded color values in component files (all via tokens)
+- [ ] `darkMode: 'class'` is configured in Tailwind (even though dark mode isn't active)
+- [ ] Dark mode token overrides are in the CSS file (commented out)
 
 ---
 
 ## Notes for the Agent
 
-### The "National Context" Line Is Critical
+### Don't Over-Design
 
-The single most useful piece of information in each tooltip is the national context: "National average: 248,000 SEK." This immediately tells the user whether 287,000 is good (above average) or bad (below average). Without this anchor point, percentile ranks are meaningless to most users.
+This is a data product, not a brand showcase. If you're debating between "clean and simple" and "visually interesting," always pick clean and simple. The map IS the visual interest.
 
-Pull national averages from the actual data when possible. For each indicator, compute the national average across all DeSOs (population-weighted if available) and store it in the `national_context` field. Update it annually when new data arrives.
+### The Score Color Connection Is Critical
 
-### Don't Over-explain
+When a user looks at a green polygon on the map and then sees the score "72" in the sidebar, that number MUST be the same green. Compute the score color with the same interpolation function in both places. If they're even slightly different, it feels broken.
 
-Each tooltip should be readable in 5 seconds. If it takes longer, it's too long. The description_long field should be 2-3 sentences max. The methodology_note is for the curious — most users will skip it.
+### shadcn Is Your Friend
 
-### Hierarchy of Information in Tooltip
+Don't build custom components where shadcn has one. Button, Card, Table, Input, Select, Switch, Badge, Accordion, DropdownMenu, ScrollArea, Drawer — all of these exist in shadcn and should be used. The design system is about configuring shadcn's tokens, not replacing its components.
 
-1. **What it is** (description_short / description_long) — always shown first
-2. **How this area compares** (national context) — the "anchor"
-3. **Source + freshness** (source_name, data_vintage, last ingested) — builds trust
-4. **Methodology** (methodology_note) — for the detail-oriented
+### Don't Add a Logo Yet
 
-### Integration with Comparison View
-
-When the comparison sidebar is active (from the comparison task), each indicator already shows side-by-side bars. The ⓘ icon should still appear and show the same tooltip — the explanation doesn't change based on whether you're viewing one area or comparing two.
+The product doesn't have a name yet. Use a text wordmark placeholder ("[Platform]" in `font-semibold`). A logo/icon is a branding task, not a design system task.
 
 ### What NOT to Do
 
-- Don't use browser-native `title` attributes — they're ugly, delayed, and can't be styled
-- Don't make tooltips appear on hover of the entire bar — only on the ⓘ icon (accidental hovers are annoying)
-- Don't show tooltips automatically on page load or on first visit
-- Don't include exact indicator weights in tooltips — that's protected IP (see methodology page task)
-- Don't make tooltips blocking — they should always be dismissible and shouldn't prevent interaction with other elements
+- Don't use more than one font
+- Don't use shadows on the navbar or sidebar (they compete with the map)
+- Don't make the navbar taller than 48px
+- Don't use red for the brand color (conflicts with score gradient)
+- Don't ship dark mode in v1
+- Don't use colored backgrounds for the sidebar
+- Don't use serif fonts anywhere
+- Don't add animations or transitions beyond what shadcn provides by default
+
+### What to Prioritize
+
+1. Color tokens (CSS variables) — unblocks everything else
+2. Inter font setup — quick win, immediate visual improvement
+3. Sidebar indicator bars — the most data-dense, most-seen component
+4. Score color matching (sidebar ↔ map)
+5. Navbar cleanup
+6. Everything else

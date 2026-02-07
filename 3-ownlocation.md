@@ -255,7 +255,7 @@ Never call `getCurrentPosition` on page load. Only geolocate when the user expli
 
 The locate-me result should integrate with the search flow:
 - If search is active (search bar has text), clicking locate-me clears the search and locates
-- The location marker is cleared when the user starts a new search
+- The location marker is cleared when the user starts a new searcah
 
 ### 8.2 Compare Integration
 

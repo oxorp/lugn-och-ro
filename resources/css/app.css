@@ -9,7 +9,7 @@
 
 @theme {
     --font-sans:
-        'Instrument Sans', ui-sans-serif, system-ui, sans-serif,
+        'Inter', ui-sans-serif, system-ui, sans-serif,
         'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol',
         'Noto Color Emoji';
 
@@ -59,78 +59,125 @@
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-ring: var(--sidebar-ring);
+
+    /* Score gradient — the most important colors in the system */
+    --color-score-0: var(--score-0);
+    --color-score-25: var(--score-25);
+    --color-score-50: var(--score-50);
+    --color-score-75: var(--score-75);
+    --color-score-100: var(--score-100);
+
+    /* Trend indicators */
+    --color-trend-positive: var(--trend-positive);
+    --color-trend-negative: var(--trend-negative);
+    --color-trend-stable: var(--trend-stable);
+    --color-trend-none: var(--trend-none);
 }
 
 :root {
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
-    --destructive-foreground: oklch(0.577 0.245 27.325);
-    --border: oklch(0.922 0 0);
-    --input: oklch(0.922 0 0);
-    --ring: oklch(0.87 0 0);
-    --chart-1: oklch(0.646 0.222 41.116);
-    --chart-2: oklch(0.6 0.118 184.704);
-    --chart-3: oklch(0.398 0.07 227.392);
-    --chart-4: oklch(0.828 0.189 84.429);
-    --chart-5: oklch(0.769 0.188 70.08);
+    /* Base neutrals — slate family */
+    --background: hsl(0 0% 100%);           /* White — page/sidebar background */
+    --foreground: hsl(215 20% 27%);         /* slate-800 — primary text */
+    --muted: hsl(215 16% 95%);              /* slate-100 — subtle backgrounds */
+    --muted-foreground: hsl(215 13% 44%);   /* slate-500 — secondary text, labels */
+    --border: hsl(215 16% 90%);             /* slate-200 — dividers, card borders */
+    --input: hsl(215 16% 90%);              /* slate-200 — input borders */
+    --ring: hsl(217 91% 60%);               /* blue-500 — focus rings */
+
+    /* Card surfaces */
+    --card: hsl(0 0% 100%);
+    --card-foreground: hsl(215 20% 27%);
+
+    /* Popover/tooltip */
+    --popover: hsl(0 0% 100%);
+    --popover-foreground: hsl(215 20% 27%);
+
+    /* Brand accent — blue, used sparingly */
+    --primary: hsl(217 91% 60%);            /* #3b82f6 — blue-500 */
+    --primary-foreground: hsl(0 0% 100%);   /* White text on blue */
+
+    --secondary: hsl(215 16% 95%);          /* slate-100 */
+    --secondary-foreground: hsl(215 20% 27%);
+
+    --accent: hsl(215 16% 95%);             /* slate-100 — hover backgrounds */
+    --accent-foreground: hsl(215 20% 27%);
+
+    /* Semantic — errors, destructive actions */
+    --destructive: hsl(0 72% 51%);          /* red-600 */
+    --destructive-foreground: hsl(0 0% 100%);
+
+    /* Charts */
+    --chart-1: hsl(217 91% 60%);
+    --chart-2: hsl(142 71% 35%);
+    --chart-3: hsl(45 85% 60%);
+    --chart-4: hsl(280 100% 22%);
+    --chart-5: hsl(330 70% 36%);
+
     --radius: 0.625rem;
-    --sidebar: oklch(0.985 0 0);
-    --sidebar-foreground: oklch(0.145 0 0);
-    --sidebar-primary: oklch(0.205 0 0);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.97 0 0);
-    --sidebar-accent-foreground: oklch(0.205 0 0);
-    --sidebar-border: oklch(0.922 0 0);
-    --sidebar-ring: oklch(0.87 0 0);
+
+    /* Sidebar — matches base neutrals */
+    --sidebar: hsl(0 0% 100%);
+    --sidebar-foreground: hsl(215 20% 27%);
+    --sidebar-primary: hsl(217 91% 60%);
+    --sidebar-primary-foreground: hsl(0 0% 100%);
+    --sidebar-accent: hsl(215 16% 95%);
+    --sidebar-accent-foreground: hsl(215 20% 27%);
+    --sidebar-border: hsl(215 16% 90%);
+    --sidebar-ring: hsl(217 91% 60%);
+
+    /* Score gradient — identical everywhere (map, sidebar, legend) */
+    --score-0: hsl(280 100% 22%);           /* #4a0072 — Deep purple */
+    --score-25: hsl(330 70% 36%);           /* #9c1d6e — Red-purple */
+    --score-50: hsl(45 85% 60%);            /* #f0c040 — Warm yellow */
+    --score-75: hsl(100 50% 52%);           /* #6abf4b — Light green */
+    --score-100: hsl(140 65% 29%);          /* #1a7a2e — Deep green */
+
+    /* Trend indicators */
+    --trend-positive: hsl(142 71% 35%);     /* Clear green */
+    --trend-negative: hsl(347 77% 50%);     /* rose-500 — muted red */
+    --trend-stable: hsl(215 13% 64%);       /* slate-400 */
+    --trend-none: hsl(215 13% 78%);         /* slate-300 */
 }
 
-.dark {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.145 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.145 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.985 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.396 0.141 25.723);
-    --destructive-foreground: oklch(0.637 0.237 25.331);
-    --border: oklch(0.269 0 0);
-    --input: oklch(0.269 0 0);
-    --ring: oklch(0.439 0 0);
-    --chart-1: oklch(0.488 0.243 264.376);
-    --chart-2: oklch(0.696 0.17 162.48);
-    --chart-3: oklch(0.769 0.188 70.08);
-    --chart-4: oklch(0.627 0.265 303.9);
-    --chart-5: oklch(0.645 0.246 16.439);
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.985 0 0);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(0.269 0 0);
-    --sidebar-ring: oklch(0.439 0 0);
-}
+/* Dark mode token overrides — architecture ready, not shipped in v1.            */
+/* Uncomment and tune when dark mode is implemented.                             */
+/*                                                                               */
+/* Key rule: The score gradient should NOT change between light and dark mode.   */
+/* The colors represent data — changing them per-mode would confuse users.       */
+/* If anything, slightly increase saturation on dark to compensate for           */
+/* reduced perceived brightness.                                                 */
+/*                                                                               */
+/* .dark {                                                                       */
+/*     --background: hsl(222 20% 10%);                                           */
+/*     --foreground: hsl(210 16% 93%);                                           */
+/*     --muted: hsl(217 19% 17%);                                                */
+/*     --muted-foreground: hsl(215 13% 64%);                                     */
+/*     --border: hsl(217 19% 22%);                                               */
+/*     --input: hsl(217 19% 22%);                                                */
+/*     --ring: hsl(217 91% 60%);                                                 */
+/*     --card: hsl(222 20% 13%);                                                 */
+/*     --card-foreground: hsl(210 16% 93%);                                      */
+/*     --popover: hsl(222 20% 13%);                                              */
+/*     --popover-foreground: hsl(210 16% 93%);                                   */
+/*     --primary: hsl(217 91% 60%);                                              */
+/*     --primary-foreground: hsl(0 0% 100%);                                     */
+/*     --secondary: hsl(217 19% 17%);                                            */
+/*     --secondary-foreground: hsl(210 16% 93%);                                 */
+/*     --accent: hsl(217 19% 17%);                                               */
+/*     --accent-foreground: hsl(210 16% 93%);                                    */
+/*     --destructive: hsl(0 72% 51%);                                            */
+/*     --destructive-foreground: hsl(0 0% 100%);                                 */
+/*     --sidebar: hsl(222 20% 13%);                                              */
+/*     --sidebar-foreground: hsl(210 16% 93%);                                   */
+/*     --sidebar-primary: hsl(217 91% 60%);                                      */
+/*     --sidebar-primary-foreground: hsl(0 0% 100%);                             */
+/*     --sidebar-accent: hsl(217 19% 17%);                                       */
+/*     --sidebar-accent-foreground: hsl(210 16% 93%);                            */
+/*     --sidebar-border: hsl(217 19% 22%);                                       */
+/*     --sidebar-ring: hsl(217 91% 60%);                                         */
+/*     Score gradient stays the same — it's data, not chrome                     */
+/*     May need brightness/saturation boost for dark backgrounds                 */
+/* }                                                                             */
 
 @layer base {
     * {

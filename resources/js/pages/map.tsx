@@ -16,6 +16,7 @@ import DesoMap, {
     type DesoMapHandle,
     type DesoProperties,
     type DesoScore,
+    interpolateScoreColor,
 } from '@/components/deso-map';
 import {
     type IndicatorMeta,
@@ -100,16 +101,14 @@ interface FinancialData {
     is_estimated: boolean;
 }
 
-function scoreColor(score: number): string {
-    if (score >= 70) return 'text-green-700';
-    if (score >= 40) return 'text-yellow-700';
-    return 'text-purple-800';
+/** Returns an inline color style matching the score gradient (same as the map). */
+function scoreColorStyle(score: number): React.CSSProperties {
+    return { color: interpolateScoreColor(score) };
 }
 
-function scoreBgColor(score: number): string {
-    if (score >= 70) return 'bg-green-600';
-    if (score >= 40) return 'bg-yellow-500';
-    return 'bg-purple-700';
+/** Returns an inline background color style matching the score gradient. */
+function scoreBgStyle(score: number): React.CSSProperties {
+    return { backgroundColor: interpolateScoreColor(score) };
 }
 
 function useScoreLabel(): (score: number) => string {
@@ -124,12 +123,12 @@ function useScoreLabel(): (score: number) => string {
 }
 
 function TrendIcon({ trend }: { trend: number | null }) {
-    if (trend === null) return <ArrowRight className="h-4 w-4 text-gray-400" />;
+    if (trend === null) return <ArrowRight className="h-4 w-4 text-trend-stable" />;
     if (trend > 1)
-        return <ArrowUp className="h-4 w-4 text-green-600" />;
+        return <ArrowUp className="h-4 w-4 text-trend-positive" />;
     if (trend < -1)
-        return <ArrowDown className="h-4 w-4 text-red-600" />;
-    return <ArrowRight className="h-4 w-4 text-gray-400" />;
+        return <ArrowDown className="h-4 w-4 text-trend-negative" />;
+    return <ArrowRight className="h-4 w-4 text-trend-stable" />;
 }
 
 function FactorBar({
@@ -155,20 +154,20 @@ function FactorBar({
     return (
         <div className="space-y-0.5">
             <div className="flex justify-between text-xs">
-                <span className="text-muted-foreground flex items-center">
+                <span className="flex items-center font-medium uppercase tracking-wide text-muted-foreground">
                     {label}
                     {meta && <InfoTooltip indicator={meta} />}
                 </span>
-                <span className="font-medium">
+                <span className="tabular-nums font-semibold text-foreground">
                     {isStratified
                         ? t('sidebar.indicators.percentile_stratified', { value: pct, tier: tierLabel })
                         : t('sidebar.indicators.percentile_national', { value: pct })}
                 </span>
             </div>
-            <div className="h-2 w-full overflow-hidden rounded-full bg-gray-100">
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
                 <div
-                    className={`h-full rounded-full transition-all ${scoreBgColor(pct)}`}
-                    style={{ width: `${pct}%` }}
+                    className="h-full rounded-full transition-all"
+                    style={{ width: `${pct}%`, ...scoreBgStyle(pct) }}
                 />
             </div>
         </div>
@@ -189,12 +188,12 @@ function DataFreshness({ meta }: { meta: Record<string, IndicatorMeta> }) {
     if (sources.size === 0) return null;
 
     return (
-        <div className="space-y-1 text-[10px] text-muted-foreground">
-            <div className="font-medium text-xs">Data sources</div>
+        <div className="space-y-1 text-[11px] text-muted-foreground">
+            <div className="text-xs font-medium text-foreground">Data sources</div>
             {Array.from(sources.values()).map((src) => (
                 <div key={src.name} className="flex justify-between">
                     <span>{src.name}</span>
-                    {src.vintage && <span>Data: {src.vintage}</span>}
+                    {src.vintage && <span className="tabular-nums">Data: {src.vintage}</span>}
                 </div>
             ))}
         </div>
@@ -202,10 +201,10 @@ function DataFreshness({ meta }: { meta: Record<string, IndicatorMeta> }) {
 }
 
 function meritColor(merit: number | null): string {
-    if (merit === null) return 'bg-gray-400';
-    if (merit > 230) return 'bg-green-500';
-    if (merit >= 200) return 'bg-yellow-500';
-    return 'bg-orange-500';
+    if (merit === null) return 'rgba(148, 163, 184, 0.6)'; // muted
+    if (merit > 230) return interpolateScoreColor(80);
+    if (merit >= 200) return interpolateScoreColor(55);
+    return interpolateScoreColor(30);
 }
 
 function SchoolCard({
@@ -222,16 +221,16 @@ function SchoolCard({
     return (
         <div
             ref={onRef}
-            className={`rounded-lg border p-3 transition-colors ${highlighted ? 'border-orange-400 bg-orange-50' : 'bg-card'}`}
+            className={`rounded-lg border p-3 transition-colors ${highlighted ? 'border-primary/50 bg-primary/5' : 'border-border bg-background'}`}
         >
             <div className="mb-1 flex items-start justify-between">
                 <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium">{school.name}</div>
-                    <div className="text-muted-foreground flex items-center gap-1.5 text-xs">
+                    <div className="truncate text-sm font-semibold text-foreground">{school.name}</div>
+                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                         {school.type && <span>{school.type}</span>}
                         {school.type && school.operator_type && <span>&middot;</span>}
                         {school.operator_type && (
-                            <Badge variant="outline" className="text-[10px] px-1 py-0">
+                            <Badge variant="outline" className="px-1 py-0 text-[10px]">
                                 {school.operator_type}
                             </Badge>
                         )}
@@ -242,16 +241,19 @@ function SchoolCard({
                 {school.merit_value !== null && (
                     <div className="space-y-0.5">
                         <div className="flex justify-between text-xs">
-                            <span className="text-muted-foreground flex items-center">
+                            <span className="flex items-center text-muted-foreground">
                                 {t('sidebar.schools.merit_value')}
                                 <SchoolStatTooltip stat="merit_value" />
                             </span>
-                            <span className="font-medium">{school.merit_value.toFixed(0)}</span>
+                            <span className="tabular-nums font-medium">{school.merit_value.toFixed(0)}</span>
                         </div>
-                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+                        <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
                             <div
-                                className={`h-full rounded-full ${meritColor(school.merit_value)}`}
-                                style={{ width: `${Math.min(100, (school.merit_value / 340) * 100)}%` }}
+                                className="h-full rounded-full"
+                                style={{
+                                    width: `${Math.min(100, (school.merit_value / 340) * 100)}%`,
+                                    backgroundColor: meritColor(school.merit_value),
+                                }}
                             />
                         </div>
                     </div>
@@ -259,15 +261,15 @@ function SchoolCard({
                 {school.goal_achievement !== null && (
                     <div className="space-y-0.5">
                         <div className="flex justify-between text-xs">
-                            <span className="text-muted-foreground flex items-center">
+                            <span className="flex items-center text-muted-foreground">
                                 {t('sidebar.schools.goal_achievement')}
                                 <SchoolStatTooltip stat="goal_achievement" />
                             </span>
-                            <span className="font-medium">{school.goal_achievement.toFixed(0)}%</span>
+                            <span className="tabular-nums font-medium">{school.goal_achievement.toFixed(0)}%</span>
                         </div>
-                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+                        <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
                             <div
-                                className="h-full rounded-full bg-blue-500"
+                                className="h-full rounded-full bg-primary"
                                 style={{ width: `${school.goal_achievement}%` }}
                             />
                         </div>
@@ -276,22 +278,22 @@ function SchoolCard({
                 {school.teacher_certification !== null && (
                     <div className="space-y-0.5">
                         <div className="flex justify-between text-xs">
-                            <span className="text-muted-foreground flex items-center">
+                            <span className="flex items-center text-muted-foreground">
                                 {t('sidebar.schools.teachers')}
                                 <SchoolStatTooltip stat="teacher_certification" />
                             </span>
-                            <span className="font-medium">{school.teacher_certification.toFixed(0)}%</span>
+                            <span className="tabular-nums font-medium">{school.teacher_certification.toFixed(0)}%</span>
                         </div>
-                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+                        <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
                             <div
-                                className="h-full rounded-full bg-indigo-500"
+                                className="h-full rounded-full bg-primary/70"
                                 style={{ width: `${school.teacher_certification}%` }}
                             />
                         </div>
                     </div>
                 )}
                 {school.student_count !== null && (
-                    <div className="text-muted-foreground mt-1 text-xs">
+                    <div className="mt-1 text-xs text-muted-foreground">
                         {t('sidebar.schools.students_count', { count: school.student_count })}
                     </div>
                 )}
@@ -365,15 +367,15 @@ function CrimeRateBar({
         <div className="space-y-0.5">
             <div className="flex justify-between text-xs">
                 <span className="text-muted-foreground">{label}</span>
-                <span className="font-medium">{t('sidebar.indicators.percentile_national', { value: Math.round(safeness) })}</span>
+                <span className="tabular-nums font-medium">{t('sidebar.indicators.percentile_national', { value: Math.round(safeness) })}</span>
             </div>
-            <div className="h-2 w-full overflow-hidden rounded-full bg-gray-100">
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
                 <div
-                    className={`h-full rounded-full transition-all ${scoreBgColor(safeness)}`}
-                    style={{ width: `${safeness}%` }}
+                    className="h-full rounded-full transition-all"
+                    style={{ width: `${safeness}%`, ...scoreBgStyle(safeness) }}
                 />
             </div>
-            <div className="text-muted-foreground text-[10px]">
+            <div className="text-[11px] text-muted-foreground">
                 {t('sidebar.crime.estimated_rate', { value: rate.toLocaleString() })}
             </div>
         </div>
@@ -392,8 +394,8 @@ function CrimeSection({
     if (loading) {
         return (
             <div className="space-y-3">
-                <div className="h-16 animate-pulse rounded-lg bg-gray-100" />
-                <div className="h-24 animate-pulse rounded-lg bg-gray-100" />
+                <div className="h-16 animate-pulse rounded-lg bg-muted" />
+                <div className="h-24 animate-pulse rounded-lg bg-muted" />
             </div>
         );
     }
@@ -429,19 +431,20 @@ function CrimeSection({
                                     <span className="text-muted-foreground">
                                         {t('sidebar.crime.perceived_safety')}
                                     </span>
-                                    <span className="font-medium">
+                                    <span className="tabular-nums font-medium">
                                         {t('sidebar.indicators.percentile_national', { value: Math.round(crimeData.perceived_safety.percentile) })}
                                     </span>
                                 </div>
-                                <div className="h-2 w-full overflow-hidden rounded-full bg-gray-100">
+                                <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
                                     <div
-                                        className={`h-full rounded-full transition-all ${scoreBgColor(crimeData.perceived_safety.percentile)}`}
+                                        className="h-full rounded-full transition-all"
                                         style={{
                                             width: `${crimeData.perceived_safety.percentile}%`,
+                                            ...scoreBgStyle(crimeData.perceived_safety.percentile),
                                         }}
                                     />
                                 </div>
-                                <div className="text-muted-foreground text-[10px]">
+                                <div className="text-[11px] text-muted-foreground">
                                     {t('sidebar.crime.feel_safe', { value: crimeData.perceived_safety.percent_safe })}
                                 </div>
                             </div>
@@ -449,18 +452,18 @@ function CrimeSection({
                 </div>
             </div>
 
-            <div className="rounded border border-dashed border-gray-200 px-2.5 py-2 text-[10px] text-muted-foreground">
+            <div className="rounded border border-dashed border-border px-2.5 py-2 text-[11px] text-muted-foreground">
                 {t('sidebar.crime.disclaimer', {
                     kommun: crimeData.kommun_name,
                     total: crimeData.kommun_actual_rates.total?.toLocaleString() ?? '',
                 })}
             </div>
 
-            <div className="rounded-lg border border-dashed p-3 text-center">
+            <div className="rounded-lg border border-dashed border-border p-3 text-center">
                 <div className="text-xs font-medium text-muted-foreground">
                     {t('sidebar.crime.recent_incidents')}
                 </div>
-                <div className="mt-0.5 text-[10px] text-muted-foreground">
+                <div className="mt-0.5 text-[11px] text-muted-foreground">
                     {t('sidebar.crime.recent_incidents_hint')}
                 </div>
             </div>
@@ -482,19 +485,20 @@ function FinancialRateBar({
     if (value === null) return null;
 
     const pct = Math.min(100, (value / maxValue) * 100);
+    const score = 100 - pct; // Invert for color (higher rate = worse)
     return (
         <div className="space-y-0.5">
             <div className="flex justify-between text-xs">
                 <span className="text-muted-foreground">{label}</span>
-                <span className="font-medium">
+                <span className="tabular-nums font-medium">
                     {value.toLocaleString(undefined, { maximumFractionDigits: 1 })}
                     {suffix}
                 </span>
             </div>
-            <div className="h-2 w-full overflow-hidden rounded-full bg-gray-100">
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
                 <div
-                    className={`h-full rounded-full transition-all ${scoreBgColor(100 - pct)}`}
-                    style={{ width: `${pct}%` }}
+                    className="h-full rounded-full transition-all"
+                    style={{ width: `${pct}%`, ...scoreBgStyle(score) }}
                 />
             </div>
         </div>
@@ -513,8 +517,8 @@ function FinancialSection({
     if (loading) {
         return (
             <div className="space-y-3">
-                <div className="h-16 animate-pulse rounded-lg bg-gray-100" />
-                <div className="h-24 animate-pulse rounded-lg bg-gray-100" />
+                <div className="h-16 animate-pulse rounded-lg bg-muted" />
+                <div className="h-24 animate-pulse rounded-lg bg-muted" />
             </div>
         );
     }
@@ -555,7 +559,7 @@ function FinancialSection({
                         maxValue={10}
                     />
                     {data.kommun_actual_rate !== null && (
-                        <div className="text-muted-foreground -mt-1.5 text-[10px]">
+                        <div className="-mt-1.5 text-[11px] text-muted-foreground">
                             {t('sidebar.financial.kommun_avg', { value: data.kommun_actual_rate })}
                         </div>
                     )}
@@ -571,7 +575,7 @@ function FinancialSection({
                                 <span className="text-muted-foreground">
                                     {t('sidebar.financial.median_debt')}
                                 </span>
-                                <span className="font-medium">
+                                <span className="tabular-nums font-medium">
                                     {t('sidebar.financial.sek_thousands', {
                                         value: Math.round(data.kommun_median_debt / 1000).toLocaleString(),
                                     })}
@@ -582,7 +586,7 @@ function FinancialSection({
                 </div>
             </div>
 
-            <div className="rounded border border-dashed border-gray-200 px-2.5 py-2 text-[10px] text-muted-foreground">
+            <div className="rounded border border-dashed border-border px-2.5 py-2 text-[11px] text-muted-foreground">
                 {data.kommun_actual_rate !== null
                     ? t('sidebar.financial.disclaimer', {
                           kommun: data.kommun_name ?? '',
@@ -771,85 +775,87 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes, i
                 />
             </div>
 
-            <aside className="border-t md:border-t-0 md:border-l bg-background h-[40vh] w-full shrink-0 md:h-full md:w-[400px]">
+            <aside className="h-[40vh] w-full shrink-0 border-t border-border bg-background md:h-full md:w-[400px] md:border-l md:border-t-0">
                 <ScrollArea className="h-full">
                     {selectedDeso ? (
-                        <div className="space-y-4 p-4">
+                        <div className="space-y-6 p-5">
                             {/* Header */}
-                            <div className="flex items-start justify-between">
-                                <div>
-                                    <div className="flex items-center gap-1.5">
-                                        <MapPin className="text-muted-foreground h-3.5 w-3.5" />
-                                        <span className="font-mono text-sm font-medium">
-                                            {selectedDeso.deso_code}
-                                        </span>
-                                    </div>
-                                    {selectedDeso.deso_name && (
-                                        <div className="mt-0.5 text-sm text-gray-600">
-                                            {selectedDeso.deso_name}
+                            <div>
+                                <div className="flex items-start justify-between">
+                                    <div>
+                                        <div className="flex items-baseline gap-2">
+                                            {selectedDeso.deso_name && (
+                                                <span className="text-lg font-semibold text-foreground">
+                                                    {selectedDeso.deso_name}
+                                                </span>
+                                            )}
+                                            <span className="text-xs font-medium text-muted-foreground">
+                                                {selectedDeso.deso_code}
+                                            </span>
                                         </div>
-                                    )}
-                                    <div className="text-muted-foreground mt-1 text-xs">
-                                        {selectedDeso.kommun_name ?? t('sidebar.header.unknown')} &middot; {selectedDeso.lan_name ?? t('sidebar.header.unknown')}
+                                        <div className="mt-0.5 text-sm text-muted-foreground">
+                                            {selectedDeso.kommun_name ?? t('sidebar.header.unknown')} &middot; {selectedDeso.lan_name ?? t('sidebar.header.unknown')}
+                                        </div>
                                         {selectedDeso.area_km2 !== null && (
-                                            <> &middot; {selectedDeso.area_km2.toFixed(2)} km&sup2;</>
+                                            <div className="text-xs text-muted-foreground">
+                                                {selectedDeso.area_km2.toFixed(2)} km&sup2;
+                                            </div>
                                         )}
                                     </div>
-                                </div>
 
-                                {selectedScore && (
-                                    <div className="text-right">
-                                        <div className="flex items-start justify-end gap-1">
-                                            <div
-                                                className={`text-3xl font-bold ${scoreColor(selectedScore.score)}`}
-                                            >
-                                                {selectedScore.score.toFixed(0)}
+                                    {selectedScore && (
+                                        <div className="text-right">
+                                            <div className="flex items-start justify-end gap-1">
+                                                <div
+                                                    className="text-4xl font-bold tabular-nums"
+                                                    style={scoreColorStyle(selectedScore.score)}
+                                                >
+                                                    {selectedScore.score.toFixed(0)}
+                                                </div>
+                                                <ScoreTooltip
+                                                    score={selectedScore.score}
+                                                    scoreLabel={scoreLabel(selectedScore.score)}
+                                                />
                                             </div>
-                                            <ScoreTooltip
-                                                score={selectedScore.score}
-                                                scoreLabel={scoreLabel(selectedScore.score)}
-                                            />
+                                            <div className="flex items-center justify-end gap-1">
+                                                <TrendIcon trend={selectedScore.trend_1y} />
+                                                <span className="tabular-nums text-xs text-muted-foreground">
+                                                    {selectedScore.trend_1y !== null
+                                                        ? `${selectedScore.trend_1y > 0 ? '+' : ''}${selectedScore.trend_1y.toFixed(1)}`
+                                                        : t('sidebar.score.na')}
+                                                </span>
+                                                <TrendTooltip trend={selectedScore.trend_1y} />
+                                            </div>
+                                            <div className="mt-0.5 text-sm font-medium text-muted-foreground">
+                                                {scoreLabel(selectedScore.score)}
+                                            </div>
                                         </div>
-                                        <div className="flex items-center justify-end gap-1">
-                                            <TrendIcon trend={selectedScore.trend_1y} />
-                                            <span className="text-muted-foreground text-xs">
-                                                {selectedScore.trend_1y !== null
-                                                    ? `${selectedScore.trend_1y > 0 ? '+' : ''}${selectedScore.trend_1y.toFixed(1)}`
-                                                    : t('sidebar.score.na')}
-                                            </span>
-                                            <TrendTooltip trend={selectedScore.trend_1y} />
-                                        </div>
-                                        <div className="text-muted-foreground mt-0.5 text-[11px]">
-                                            {scoreLabel(selectedScore.score)}
-                                        </div>
-                                    </div>
-                                )}
+                                    )}
+                                </div>
+                                <Separator className="mt-4" />
                             </div>
 
                             {/* Indicator Breakdown */}
                             {selectedScore?.factor_scores && (
-                                <>
-                                    <Separator />
-                                    <div>
-                                        <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                                            {t('sidebar.indicators.title')}
-                                        </div>
-                                        <div className="space-y-2">
-                                            {Object.entries(selectedScore.factor_scores).map(
-                                                ([slug, value]) => (
-                                                    <FactorBar
-                                                        key={slug}
-                                                        label={indicatorLabel(slug)}
-                                                        value={value}
-                                                        scope={indicatorScopes[slug]}
-                                                        urbanityTier={selectedScore.urbanity_tier}
-                                                        meta={indicatorMeta[slug]}
-                                                    />
-                                                ),
-                                            )}
-                                        </div>
+                                <div>
+                                    <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                        {t('sidebar.indicators.title')}
                                     </div>
-                                </>
+                                    <div className="space-y-2">
+                                        {Object.entries(selectedScore.factor_scores).map(
+                                            ([slug, value]) => (
+                                                <FactorBar
+                                                    key={slug}
+                                                    label={indicatorLabel(slug)}
+                                                    value={value}
+                                                    scope={indicatorScopes[slug]}
+                                                    urbanityTier={selectedScore.urbanity_tier}
+                                                    meta={indicatorMeta[slug]}
+                                                />
+                                            ),
+                                        )}
+                                    </div>
+                                </div>
                             )}
 
                             {/* Crime & Safety Section */}
@@ -871,7 +877,7 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes, i
                                 {schoolsLoading ? (
                                     <div className="space-y-3">
                                         {[1, 2].map((i) => (
-                                            <div key={i} className="h-24 animate-pulse rounded-lg bg-gray-100" />
+                                            <div key={i} className="h-24 animate-pulse rounded-lg bg-muted" />
                                         ))}
                                     </div>
                                 ) : schools.length > 0 ? (
@@ -888,7 +894,7 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes, i
                                         ))}
                                     </div>
                                 ) : (
-                                    <div className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">
+                                    <div className="rounded-lg border border-dashed border-border p-4 text-center text-sm text-muted-foreground">
                                         {t('sidebar.schools.empty')}
                                         <NoDataTooltip reason="no_schools" />
                                     </div>
@@ -904,14 +910,14 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes, i
                                         {selectedScore?.top_positive &&
                                             selectedScore.top_positive.length > 0 && (
                                                 <div>
-                                                    <div className="mb-1 text-xs font-medium text-green-700">
+                                                    <div className="mb-1 text-xs font-medium text-trend-positive">
                                                         {t('sidebar.strengths')}
                                                     </div>
                                                     <div className="flex flex-wrap gap-1">
                                                         {selectedScore.top_positive.map((slug) => (
                                                             <Badge
                                                                 key={slug}
-                                                                className="bg-green-100 text-green-800"
+                                                                className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700"
                                                                 variant="secondary"
                                                             >
                                                                 {indicatorLabel(slug)}
@@ -924,14 +930,14 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes, i
                                         {selectedScore?.top_negative &&
                                             selectedScore.top_negative.length > 0 && (
                                                 <div>
-                                                    <div className="mb-1 text-xs font-medium text-purple-700">
+                                                    <div className="mb-1 text-xs font-medium text-score-0">
                                                         {t('sidebar.weaknesses')}
                                                     </div>
                                                     <div className="flex flex-wrap gap-1">
                                                         {selectedScore.top_negative.map((slug) => (
                                                             <Badge
                                                                 key={slug}
-                                                                className="bg-purple-100 text-purple-800"
+                                                                className="rounded-full border border-purple-200 bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-700"
                                                                 variant="secondary"
                                                             >
                                                                 {indicatorLabel(slug)}
@@ -951,20 +957,20 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes, i
                     ) : (
                         <div className="flex h-full items-center justify-center p-8 text-center">
                             <div>
-                                <MapPin className="text-muted-foreground mx-auto mb-3 h-8 w-8" />
+                                <MapPin className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
                                 {searchNotInDeso ? (
                                     <>
-                                        <div className="text-sm font-medium">
+                                        <div className="text-sm font-medium text-foreground">
                                             {t('sidebar.empty_no_deso.title')}
                                         </div>
-                                        <div className="text-muted-foreground mt-1 text-xs">
+                                        <div className="mt-1 text-xs text-muted-foreground">
                                             {t('sidebar.empty_no_deso.subtitle')}
                                         </div>
                                     </>
                                 ) : (
                                     <>
-                                        <div className="text-sm font-medium">{t('sidebar.empty.title')}</div>
-                                        <div className="text-muted-foreground mt-1 text-xs">
+                                        <div className="text-sm font-medium text-foreground">{t('sidebar.empty.title')}</div>
+                                        <div className="mt-1 text-xs text-muted-foreground">
                                             {t('sidebar.empty.subtitle')}
                                         </div>
                                     </>

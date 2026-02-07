@@ -26,7 +26,7 @@ function typeIcon(type: SearchResult['type']) {
         case 'state':
             return <Navigation className="h-4 w-4 shrink-0 text-amber-500" />;
         default:
-            return <MapPin className="h-4 w-4 shrink-0 text-gray-400" />;
+            return <MapPin className="h-4 w-4 shrink-0 text-muted-foreground" />;
     }
 }
 
