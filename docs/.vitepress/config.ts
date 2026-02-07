@@ -157,7 +157,6 @@ export default defineConfig({
           text: 'Changelog',
           items: [
             { text: 'Overview', link: '/changelog/' },
-            { text: 'February 2026', link: '/changelog/2026-02' },
           ],
         },
       ],
