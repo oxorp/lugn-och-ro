@@ -2,7 +2,7 @@ import Feature from 'ol/Feature';
 import Map from 'ol/Map';
 import View from 'ol/View';
 import Point from 'ol/geom/Point';
-import Polygon from 'ol/geom/Polygon';
+import Polygon, { circular } from 'ol/geom/Polygon';
 import TileLayer from 'ol/layer/Tile';
 import VectorLayer from 'ol/layer/Vector';
 import { fromLonLat, toLonLat, transformExtent } from 'ol/proj';
@@ -76,12 +76,30 @@ export interface SchoolMarker {
     distance_m: number;
 }
 
+export interface PoiMarker {
+    name: string;
+    lat: number;
+    lng: number;
+    category: string;
+    distance_m: number;
+}
+
+export interface PoiCategoryMeta {
+    name: string;
+    color: string;
+    icon: string;
+    signal: string;
+}
+
 export interface HeatmapMapHandle {
     updateSize: () => void;
     dropPin: (lat: number, lng: number) => void;
     clearPin: () => void;
     setSchoolMarkers: (schools: SchoolMarker[]) => void;
     clearSchoolMarkers: () => void;
+    setRadiusCircle: (lat: number, lng: number, radiusMeters: number) => void;
+    setPoiMarkers: (pois: PoiMarker[], categories: Record<string, PoiCategoryMeta>) => void;
+    clearPoiMarkers: () => void;
     zoomToPoint: (lat: number, lng: number, zoom: number) => void;
     zoomToExtent: (west: number, south: number, east: number, north: number) => void;
 }
@@ -183,6 +201,8 @@ const HeatmapMap = forwardRef<HeatmapMapHandle, HeatmapMapProps>(function Heatma
     const mapInstance = useRef<Map | null>(null);
     const pinSourceRef = useRef<VectorSource | null>(null);
     const schoolSourceRef = useRef<VectorSource | null>(null);
+    const radiusSourceRef = useRef<VectorSource | null>(null);
+    const poiSourceRef = useRef<VectorSource | null>(null);
     const tileLayerRef = useRef<TileLayer | null>(null);
     const heatmapLayerRef = useRef<TileLayer | null>(null);
     const [basemapType, setBasemapType] = useState<BasemapType>('clean');
@@ -227,6 +247,8 @@ const HeatmapMap = forwardRef<HeatmapMapHandle, HeatmapMapProps>(function Heatma
         clearPin() {
             pinSourceRef.current?.clear();
             schoolSourceRef.current?.clear();
+            radiusSourceRef.current?.clear();
+            poiSourceRef.current?.clear();
         },
         setSchoolMarkers(schools: SchoolMarker[]) {
             const source = schoolSourceRef.current;
@@ -270,6 +292,49 @@ const HeatmapMap = forwardRef<HeatmapMapHandle, HeatmapMapProps>(function Heatma
         },
         clearSchoolMarkers() {
             schoolSourceRef.current?.clear();
+        },
+        setRadiusCircle(lat: number, lng: number, radiusMeters: number) {
+            const source = radiusSourceRef.current;
+            if (!source) return;
+            source.clear();
+
+            const circleGeom = circular([lng, lat], radiusMeters, 64);
+            circleGeom.transform('EPSG:4326', 'EPSG:3857');
+
+            source.addFeature(new Feature({ geometry: circleGeom }));
+        },
+        setPoiMarkers(pois: PoiMarker[], categories: Record<string, PoiCategoryMeta>) {
+            const source = poiSourceRef.current;
+            if (!source) return;
+            source.clear();
+
+            const features = pois
+                .filter((p) => p.lat && p.lng)
+                .map((p) => {
+                    const feature = new Feature({
+                        geometry: new Point(fromLonLat([p.lng, p.lat])),
+                        name: p.name,
+                        category: p.category,
+                    });
+
+                    const color = categories[p.category]?.color ?? '#94a3b8';
+
+                    feature.setStyle(
+                        new Style({
+                            image: new CircleStyle({
+                                radius: 4,
+                                fill: new Fill({ color }),
+                                stroke: new Stroke({ color: '#fff', width: 1 }),
+                            }),
+                        }),
+                    );
+                    return feature;
+                });
+
+            source.addFeatures(features);
+        },
+        clearPoiMarkers() {
+            poiSourceRef.current?.clear();
         },
         zoomToPoint(lat: number, lng: number, zoom: number) {
             const view = mapInstance.current?.getView();
@@ -343,6 +408,30 @@ const HeatmapMap = forwardRef<HeatmapMapHandle, HeatmapMapProps>(function Heatma
         });
         heatmapLayerRef.current = heatmapLayer;
 
+        // Radius circle layer (3km ring around pin)
+        const radiusSource = new VectorSource();
+        radiusSourceRef.current = radiusSource;
+        const radiusLayer = new VectorLayer({
+            source: radiusSource,
+            style: new Style({
+                stroke: new Stroke({
+                    color: 'rgba(100, 116, 139, 0.6)',
+                    width: 1.5,
+                    lineDash: [6, 4],
+                }),
+                fill: new Fill({ color: 'rgba(100, 116, 139, 0.04)' }),
+            }),
+            zIndex: 4,
+        });
+
+        // POI markers layer
+        const poiSource = new VectorSource();
+        poiSourceRef.current = poiSource;
+        const poiLayer = new VectorLayer({
+            source: poiSource,
+            zIndex: 8,
+        });
+
         // Pin marker layer
         const pinSource = new VectorSource();
         pinSourceRef.current = pinSource;
@@ -366,6 +455,8 @@ const HeatmapMap = forwardRef<HeatmapMapHandle, HeatmapMapProps>(function Heatma
                 maskLayer,
                 borderLayer,
                 heatmapLayer,
+                radiusLayer,
+                poiLayer,
                 schoolLayer,
                 pinLayer,
             ],
@@ -444,6 +535,8 @@ const HeatmapMap = forwardRef<HeatmapMapHandle, HeatmapMapProps>(function Heatma
             if (e.key === 'Escape') {
                 pinSource.clear();
                 schoolSource.clear();
+                radiusSource.clear();
+                poiSource.clear();
                 onPinClearRef.current();
             }
         };

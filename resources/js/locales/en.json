@@ -164,6 +164,14 @@
             "filter_grundskola": "Grundskola",
             "filter_gymnasie": "Gymnasie",
             "filter_other": "Other"
+        },
+        "pois": {
+            "title": "Nearby Amenities (3 km)"
+        },
+        "cta": {
+            "title": "Get the full report",
+            "subtitle": "Sign in to see detailed indicators, schools, and amenities within 3 km of this location.",
+            "button": "Sign in"
         }
     },
     "methodology": {

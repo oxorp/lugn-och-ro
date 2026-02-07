@@ -2,15 +2,25 @@
 
 namespace App\Http\Controllers;
 
+use App\Enums\DataTier;
 use App\Models\CompositeScore;
 use App\Models\IndicatorValue;
+use App\Models\PoiCategory;
+use App\Services\DataTieringService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class LocationController extends Controller
 {
-    public function show(float $lat, float $lng): JsonResponse
+    public function __construct(
+        private DataTieringService $tiering,
+    ) {}
+
+    public function show(Request $request, float $lat, float $lng): JsonResponse
     {
+        $tier = $this->tiering->resolveEffectiveTier($request->user());
+
         // 1. Find which DeSO this point falls in (PostGIS point-in-polygon)
         $deso = DB::selectOne('
             SELECT deso_code, kommun_code, kommun_name, lan_code, area_km2, urbanity_tier
@@ -28,7 +38,37 @@ class LocationController extends Controller
             ->orderByDesc('year')
             ->first();
 
-        // 3. Get indicator values for this DeSO
+        $scoreData = $score ? [
+            'value' => round((float) $score->score, 1),
+            'trend_1y' => $score->trend_1y ? round((float) $score->trend_1y, 1) : null,
+            'label' => $this->scoreLabel((float) $score->score),
+            'top_positive' => $score->top_positive,
+            'top_negative' => $score->top_negative,
+            'factor_scores' => $score->factor_scores,
+        ] : null;
+
+        // Public tier: location + score only, no detail data
+        if ($tier === DataTier::Public) {
+            return response()->json([
+                'location' => [
+                    'lat' => $lat,
+                    'lng' => $lng,
+                    'deso_code' => $deso->deso_code,
+                    'kommun' => $deso->kommun_name,
+                    'lan_code' => $deso->lan_code,
+                    'area_km2' => $deso->area_km2,
+                    'urbanity_tier' => $deso->urbanity_tier,
+                ],
+                'score' => $scoreData,
+                'tier' => $tier->value,
+                'indicators' => [],
+                'schools' => [],
+                'pois' => [],
+                'poi_categories' => [],
+            ]);
+        }
+
+        // 3. Get indicator values for this DeSO (paid tiers)
         $indicators = IndicatorValue::where('deso_code', $deso->deso_code)
             ->whereHas('indicator', fn ($q) => $q->where('is_active', true))
             ->with('indicator')
@@ -62,6 +102,38 @@ class LocationController extends Controller
             LIMIT 10
         ', [$lng, $lat, $lng, $lat]);
 
+        // 5. Get POIs within 3km radius
+        $pois = DB::select('
+            SELECT p.name, p.category, p.lat, p.lng, p.subcategory,
+                   ST_Distance(
+                       p.geom::geography,
+                       ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography
+                   ) as distance_m
+            FROM pois p
+            WHERE p.status = \'active\'
+              AND p.geom IS NOT NULL
+              AND ST_DWithin(
+                  p.geom::geography,
+                  ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography,
+                  3000
+              )
+            ORDER BY p.category, distance_m
+        ', [$lng, $lat, $lng, $lat]);
+
+        // 6. Get POI category metadata for rendering
+        $poiCategories = PoiCategory::query()
+            ->where('is_active', true)
+            ->where('show_on_map', true)
+            ->get()
+            ->mapWithKeys(fn ($cat) => [
+                $cat->slug => [
+                    'name' => $cat->name,
+                    'color' => $cat->color,
+                    'icon' => $cat->icon,
+                    'signal' => $cat->signal,
+                ],
+            ]);
+
         return response()->json([
             'location' => [
                 'lat' => $lat,
@@ -72,14 +144,8 @@ class LocationController extends Controller
                 'area_km2' => $deso->area_km2,
                 'urbanity_tier' => $deso->urbanity_tier,
             ],
-            'score' => $score ? [
-                'value' => round((float) $score->score, 1),
-                'trend_1y' => $score->trend_1y ? round((float) $score->trend_1y, 1) : null,
-                'label' => $this->scoreLabel((float) $score->score),
-                'top_positive' => $score->top_positive,
-                'top_negative' => $score->top_negative,
-                'factor_scores' => $score->factor_scores,
-            ] : null,
+            'score' => $scoreData,
+            'tier' => $tier->value,
             'indicators' => $indicators->map(fn ($iv) => [
                 'slug' => $iv->indicator->slug,
                 'name' => $iv->indicator->name,
@@ -102,6 +168,14 @@ class LocationController extends Controller
                 'lat' => (float) $s->lat,
                 'lng' => (float) $s->lng,
             ]),
+            'pois' => collect($pois)->map(fn ($p) => [
+                'name' => $p->name,
+                'category' => $p->category,
+                'lat' => (float) $p->lat,
+                'lng' => (float) $p->lng,
+                'distance_m' => round((float) $p->distance_m),
+            ]),
+            'poi_categories' => $poiCategories,
         ]);
     }
 

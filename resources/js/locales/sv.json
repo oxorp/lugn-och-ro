@@ -163,6 +163,14 @@
             "filter_grundskola": "Grundskola",
             "filter_gymnasie": "Gymnasie",
             "filter_other": "\u00d6vriga"
+        },
+        "pois": {
+            "title": "N\u00e4rliggande faciliteter (3 km)"
+        },
+        "cta": {
+            "title": "F\u00e5 hela rapporten",
+            "subtitle": "Logga in f\u00f6r att se detaljerade indikatorer, skolor och faciliteter inom 3 km fr\u00e5n denna plats.",
+            "button": "Logga in"
         }
     },
     "geolocation": {

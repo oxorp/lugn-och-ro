@@ -5,7 +5,6 @@ import {
     GraduationCap,
     Loader2,
     MapPin,
-    Minus,
     Search,
     X,
 } from 'lucide-react';
@@ -13,6 +12,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import HeatmapMap, {
     type HeatmapMapHandle,
+    type PoiCategoryMeta,
+    type PoiMarker,
     type SchoolMarker,
     interpolateScoreColor,
 } from '@/components/deso-map';
@@ -54,6 +55,7 @@ interface LocationData {
         top_negative: string[] | null;
         factor_scores: Record<string, number> | null;
     } | null;
+    tier: number;
     indicators: Array<{
         slug: string;
         name: string;
@@ -65,6 +67,8 @@ interface LocationData {
         normalization_scope: 'national' | 'urbanity_stratified';
     }>;
     schools: SchoolMarker[];
+    pois: PoiMarker[];
+    poi_categories: Record<string, PoiCategoryMeta>;
 }
 
 function formatIndicatorValue(value: number, unit: string | null): string {
@@ -106,7 +110,7 @@ function IndicatorBar({
     const effectivePct = indicator.direction === 'negative' ? 100 - rawPct : rawPct;
     const isStratified = scope === 'urbanity_stratified' && urbanityTier;
     const tierLabel = urbanityTier
-        ? t(`sidebar.urbanity.${urbanityTier}`, { defaultValue: urbanityTier })
+        ? t(`sidebar.urbanity.${urbanityTier}`)
         : '';
 
     return (
@@ -197,7 +201,8 @@ function ActiveSidebar({
         );
     }
 
-    const { location, score, indicators, schools } = data;
+    const { location, score, indicators, schools, pois, poi_categories, tier } = data;
+    const isPublicTier = tier === 0;
 
     return (
         <ScrollArea className="h-full">
@@ -249,7 +254,7 @@ function ActiveSidebar({
                                 </div>
                                 {location.urbanity_tier && (
                                     <div className="text-[11px] text-muted-foreground capitalize">
-                                        {t(`sidebar.urbanity.${location.urbanity_tier}`, { defaultValue: location.urbanity_tier })}
+                                        {t(`sidebar.urbanity.${location.urbanity_tier}`)}
                                     </div>
                                 )}
                             </div>
@@ -257,8 +262,27 @@ function ActiveSidebar({
                     </div>
                 )}
 
-                {/* Indicators */}
-                {indicators.length > 0 && (
+                {/* Public CTA - show when no detail data */}
+                {isPublicTier && (
+                    <div className="rounded-lg border border-primary/20 bg-primary/5 p-4 text-center">
+                        <Search className="mx-auto mb-2 h-5 w-5 text-primary" />
+                        <p className="mb-1 text-sm font-semibold text-foreground">
+                            {t('sidebar.cta.title')}
+                        </p>
+                        <p className="mb-3 text-xs text-muted-foreground">
+                            {t('sidebar.cta.subtitle')}
+                        </p>
+                        <a
+                            href="/login"
+                            className="inline-block rounded-md bg-primary px-4 py-2 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+                        >
+                            {t('sidebar.cta.button')}
+                        </a>
+                    </div>
+                )}
+
+                {/* Indicators (paid tiers only) */}
+                {!isPublicTier && indicators.length > 0 && (
                     <>
                         <Separator className="my-3" />
                         <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -278,8 +302,8 @@ function ActiveSidebar({
                     </>
                 )}
 
-                {/* Schools */}
-                {schools.length > 0 && (
+                {/* Schools (paid tiers only) */}
+                {!isPublicTier && schools.length > 0 && (
                     <>
                         <Separator className="my-3" />
                         <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -318,6 +342,37 @@ function ActiveSidebar({
                         </div>
                     </>
                 )}
+
+                {/* POIs (paid tiers only) */}
+                {!isPublicTier && pois.length > 0 && (
+                    <>
+                        <Separator className="my-3" />
+                        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            {t('sidebar.pois.title')}
+                        </h3>
+                        <div className="space-y-1.5">
+                            {Object.entries(
+                                pois.reduce<Record<string, number>>((acc, p) => {
+                                    acc[p.category] = (acc[p.category] || 0) + 1;
+                                    return acc;
+                                }, {}),
+                            ).map(([category, count]) => (
+                                <div key={category} className="flex items-center justify-between text-xs">
+                                    <span className="flex items-center gap-1.5">
+                                        <span
+                                            className="inline-block h-2.5 w-2.5 rounded-full"
+                                            style={{ backgroundColor: poi_categories[category]?.color ?? '#94a3b8' }}
+                                        />
+                                        <span className="text-foreground">
+                                            {poi_categories[category]?.name ?? category}
+                                        </span>
+                                    </span>
+                                    <span className="tabular-nums text-muted-foreground">{count}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </>
+                )}
             </div>
         </ScrollArea>
     );
@@ -348,7 +403,8 @@ export default function MapPage({
                 // Drop pin and fetch data for URL coordinates
                 setTimeout(() => {
                     mapRef.current?.dropPin(lat, lng);
-                    mapRef.current?.zoomToPoint(lat, lng, 12);
+                    mapRef.current?.zoomToPoint(lat, lng, 14);
+                    mapRef.current?.setRadiusCircle(lat, lng, 3000);
                     handlePinDrop(lat, lng);
                 }, 500);
             }
@@ -381,8 +437,17 @@ export default function MapPage({
             const data: LocationData = await response.json();
             setLocationData(data);
 
+            // Zoom to neighborhood level and show radius
+            mapRef.current?.zoomToPoint(lat, lng, 14);
+            mapRef.current?.setRadiusCircle(lat, lng, 3000);
+
             // Set school markers on map
             mapRef.current?.setSchoolMarkers(data.schools);
+
+            // Set POI markers (only present for paid tiers)
+            if (data.pois?.length > 0) {
+                mapRef.current?.setPoiMarkers(data.pois, data.poi_categories);
+            }
 
             // Reverse geocode for location name
             reverseGeocode(lat, lng);
@@ -425,6 +490,7 @@ export default function MapPage({
         setLocationData(null);
         setLocationName(null);
         mapRef.current?.clearSchoolMarkers();
+        mapRef.current?.clearPoiMarkers();
         window.history.pushState(null, '', '/');
     }, []);
 

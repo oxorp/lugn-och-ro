@@ -5,7 +5,10 @@ namespace Tests\Feature;
 use App\Models\CompositeScore;
 use App\Models\Indicator;
 use App\Models\IndicatorValue;
+use App\Models\Poi;
+use App\Models\PoiCategory;
 use App\Models\School;
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -72,14 +75,19 @@ class LocationControllerTest extends TestCase
             'normalized_value' => 0.78,
         ]);
 
-        $response = $this->getJson('/api/location/59.335,18.06');
+        $user = User::factory()->create(['is_admin' => true]);
+
+        $response = $this->actingAs($user)->getJson('/api/location/59.335,18.06');
 
         $response->assertOk()
             ->assertJsonStructure([
                 'location' => ['lat', 'lng', 'deso_code', 'kommun', 'lan_code', 'area_km2', 'urbanity_tier'],
                 'score' => ['value', 'trend_1y', 'label', 'top_positive', 'top_negative', 'factor_scores'],
+                'tier',
                 'indicators',
                 'schools',
+                'pois',
+                'poi_categories',
             ])
             ->assertJsonFragment([
                 'kommun' => 'Stockholm',
@@ -123,7 +131,9 @@ class LocationControllerTest extends TestCase
             WHERE lat IS NOT NULL AND lng IS NOT NULL AND geom IS NULL
         ');
 
-        $response = $this->getJson('/api/location/59.335,18.06');
+        $user = User::factory()->create();
+
+        $response = $this->actingAs($user)->getJson('/api/location/59.335,18.06');
 
         $response->assertOk();
         $schools = $response->json('schools');
@@ -164,7 +174,9 @@ class LocationControllerTest extends TestCase
             'normalized_value' => 0.61,
         ]);
 
-        $response = $this->getJson('/api/location/59.335,18.06');
+        $user = User::factory()->create();
+
+        $response = $this->actingAs($user)->getJson('/api/location/59.335,18.06');
 
         $response->assertOk();
         $indicators = $response->json('indicators');
@@ -264,12 +276,169 @@ class LocationControllerTest extends TestCase
             'normalized_value' => 0.50,
         ]);
 
-        $response = $this->getJson('/api/location/59.335,18.06');
+        $user = User::factory()->create();
+
+        $response = $this->actingAs($user)->getJson('/api/location/59.335,18.06');
 
         $response->assertOk();
         $indicators = $response->json('indicators');
         $this->assertCount(1, $indicators);
         $this->assertEquals('median_income', $indicators[0]['slug']);
+    }
+
+    public function test_public_tier_returns_empty_detail_data(): void
+    {
+        $this->createDesoWithGeom('0180C1090', 'Stockholm');
+
+        CompositeScore::create([
+            'deso_code' => '0180C1090',
+            'year' => 2024,
+            'score' => 65.0,
+            'computed_at' => now(),
+        ]);
+
+        $indicator = Indicator::create([
+            'slug' => 'median_income',
+            'name' => 'Medianinkomst',
+            'unit' => 'SEK',
+            'direction' => 'positive',
+            'weight' => 0.09,
+            'normalization' => 'rank_percentile',
+            'normalization_scope' => 'national',
+            'source' => 'scb',
+            'is_active' => true,
+            'display_order' => 1,
+        ]);
+
+        IndicatorValue::create([
+            'deso_code' => '0180C1090',
+            'indicator_id' => $indicator->id,
+            'year' => 2024,
+            'raw_value' => 287000,
+            'normalized_value' => 0.78,
+        ]);
+
+        // Unauthenticated request → Public tier
+        $response = $this->getJson('/api/location/59.335,18.06');
+
+        $response->assertOk()
+            ->assertJsonPath('tier', 0)
+            ->assertJsonPath('indicators', [])
+            ->assertJsonPath('schools', [])
+            ->assertJsonPath('pois', [])
+            ->assertJsonPath('poi_categories', [])
+            ->assertJsonPath('score.value', 65)
+            ->assertJsonPath('location.deso_code', '0180C1090');
+    }
+
+    public function test_admin_tier_returns_pois_within_radius(): void
+    {
+        $this->createDesoWithGeom('0180C1090', 'Stockholm');
+
+        CompositeScore::create([
+            'deso_code' => '0180C1090',
+            'year' => 2024,
+            'score' => 70.0,
+            'computed_at' => now(),
+        ]);
+
+        PoiCategory::create([
+            'slug' => 'grocery',
+            'name' => 'Grocery',
+            'osm_tags' => ['shop' => ['supermarket']],
+            'catchment_km' => 1.0,
+            'is_active' => true,
+            'show_on_map' => true,
+            'color' => '#16a34a',
+            'icon' => 'shopping-cart',
+            'signal' => 'positive',
+        ]);
+
+        // POI within 3km of test point
+        Poi::factory()->grocery()->create([
+            'name' => 'ICA Nära',
+            'lat' => 59.336,
+            'lng' => 18.062,
+        ]);
+
+        DB::statement('
+            UPDATE pois SET geom = ST_SetSRID(ST_MakePoint(lng, lat), 4326)
+            WHERE lat IS NOT NULL AND lng IS NOT NULL AND geom IS NULL
+        ');
+
+        // POI far away (should not be included)
+        Poi::factory()->grocery()->create([
+            'name' => 'Coop Far Away',
+            'lat' => 59.5,
+            'lng' => 18.5,
+        ]);
+
+        DB::statement('
+            UPDATE pois SET geom = ST_SetSRID(ST_MakePoint(lng, lat), 4326)
+            WHERE lat IS NOT NULL AND lng IS NOT NULL AND geom IS NULL
+        ');
+
+        $admin = User::factory()->create(['is_admin' => true]);
+
+        $response = $this->actingAs($admin)->getJson('/api/location/59.335,18.06');
+
+        $response->assertOk()
+            ->assertJsonPath('tier', 99);
+
+        $pois = $response->json('pois');
+        $this->assertCount(1, $pois);
+        $this->assertEquals('ICA Nära', $pois[0]['name']);
+        $this->assertEquals('grocery', $pois[0]['category']);
+        $this->assertArrayHasKey('distance_m', $pois[0]);
+
+        // Check poi_categories metadata is included
+        $categories = $response->json('poi_categories');
+        $this->assertArrayHasKey('grocery', $categories);
+        $this->assertEquals('#16a34a', $categories['grocery']['color']);
+    }
+
+    public function test_authenticated_user_gets_full_data(): void
+    {
+        $this->createDesoWithGeom('0180C1090', 'Stockholm');
+
+        CompositeScore::create([
+            'deso_code' => '0180C1090',
+            'year' => 2024,
+            'score' => 55.0,
+            'computed_at' => now(),
+        ]);
+
+        $indicator = Indicator::create([
+            'slug' => 'employment_rate',
+            'name' => 'Sysselsättningsgrad',
+            'unit' => '%',
+            'direction' => 'positive',
+            'weight' => 0.08,
+            'normalization' => 'rank_percentile',
+            'normalization_scope' => 'national',
+            'source' => 'scb',
+            'is_active' => true,
+            'display_order' => 2,
+        ]);
+
+        IndicatorValue::create([
+            'deso_code' => '0180C1090',
+            'indicator_id' => $indicator->id,
+            'year' => 2024,
+            'raw_value' => 72.3,
+            'normalized_value' => 0.61,
+        ]);
+
+        $user = User::factory()->create();
+
+        $response = $this->actingAs($user)->getJson('/api/location/59.335,18.06');
+
+        $response->assertOk()
+            ->assertJsonPath('tier', 1);
+
+        $indicators = $response->json('indicators');
+        $this->assertCount(1, $indicators);
+        $this->assertEquals('employment_rate', $indicators[0]['slug']);
     }
 
     public function test_tile_route_returns_transparent_png_for_missing_tile(): void
