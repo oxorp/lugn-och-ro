@@ -431,18 +431,14 @@ function FactorBar({
     scope,
     urbanityTier,
     meta,
-    trend,
     indicatorDirection,
-    showTrend,
 }: {
     label: string;
     value: number;
     scope?: 'national' | 'urbanity_stratified';
     urbanityTier?: string | null;
     meta?: IndicatorMeta;
-    trend?: IndicatorTrendData | null;
     indicatorDirection?: 'positive' | 'negative' | 'neutral';
-    showTrend?: boolean;
 }) {
     const { t } = useTranslation();
     const rawPct = Math.round(value * 100);
@@ -461,18 +457,10 @@ function FactorBar({
                     {label}
                     {meta && <InfoTooltip indicator={meta} />}
                 </span>
-                <span className="flex items-center gap-1.5">
-                    {showTrend && trend && indicatorDirection && (
-                        <IndicatorTrendArrow
-                            trend={trend}
-                            indicatorDirection={indicatorDirection}
-                        />
-                    )}
-                    <span className="tabular-nums font-semibold text-foreground">
-                        {isStratified
-                            ? t('sidebar.indicators.percentile_stratified', { value: effectivePct, tier: tierLabel })
-                            : t('sidebar.indicators.percentile_national', { value: effectivePct })}
-                    </span>
+                <span className="tabular-nums font-semibold text-foreground">
+                    {isStratified
+                        ? t('sidebar.indicators.percentile_stratified', { value: effectivePct, tier: tierLabel })
+                        : t('sidebar.indicators.percentile_national', { value: effectivePct })}
                 </span>
             </div>
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
@@ -737,31 +725,6 @@ function AdminIndicatorTooltip({ indicator }: { indicator: IndicatorDataItem }) 
     );
 }
 
-function DataFreshness({ meta }: { meta: Record<string, IndicatorMeta> }) {
-    const sources = new Map<string, { name: string; vintage: string | null }>();
-    for (const ind of Object.values(meta)) {
-        if (ind.source_name && !sources.has(ind.source_name)) {
-            sources.set(ind.source_name, {
-                name: ind.source_name,
-                vintage: ind.data_vintage,
-            });
-        }
-    }
-
-    if (sources.size === 0) return null;
-
-    return (
-        <div className="space-y-1 text-[11px] text-muted-foreground">
-            <div className="text-xs font-medium text-foreground">Data sources</div>
-            {Array.from(sources.values()).map((src) => (
-                <div key={src.name} className="flex justify-between">
-                    <span>{src.name}</span>
-                    {src.vintage && <span className="tabular-nums">Data: {src.vintage}</span>}
-                </div>
-            ))}
-        </div>
-    );
-}
 
 function meritColor(merit: number | null): string {
     if (merit === null) return 'rgba(148, 163, 184, 0.6)'; // muted
@@ -1859,6 +1822,67 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes, i
                                 <Separator className="mt-4" />
                             </div>
 
+                            {/* Strengths / Weaknesses — right under score */}
+                            {userTier >= 1 && (selectedScore?.top_positive?.length ||
+                                selectedScore?.top_negative?.length) && (
+                                <div className="space-y-2">
+                                    {selectedScore?.top_positive &&
+                                        selectedScore.top_positive.length > 0 && (
+                                            <div>
+                                                <div className="mb-1 text-xs font-medium text-trend-positive">
+                                                    {t('sidebar.strengths')}
+                                                </div>
+                                                <div className="flex flex-wrap gap-1">
+                                                    {selectedScore.top_positive
+                                                        .slice(0, userTier === 1 ? 2 : undefined)
+                                                        .map((slug) => (
+                                                        <Badge
+                                                            key={slug}
+                                                            className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700"
+                                                            variant="secondary"
+                                                        >
+                                                            {indicatorLabel(slug)}
+                                                        </Badge>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                    {selectedScore?.top_negative &&
+                                        selectedScore.top_negative.length > 0 && (
+                                            <div>
+                                                <div className="mb-1 text-xs font-medium text-score-0">
+                                                    {t('sidebar.weaknesses')}
+                                                </div>
+                                                <div className="flex flex-wrap gap-1">
+                                                    {selectedScore.top_negative
+                                                        .slice(0, userTier === 1 ? 2 : undefined)
+                                                        .map((slug) => (
+                                                        <Badge
+                                                            key={slug}
+                                                            className="rounded-full border border-purple-200 bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-700"
+                                                            variant="secondary"
+                                                        >
+                                                            {indicatorLabel(slug)}
+                                                        </Badge>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+                                </div>
+                            )}
+
+                            {/* Compare with button — right under strengths/weaknesses */}
+                            {userTier >= 1 && (
+                                <button
+                                    onClick={enterCompareWithCurrent}
+                                    className="flex w-full items-center justify-center gap-2 rounded-lg border border-border px-3 py-2.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+                                >
+                                    <ArrowLeftRight className="h-4 w-4" />
+                                    {t('compare.compare_with')}
+                                </button>
+                            )}
+
                             {/* Indicator Breakdown */}
                             {(indicatorData || selectedScore?.factor_scores) && (
                                 <div>
@@ -1927,9 +1951,7 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes, i
                                                                 scope={ind.normalization_scope}
                                                                 urbanityTier={selectedScore?.urbanity_tier}
                                                                 meta={indicatorMeta[ind.slug]}
-                                                                trend={ind.trend ?? null}
                                                                 indicatorDirection={ind.direction}
-                                                                showTrend={indicatorData.trend_eligible}
                                                             />
                                                         </div>
                                                         {/* Admin tooltip */}
@@ -2050,76 +2072,6 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes, i
                                 })()}
                             </div>
 
-                            {/* Strengths / Weaknesses — hidden for public, limited for free */}
-                            {userTier >= 1 && (selectedScore?.top_positive?.length ||
-                                selectedScore?.top_negative?.length) && (
-                                <>
-                                    <Separator />
-                                    <div className="space-y-2">
-                                        {selectedScore?.top_positive &&
-                                            selectedScore.top_positive.length > 0 && (
-                                                <div>
-                                                    <div className="mb-1 text-xs font-medium text-trend-positive">
-                                                        {t('sidebar.strengths')}
-                                                    </div>
-                                                    <div className="flex flex-wrap gap-1">
-                                                        {selectedScore.top_positive
-                                                            .slice(0, userTier === 1 ? 2 : undefined)
-                                                            .map((slug) => (
-                                                            <Badge
-                                                                key={slug}
-                                                                className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700"
-                                                                variant="secondary"
-                                                            >
-                                                                {indicatorLabel(slug)}
-                                                            </Badge>
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                            )}
-
-                                        {selectedScore?.top_negative &&
-                                            selectedScore.top_negative.length > 0 && (
-                                                <div>
-                                                    <div className="mb-1 text-xs font-medium text-score-0">
-                                                        {t('sidebar.weaknesses')}
-                                                    </div>
-                                                    <div className="flex flex-wrap gap-1">
-                                                        {selectedScore.top_negative
-                                                            .slice(0, userTier === 1 ? 2 : undefined)
-                                                            .map((slug) => (
-                                                            <Badge
-                                                                key={slug}
-                                                                className="rounded-full border border-purple-200 bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-700"
-                                                                variant="secondary"
-                                                            >
-                                                                {indicatorLabel(slug)}
-                                                            </Badge>
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                            )}
-                                    </div>
-                                </>
-                            )}
-
-                            {/* Data Freshness */}
-                            <Separator />
-                            <DataFreshness meta={indicatorMeta} />
-
-                            {/* Compare with button — only for authenticated users */}
-                            {userTier >= 1 && (
-                                <>
-                                    <Separator />
-                                    <button
-                                        onClick={enterCompareWithCurrent}
-                                        className="flex w-full items-center justify-center gap-2 rounded-lg border border-border px-3 py-2.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
-                                    >
-                                        <ArrowLeftRight className="h-4 w-4" />
-                                        {t('compare.compare_with')}
-                                    </button>
-                                </>
-                            )}
                         </div>
                     ) : (
                         <div className="flex h-full items-center justify-center p-8 text-center">
