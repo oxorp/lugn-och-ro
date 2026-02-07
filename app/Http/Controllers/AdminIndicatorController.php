@@ -44,6 +44,13 @@ class AdminIndicatorController extends Controller
                     'latest_year' => $latestYear,
                     'coverage' => $coverage,
                     'total_desos' => $totalDesos,
+                    'description_short' => $indicator->description_short,
+                    'description_long' => $indicator->description_long,
+                    'methodology_note' => $indicator->methodology_note,
+                    'national_context' => $indicator->national_context,
+                    'source_name' => $indicator->source_name,
+                    'source_url' => $indicator->source_url,
+                    'update_frequency' => $indicator->update_frequency,
                 ];
             });
 

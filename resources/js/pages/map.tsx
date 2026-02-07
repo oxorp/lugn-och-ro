@@ -17,6 +17,14 @@ import DesoMap, {
     type DesoProperties,
     type DesoScore,
 } from '@/components/deso-map';
+import {
+    type IndicatorMeta,
+    InfoTooltip,
+    NoDataTooltip,
+    SchoolStatTooltip,
+    ScoreTooltip,
+    TrendTooltip,
+} from '@/components/info-tooltip';
 import MapSearch from '@/components/map-search';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -33,6 +41,7 @@ interface MapPageProps {
     initialCenter: [number, number];
     initialZoom: number;
     indicatorScopes: Record<string, 'national' | 'urbanity_stratified'>;
+    indicatorMeta: Record<string, IndicatorMeta>;
 }
 
 export interface School {
@@ -128,11 +137,13 @@ function FactorBar({
     value,
     scope,
     urbanityTier,
+    meta,
 }: {
     label: string;
     value: number;
     scope?: 'national' | 'urbanity_stratified';
     urbanityTier?: string | null;
+    meta?: IndicatorMeta;
 }) {
     const { t } = useTranslation();
     const pct = Math.round(value * 100);
@@ -144,7 +155,10 @@ function FactorBar({
     return (
         <div className="space-y-0.5">
             <div className="flex justify-between text-xs">
-                <span className="text-muted-foreground">{label}</span>
+                <span className="text-muted-foreground flex items-center">
+                    {label}
+                    {meta && <InfoTooltip indicator={meta} />}
+                </span>
                 <span className="font-medium">
                     {isStratified
                         ? t('sidebar.indicators.percentile_stratified', { value: pct, tier: tierLabel })
@@ -157,6 +171,32 @@ function FactorBar({
                     style={{ width: `${pct}%` }}
                 />
             </div>
+        </div>
+    );
+}
+
+function DataFreshness({ meta }: { meta: Record<string, IndicatorMeta> }) {
+    const sources = new Map<string, { name: string; vintage: string | null }>();
+    for (const ind of Object.values(meta)) {
+        if (ind.source_name && !sources.has(ind.source_name)) {
+            sources.set(ind.source_name, {
+                name: ind.source_name,
+                vintage: ind.data_vintage,
+            });
+        }
+    }
+
+    if (sources.size === 0) return null;
+
+    return (
+        <div className="space-y-1 text-[10px] text-muted-foreground">
+            <div className="font-medium text-xs">Data sources</div>
+            {Array.from(sources.values()).map((src) => (
+                <div key={src.name} className="flex justify-between">
+                    <span>{src.name}</span>
+                    {src.vintage && <span>Data: {src.vintage}</span>}
+                </div>
+            ))}
         </div>
     );
 }
@@ -202,7 +242,10 @@ function SchoolCard({
                 {school.merit_value !== null && (
                     <div className="space-y-0.5">
                         <div className="flex justify-between text-xs">
-                            <span className="text-muted-foreground">{t('sidebar.schools.merit_value')}</span>
+                            <span className="text-muted-foreground flex items-center">
+                                {t('sidebar.schools.merit_value')}
+                                <SchoolStatTooltip stat="merit_value" />
+                            </span>
                             <span className="font-medium">{school.merit_value.toFixed(0)}</span>
                         </div>
                         <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
@@ -216,7 +259,10 @@ function SchoolCard({
                 {school.goal_achievement !== null && (
                     <div className="space-y-0.5">
                         <div className="flex justify-between text-xs">
-                            <span className="text-muted-foreground">{t('sidebar.schools.goal_achievement')}</span>
+                            <span className="text-muted-foreground flex items-center">
+                                {t('sidebar.schools.goal_achievement')}
+                                <SchoolStatTooltip stat="goal_achievement" />
+                            </span>
                             <span className="font-medium">{school.goal_achievement.toFixed(0)}%</span>
                         </div>
                         <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
@@ -230,7 +276,10 @@ function SchoolCard({
                 {school.teacher_certification !== null && (
                     <div className="space-y-0.5">
                         <div className="flex justify-between text-xs">
-                            <span className="text-muted-foreground">{t('sidebar.schools.teachers')}</span>
+                            <span className="text-muted-foreground flex items-center">
+                                {t('sidebar.schools.teachers')}
+                                <SchoolStatTooltip stat="teacher_certification" />
+                            </span>
                             <span className="font-medium">{school.teacher_certification.toFixed(0)}%</span>
                         </div>
                         <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
@@ -547,7 +596,7 @@ function FinancialSection({
     );
 }
 
-export default function MapPage({ initialCenter, initialZoom, indicatorScopes }: MapPageProps) {
+export default function MapPage({ initialCenter, initialZoom, indicatorScopes, indicatorMeta }: MapPageProps) {
     const { t } = useTranslation();
     const scoreLabel = useScoreLabel();
 
@@ -750,10 +799,16 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes }:
 
                                 {selectedScore && (
                                     <div className="text-right">
-                                        <div
-                                            className={`text-3xl font-bold ${scoreColor(selectedScore.score)}`}
-                                        >
-                                            {selectedScore.score.toFixed(0)}
+                                        <div className="flex items-start justify-end gap-1">
+                                            <div
+                                                className={`text-3xl font-bold ${scoreColor(selectedScore.score)}`}
+                                            >
+                                                {selectedScore.score.toFixed(0)}
+                                            </div>
+                                            <ScoreTooltip
+                                                score={selectedScore.score}
+                                                scoreLabel={scoreLabel(selectedScore.score)}
+                                            />
                                         </div>
                                         <div className="flex items-center justify-end gap-1">
                                             <TrendIcon trend={selectedScore.trend_1y} />
@@ -762,6 +817,7 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes }:
                                                     ? `${selectedScore.trend_1y > 0 ? '+' : ''}${selectedScore.trend_1y.toFixed(1)}`
                                                     : t('sidebar.score.na')}
                                             </span>
+                                            <TrendTooltip trend={selectedScore.trend_1y} />
                                         </div>
                                         <div className="text-muted-foreground mt-0.5 text-[11px]">
                                             {scoreLabel(selectedScore.score)}
@@ -787,6 +843,7 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes }:
                                                         value={value}
                                                         scope={indicatorScopes[slug]}
                                                         urbanityTier={selectedScore.urbanity_tier}
+                                                        meta={indicatorMeta[slug]}
                                                     />
                                                 ),
                                             )}
@@ -833,6 +890,7 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes }:
                                 ) : (
                                     <div className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">
                                         {t('sidebar.schools.empty')}
+                                        <NoDataTooltip reason="no_schools" />
                                     </div>
                                 )}
                             </div>
@@ -885,6 +943,10 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes }:
                                     </div>
                                 </>
                             )}
+
+                            {/* Data Freshness */}
+                            <Separator />
+                            <DataFreshness meta={indicatorMeta} />
                         </div>
                     ) : (
                         <div className="flex h-full items-center justify-center p-8 text-center">

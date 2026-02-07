@@ -1,12 +1,20 @@
 import { Head, router } from '@inertiajs/react';
-import { Info, RefreshCw } from 'lucide-react';
+import { Info, Pencil, RefreshCw } from 'lucide-react';
 import { useState } from 'react';
 
 import LocaleSync from '@/components/locale-sync';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+    Dialog,
+    DialogContent,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
     Select,
     SelectContent,
@@ -45,11 +53,28 @@ interface Indicator {
     latest_year: number | null;
     coverage: number;
     total_desos: number;
+    description_short: string | null;
+    description_long: string | null;
+    methodology_note: string | null;
+    national_context: string | null;
+    source_name: string | null;
+    source_url: string | null;
+    update_frequency: string | null;
 }
 
 interface Props {
     indicators: Indicator[];
     urbanityDistribution: Record<string, number>;
+}
+
+interface ExplanationForm {
+    description_short: string;
+    description_long: string;
+    methodology_note: string;
+    national_context: string;
+    source_name: string;
+    source_url: string;
+    update_frequency: string;
 }
 
 const categoryColors: Record<string, string> = {
@@ -63,6 +88,17 @@ const categoryColors: Record<string, string> = {
 export default function IndicatorsPage({ indicators, urbanityDistribution }: Props) {
     const { t } = useTranslation();
     const [recomputing, setRecomputing] = useState(false);
+    const [editingIndicator, setEditingIndicator] = useState<Indicator | null>(null);
+    const [form, setForm] = useState<ExplanationForm>({
+        description_short: '',
+        description_long: '',
+        methodology_note: '',
+        national_context: '',
+        source_name: '',
+        source_url: '',
+        update_frequency: '',
+    });
+    const [saving, setSaving] = useState(false);
 
     const totalWeight = indicators
         .filter((i) => i.is_active && i.direction !== 'neutral')
@@ -106,6 +142,43 @@ export default function IndicatorsPage({ indicators, urbanityDistribution }: Pro
             preserveScroll: true,
             onFinish: () => setRecomputing(false),
         });
+    }
+
+    function openEditDialog(indicator: Indicator) {
+        setEditingIndicator(indicator);
+        setForm({
+            description_short: indicator.description_short ?? '',
+            description_long: indicator.description_long ?? '',
+            methodology_note: indicator.methodology_note ?? '',
+            national_context: indicator.national_context ?? '',
+            source_name: indicator.source_name ?? '',
+            source_url: indicator.source_url ?? '',
+            update_frequency: indicator.update_frequency ?? '',
+        });
+    }
+
+    function handleSaveExplanations() {
+        if (!editingIndicator) return;
+        setSaving(true);
+
+        router.put(
+            `/admin/indicators/${editingIndicator.id}`,
+            {
+                direction: editingIndicator.direction,
+                weight: editingIndicator.weight,
+                normalization: editingIndicator.normalization,
+                normalization_scope: editingIndicator.normalization_scope,
+                is_active: editingIndicator.is_active,
+                ...form,
+            },
+            {
+                preserveScroll: true,
+                onFinish: () => {
+                    setSaving(false);
+                    setEditingIndicator(null);
+                },
+            },
+        );
     }
 
     return (
@@ -207,6 +280,7 @@ export default function IndicatorsPage({ indicators, urbanityDistribution }: Pro
                             <TableHead>{t('admin.indicators.table.active')}</TableHead>
                             <TableHead>{t('admin.indicators.table.year')}</TableHead>
                             <TableHead>{t('admin.indicators.table.coverage')}</TableHead>
+                            <TableHead></TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -365,11 +439,107 @@ export default function IndicatorsPage({ indicators, urbanityDistribution }: Pro
                                 <TableCell className="text-muted-foreground text-sm">
                                     {indicator.coverage} / {indicator.total_desos}
                                 </TableCell>
+                                <TableCell>
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => openEditDialog(indicator)}
+                                    >
+                                        <Pencil className="h-3.5 w-3.5" />
+                                    </Button>
+                                </TableCell>
                             </TableRow>
                         ))}
                     </TableBody>
                 </Table>
             </Card>
+
+            <Dialog open={!!editingIndicator} onOpenChange={(open) => { if (!open) setEditingIndicator(null); }}>
+                <DialogContent className="max-w-lg">
+                    <DialogHeader>
+                        <DialogTitle>
+                            Edit Explanations: {editingIndicator?.name}
+                        </DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-4">
+                        <div>
+                            <Label htmlFor="description_short">Short description (max 100 chars)</Label>
+                            <Input
+                                id="description_short"
+                                maxLength={100}
+                                value={form.description_short}
+                                onChange={(e) => setForm({ ...form, description_short: e.target.value })}
+                            />
+                        </div>
+                        <div>
+                            <Label htmlFor="description_long">Long description (max 500 chars)</Label>
+                            <textarea
+                                id="description_long"
+                                maxLength={500}
+                                rows={3}
+                                className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                                value={form.description_long}
+                                onChange={(e) => setForm({ ...form, description_long: e.target.value })}
+                            />
+                        </div>
+                        <div>
+                            <Label htmlFor="methodology_note">Methodology note (max 300 chars)</Label>
+                            <textarea
+                                id="methodology_note"
+                                maxLength={300}
+                                rows={2}
+                                className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                                value={form.methodology_note}
+                                onChange={(e) => setForm({ ...form, methodology_note: e.target.value })}
+                            />
+                        </div>
+                        <div>
+                            <Label htmlFor="national_context">National context (max 100 chars)</Label>
+                            <Input
+                                id="national_context"
+                                maxLength={100}
+                                value={form.national_context}
+                                onChange={(e) => setForm({ ...form, national_context: e.target.value })}
+                            />
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <Label htmlFor="source_name">Source name</Label>
+                                <Input
+                                    id="source_name"
+                                    value={form.source_name}
+                                    onChange={(e) => setForm({ ...form, source_name: e.target.value })}
+                                />
+                            </div>
+                            <div>
+                                <Label htmlFor="source_url">Source URL</Label>
+                                <Input
+                                    id="source_url"
+                                    type="url"
+                                    value={form.source_url}
+                                    onChange={(e) => setForm({ ...form, source_url: e.target.value })}
+                                />
+                            </div>
+                        </div>
+                        <div>
+                            <Label htmlFor="update_frequency">Update frequency</Label>
+                            <Input
+                                id="update_frequency"
+                                value={form.update_frequency}
+                                onChange={(e) => setForm({ ...form, update_frequency: e.target.value })}
+                            />
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setEditingIndicator(null)}>
+                            {t('common.cancel')}
+                        </Button>
+                        <Button onClick={handleSaveExplanations} disabled={saving}>
+                            {saving ? t('common.loading') : t('common.save')}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }
