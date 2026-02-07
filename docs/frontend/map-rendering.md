@@ -60,9 +60,29 @@ Five-stop gradient from purple (0) to green (100):
 | 75 | Light green | `#6abf4b` |
 | 100 | Deep green | `#1a7a2e` |
 
-Polygon fill alpha: 180/255 (~70%). Hover increases to 85%.
+Fill opacity is zoom-dependent for readability at different scales:
+
+| Zoom | Opacity |
+|---|---|
+| < 9 | 0.45 |
+| 9-11 | 0.40 |
+| 12-13 | 0.35 |
+| 14-16 | 0.30 |
+| 17+ | 0.25 |
+
+Strokes are also zoom-dependent — hidden at low zoom, thin at medium, visible at high zoom.
 
 Areas without scores show gray with dashed borders.
+
+## Basemap Options
+
+Three basemap types are available via the layer control:
+
+| Basemap | Source | Best For |
+|---|---|---|
+| Clean | CARTO Light | Score overlay readability |
+| Detailed | OpenStreetMap | Street-level navigation |
+| Satellite | Esri World Imagery | Physical context |
 
 ## Interactions
 

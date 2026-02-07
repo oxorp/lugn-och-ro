@@ -2,6 +2,15 @@
 
 > Indicator management, data quality, and pipeline control.
 
+## Admin Layout
+
+**Layout**: `resources/js/layouts/admin-layout.tsx`
+
+All admin pages share a common layout with:
+- **Header**: Back-to-map link and "Admin" breadcrumb
+- **Tab navigation**: Indicators, Pipeline, Data Quality (with active state highlighting)
+- **Max width**: 3000px for wide-screen indicator tables
+
 ## Indicator Management
 
 **Page**: `resources/js/pages/admin/indicators.tsx`
@@ -9,11 +18,15 @@
 
 ### Weight Allocation
 
-Top card shows a progress bar of total weight used (target: 1.00) with per-category breakdown (income, employment, education, demographics, housing).
+Top card shows a progress bar of total weight used (target: 1.00) with per-category breakdown across 10 categories: income, employment, education, demographics, housing, crime, safety, financial_distress, amenities, transport.
 
 ### Urbanity Distribution
 
 Card showing DeSO counts by urbanity tier (urban, semi_urban, rural) with percentages.
+
+### Search and Filtering
+
+The indicator table includes a search bar to filter by name or slug, and indicators are grouped by category with collapsible sections. Categories follow a defined display order (income first, transport last).
 
 ### Indicator Table
 

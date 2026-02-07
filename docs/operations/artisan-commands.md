@@ -394,6 +394,21 @@ php artisan user:unlock user@example.com --kommun=0114
 php artisan user:unlock user@example.com --lan=01
 ```
 
+### `generate:sweden-boundary`
+
+Generate simplified Sweden boundary GeoJSON for map mask overlay.
+
+```bash
+php artisan generate:sweden-boundary
+php artisan generate:sweden-boundary --tolerance=0.005
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--tolerance=` | 0.005 | Simplification tolerance in degrees |
+
+Unions all DeSO geometries and simplifies into a single boundary polygon. Saves to `public/data/sweden-boundary.geojson`.
+
 ## Related
 
 - [Data Refresh](/operations/data-refresh)

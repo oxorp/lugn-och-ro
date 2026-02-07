@@ -18,6 +18,7 @@
 
 | Component | File | Purpose |
 |---|---|---|
+| `AdminLayout` | `layouts/admin-layout.tsx` | Admin pages with tab navigation (Indicators, Pipeline, Data Quality) |
 | `AppShell` | `components/app-shell.tsx` | Main app layout with sidebar |
 | `AppSidebar` | `components/app-sidebar.tsx` | Navigation sidebar |
 | `AppHeader` | `components/app-header.tsx` | Top header bar |
