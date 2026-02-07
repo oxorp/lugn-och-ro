@@ -13,6 +13,7 @@ import { createEmpty, extend } from 'ol/extent';
 import { fromLonLat, toLonLat, transformExtent } from 'ol/proj';
 import OSM from 'ol/source/OSM';
 import VectorSource from 'ol/source/Vector';
+import XYZ from 'ol/source/XYZ';
 import CircleStyle from 'ol/style/Circle';
 import Fill from 'ol/style/Fill';
 import RegularShape from 'ol/style/RegularShape';
@@ -76,6 +77,7 @@ export interface DesoMapHandle {
 }
 
 type LayerMode = 'hexagons' | 'deso';
+type BasemapType = 'clean' | 'detailed' | 'satellite';
 
 interface DesoMapProps {
     initialCenter: [number, number];
@@ -100,7 +102,7 @@ const COLOR_STOPS = [
     { score: 100, r: 26, g: 122, b: 46 }, // #1a7a2e
 ];
 
-function interpolateColor(score: number): [number, number, number, number] {
+function interpolateColor(score: number): [number, number, number] {
     const s = Math.max(0, Math.min(100, score));
     let lower = COLOR_STOPS[0];
     let upper = COLOR_STOPS[COLOR_STOPS.length - 1];
@@ -122,8 +124,54 @@ function interpolateColor(score: number): [number, number, number, number] {
         Math.round(lower.r + (upper.r - lower.r) * t),
         Math.round(lower.g + (upper.g - lower.g) * t),
         Math.round(lower.b + (upper.b - lower.b) * t),
-        180, // alpha
     ];
+}
+
+function getScoreOpacity(zoom: number): number {
+    if (zoom >= 17) return 0.25;
+    if (zoom >= 14) return 0.30;
+    if (zoom >= 12) return 0.35;
+    if (zoom >= 9) return 0.40;
+    return 0.45;
+}
+
+function getStrokeStyle(
+    zoom: number,
+    r: number,
+    g: number,
+    b: number,
+    fillOpacity: number,
+): Stroke | undefined {
+    if (zoom >= 14) {
+        return new Stroke({
+            color: `rgba(${r}, ${g}, ${b}, ${Math.min(1, fillOpacity + 0.2)})`,
+            width: 1,
+        });
+    } else if (zoom >= 10) {
+        return new Stroke({
+            color: `rgba(${r}, ${g}, ${b}, ${Math.min(1, fillOpacity + 0.1)})`,
+            width: 0.5,
+        });
+    }
+    return undefined;
+}
+
+function createBasemapSource(type: BasemapType): OSM | XYZ {
+    switch (type) {
+        case 'clean':
+            return new XYZ({
+                url: 'https://{a-d}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
+                attributions:
+                    '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, © <a href="https://carto.com/attributions">CARTO</a>',
+            });
+        case 'satellite':
+            return new XYZ({
+                url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+                attributions: 'Tiles © Esri',
+            });
+        default:
+            return new OSM();
+    }
 }
 
 /**
@@ -152,10 +200,19 @@ const noDataStyle = new Style({
     }),
 });
 
-const selectedStyle = new Style({
-    fill: new Fill({ color: 'rgba(59, 130, 246, 0.25)' }),
-    stroke: new Stroke({ color: 'rgba(59, 130, 246, 0.9)', width: 2.5 }),
-});
+function makeSelectedStyle(score: number | null): Style {
+    if (score != null) {
+        const [r, g, b] = interpolateColor(score);
+        return new Style({
+            fill: new Fill({ color: `rgba(${r}, ${g}, ${b}, 0.5)` }),
+            stroke: new Stroke({ color: '#1e293b', width: 2.5 }),
+        });
+    }
+    return new Style({
+        fill: new Fill({ color: 'rgba(59, 130, 246, 0.25)' }),
+        stroke: new Stroke({ color: 'rgba(59, 130, 246, 0.9)', width: 2.5 }),
+    });
+}
 
 function h3ToFeature(h3Index: string, score: number, primaryDesoCode: string | null): Feature {
     const boundary = cellToBoundary(h3Index, true); // true = GeoJSON format [lng, lat]
@@ -197,12 +254,16 @@ function LayerControl({
     showSmoothing,
     smoothed,
     onSmoothedChange,
+    basemap,
+    onBasemapChange,
 }: {
     mode: LayerMode;
     onModeChange: (mode: LayerMode) => void;
     showSmoothing: boolean;
     smoothed: boolean;
     onSmoothedChange: (smoothed: boolean) => void;
+    basemap: BasemapType;
+    onBasemapChange: (basemap: BasemapType) => void;
 }) {
     const { t } = useTranslation();
 
@@ -247,6 +308,29 @@ function LayerControl({
                     </label>
                 </>
             )}
+            <div className="my-1.5 border-t border-border" />
+            <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Basemap
+            </div>
+            <div className="flex gap-1">
+                {(['clean', 'detailed', 'satellite'] as const).map((type) => (
+                    <button
+                        key={type}
+                        onClick={() => onBasemapChange(type)}
+                        className={`rounded px-1.5 py-0.5 text-[10px] capitalize ${
+                            basemap === type
+                                ? 'bg-primary text-primary-foreground'
+                                : 'text-muted-foreground hover:bg-muted'
+                        }`}
+                    >
+                        {type === 'clean'
+                            ? 'Clean'
+                            : type === 'detailed'
+                              ? 'Detailed'
+                              : 'Satellite'}
+                    </button>
+                ))}
+            </div>
         </div>
     );
 }
@@ -286,9 +370,11 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
     const locationMarkerSourceRef = useRef<VectorSource | null>(null);
     const locationPulseTimerRef = useRef<number | null>(null);
     const fetchControllerRef = useRef<AbortController | null>(null);
+    const tileLayerRef = useRef<TileLayer | null>(null);
     const [loading, setLoading] = useState(true);
     const [layerMode, setLayerMode] = useState<LayerMode>('hexagons');
     const [smoothed, setSmoothed] = useState(true);
+    const [basemapType, setBasemapType] = useState<BasemapType>('clean');
     const [debugZoom, setDebugZoom] = useState(initialZoom);
     const layerModeRef = useRef<LayerMode>('hexagons');
     const smoothedRef = useRef(true);
@@ -632,6 +718,9 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
         const [minLng, minLat, maxLng, maxLat] = transformExtent(extent, 'EPSG:3857', 'EPSG:4326');
         const zoom = Math.round(view.getZoom() ?? 5);
 
+        // Buffer the viewport to prevent bald patches at edges
+        const buffer = 0.03;
+
         // Cancel previous request
         fetchControllerRef.current?.abort();
         const controller = new AbortController();
@@ -640,7 +729,7 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
         const smoothedParam = smoothedRef.current ? 'true' : 'false';
 
         fetch(
-            `/api/h3/viewport?bbox=${minLng},${minLat},${maxLng},${maxLat}&zoom=${zoom}&year=2024&smoothed=${smoothedParam}`,
+            `/api/h3/viewport?bbox=${minLng - buffer},${minLat - buffer},${maxLng + buffer},${maxLat + buffer}&zoom=${zoom}&year=2024&smoothed=${smoothedParam}`,
             { signal: controller.signal },
         )
             .then((r) => r.json())
@@ -671,15 +760,14 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
 
             if (!scoreData) return noDataStyle;
 
-            const [r, g, b, a] = interpolateColor(scoreData.score);
+            const [r, g, b] = interpolateColor(scoreData.score);
+            const zoom = mapInstance.current?.getView().getZoom() ?? 5;
+            const opacity = getScoreOpacity(zoom);
             return new Style({
                 fill: new Fill({
-                    color: `rgba(${r}, ${g}, ${b}, ${a / 255})`,
+                    color: `rgba(${r}, ${g}, ${b}, ${opacity})`,
                 }),
-                stroke: new Stroke({
-                    color: `rgba(${Math.max(0, r - 30)}, ${Math.max(0, g - 30)}, ${Math.max(0, b - 30)}, 0.7)`,
-                    width: 0.5,
-                }),
+                stroke: getStrokeStyle(zoom, r, g, b, opacity),
             });
         }
 
@@ -687,7 +775,7 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
             source: desoSource,
             style: (feature) => styleForDesoFeature(feature as Feature),
             visible: false, // Hidden by default, hexagons are primary
-            zIndex: 1,
+            zIndex: 3,
         });
         desoLayerRef.current = desoLayer;
 
@@ -700,19 +788,18 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
             style: (feature) => {
                 const score = (feature as Feature).get('score');
                 if (score == null) return noDataStyle;
-                const [r, g, b, a] = interpolateColor(score);
+                const [r, g, b] = interpolateColor(score);
+                const zoom = mapInstance.current?.getView().getZoom() ?? 5;
+                const opacity = getScoreOpacity(zoom);
                 return new Style({
                     fill: new Fill({
-                        color: `rgba(${r}, ${g}, ${b}, ${a / 255})`,
+                        color: `rgba(${r}, ${g}, ${b}, ${opacity})`,
                     }),
-                    stroke: new Stroke({
-                        color: 'rgba(255, 255, 255, 0.15)',
-                        width: 0.5,
-                    }),
+                    stroke: getStrokeStyle(zoom, r, g, b, opacity),
                 });
             },
             visible: true,
-            zIndex: 1,
+            zIndex: 3,
         });
         h3LayerRef.current = h3Layer;
 
@@ -765,10 +852,44 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
         });
         tooltipOverlayRef.current = tooltipOverlay;
 
+        // Basemap tile layer (CartoDB Positron by default)
+        const tileLayer = new TileLayer({
+            source: createBasemapSource('clean'),
+            zIndex: 0,
+        });
+        tileLayerRef.current = tileLayer;
+
+        // Country mask layer (world polygon with Sweden hole) — added after boundary loads
+        const maskSource = new VectorSource();
+        const maskLayer = new VectorLayer({
+            source: maskSource,
+            style: new Style({
+                fill: new Fill({ color: 'rgba(245, 245, 245, 0.75)' }),
+            }),
+            zIndex: 1,
+        });
+
+        // Sweden border stroke layer
+        const borderSource = new VectorSource();
+        const borderLayer = new VectorLayer({
+            source: borderSource,
+            style: new Style({
+                stroke: new Stroke({
+                    color: 'rgba(100, 116, 139, 0.5)',
+                    width: 1.5,
+                    lineDash: [8, 4],
+                }),
+                fill: new Fill({ color: 'rgba(0, 0, 0, 0)' }),
+            }),
+            zIndex: 2,
+        });
+
         const map = new Map({
             target: mapDivRef.current,
             layers: [
-                new TileLayer({ source: new OSM() }),
+                tileLayer,
+                maskLayer,
+                borderLayer,
                 desoLayer,
                 h3Layer,
                 schoolLayer,
@@ -785,6 +906,53 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
 
         mapInstance.current = map;
         onMapReadyRef.current?.(map);
+
+        // Load Sweden boundary for mask overlay
+        fetch('/data/sweden-boundary.geojson')
+            .then((r) => r.json())
+            .then((boundary) => {
+                const geom = boundary.features?.[0]?.geometry;
+                if (!geom) return;
+
+                // Build world polygon with Sweden-shaped hole(s)
+                const worldRing = [
+                    [-180, -90],
+                    [180, -90],
+                    [180, 90],
+                    [-180, 90],
+                    [-180, -90],
+                ].map((c) => fromLonLat(c));
+
+                const holes: number[][][] = [];
+                if (geom.type === 'Polygon') {
+                    holes.push(geom.coordinates[0].map((c: number[]) => fromLonLat(c)));
+                } else if (geom.type === 'MultiPolygon') {
+                    for (const polygon of geom.coordinates) {
+                        holes.push(polygon[0].map((c: number[]) => fromLonLat(c)));
+                    }
+                }
+
+                const maskFeature = new Feature({
+                    geometry: new Polygon([worldRing, ...holes]),
+                });
+                maskSource.addFeature(maskFeature);
+
+                // Border stroke features
+                const borderFeatures: Feature[] = [];
+                if (geom.type === 'Polygon') {
+                    const coords = geom.coordinates[0].map((c: number[]) => fromLonLat(c));
+                    borderFeatures.push(new Feature({ geometry: new Polygon([coords]) }));
+                } else if (geom.type === 'MultiPolygon') {
+                    for (const polygon of geom.coordinates) {
+                        const coords = polygon[0].map((c: number[]) => fromLonLat(c));
+                        borderFeatures.push(new Feature({ geometry: new Polygon([coords]) }));
+                    }
+                }
+                borderSource.addFeatures(borderFeatures);
+            })
+            .catch((err) => {
+                console.warn('Failed to load Sweden boundary for mask:', err);
+            });
 
         // Load DeSO GeoJSON + scores (for DeSO layer and sidebar data)
         Promise.all([
@@ -980,10 +1148,12 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
 
                 if (score !== null) {
                     const [r, g, b] = interpolateColor(score);
+                    const hoverZoom = mapInstance.current?.getView().getZoom() ?? 5;
+                    const baseOpacity = getScoreOpacity(hoverZoom);
                     feature.setStyle(
                         new Style({
                             fill: new Fill({
-                                color: `rgba(${r}, ${g}, ${b}, 0.85)`,
+                                color: `rgba(${r}, ${g}, ${b}, ${Math.min(1, baseOpacity + 0.2)})`,
                             }),
                             stroke: new Stroke({
                                 color: `rgba(${Math.max(0, r - 40)}, ${Math.max(0, g - 40)}, ${Math.max(0, b - 40)}, 1)`,
@@ -1116,7 +1286,7 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
                     }
 
                     // Has a DeSO — select it and animate to center
-                    feature.setStyle(selectedStyle);
+                    feature.setStyle(makeSelectedStyle(feature.get('score')));
                     selectedFeature.current = feature;
 
                     if (geom) {
@@ -1148,7 +1318,9 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
                     handleFeatureSelect(props, scoreData);
                 } else {
                     // DeSO polygon — select and animate to center
-                    feature.setStyle(selectedStyle);
+                    const desoClickCode = feature.get('deso_code');
+                    const desoClickScore = scoresRef.current[desoClickCode]?.score ?? null;
+                    feature.setStyle(makeSelectedStyle(desoClickScore));
                     selectedFeature.current = feature;
 
                     if (geom) {
@@ -1217,6 +1389,13 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
         }
     }, [smoothed, layerMode, loadH3Viewport]);
 
+    // Basemap switching
+    useEffect(() => {
+        const tileLayer = tileLayerRef.current;
+        if (!tileLayer) return;
+        tileLayer.setSource(createBasemapSource(basemapType));
+    }, [basemapType]);
+
     return (
         <div className="relative h-full w-full">
             <div ref={mapDivRef} className="h-full w-full" />
@@ -1235,6 +1414,8 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
                 showSmoothing={true}
                 smoothed={smoothed}
                 onSmoothedChange={setSmoothed}
+                basemap={basemapType}
+                onBasemapChange={setBasemapType}
             />
             {loading && (
                 <LoadingOverlay />

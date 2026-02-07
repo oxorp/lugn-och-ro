@@ -1,10 +1,8 @@
-import { Head, Link, router } from '@inertiajs/react';
+import { Head, router } from '@inertiajs/react';
 import {
-    AlertTriangle,
     CheckCircle,
     ChevronDown,
     Clock,
-    Database,
     Loader2,
     Play,
     RefreshCw,
@@ -12,8 +10,8 @@ import {
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
-import LocaleSync from '@/components/locale-sync';
 import { Badge } from '@/components/ui/badge';
+import AdminLayout from '@/layouts/admin-layout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -193,20 +191,8 @@ export default function PipelinePage({ sources, overallHealth, stats, pipelineOr
     const yearOptions = Array.from({ length: 5 }, (_, i) => currentYear - 1 - i);
 
     return (
-        <div className="mx-auto max-w-7xl p-6">
-            <LocaleSync />
+        <AdminLayout>
             <Head title="Pipeline Dashboard" />
-
-            {/* Admin Nav */}
-            <nav className="mb-4 flex items-center gap-4 text-sm">
-                <Link href="/admin/indicators" className="text-muted-foreground hover:text-foreground">
-                    Indicators
-                </Link>
-                <span className="font-medium text-foreground">Pipeline</span>
-                <Link href="/admin/data-quality" className="text-muted-foreground hover:text-foreground">
-                    Data Quality
-                </Link>
-            </nav>
 
             {/* Header */}
             <div className="mb-6 flex items-center justify-between">
@@ -470,6 +456,6 @@ export default function PipelinePage({ sources, overallHealth, stats, pipelineOr
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
-        </div>
+        </AdminLayout>
     );
 }

@@ -67,7 +67,7 @@
             "trend_ineligible": "Trenddata saknas f\u00f6r detta omr\u00e5de eftersom dess statistiska gr\u00e4nser reviderades 2025. Aktuella v\u00e4rden visas nedan.",
             "no_trend_data": "ingen trend",
             "percentile_stratified": "{{value}}:e bland {{tier}}",
-            "percentile_national": "{{value}}:e pctl",
+            "percentile_national": "{{value}}:e percentilen",
             "labels": {
                 "median_income": "Median disponibel inkomst",
                 "low_economic_standard_pct": "L\u00e5g ekonomisk standard",
