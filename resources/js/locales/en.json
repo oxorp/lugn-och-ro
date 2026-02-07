@@ -12,6 +12,7 @@
         "signOut": "Sign out"
     },
     "map": {
+        "title": "Map",
         "head_title": "Map",
         "loading": "Loading map data...",
         "legend": {
@@ -42,13 +43,19 @@
         }
     },
     "sidebar": {
+        "default": {
+            "title": "Explore any location",
+            "subtitle": "Search for an address or click anywhere on the map.",
+            "try": "Try",
+            "legend_hint": "Green = positive. Purple = risk."
+        },
         "empty": {
-            "title": "Click a DeSO area",
+            "title": "Click an area",
             "subtitle": "Select an area on the map to view demographic details, scores, and schools"
         },
         "empty_no_deso": {
             "title": "Not within a statistical area",
-            "subtitle": "This location is not within a DeSO area. Click a nearby colored area for details."
+            "subtitle": "This location is not within an area. Click a nearby colored area for details."
         },
         "header": {
             "unknown": "Unknown"
@@ -143,11 +150,13 @@
             "disclaimer_no_rate": "Estimated from kommun-level Kronofogden data ({{kommun}}) using demographic weighting."
         },
         "schools": {
-            "title": "Schools in this area",
-            "title_count": "Schools in this area ({{count}})",
-            "title_loading": "Schools in this area (...)",
-            "empty": "No schools are located in this DeSO area.",
-            "merit_value": "Meritv\u00e4rde",
+            "title": "Schools",
+            "within": "within 1.5 km",
+            "title_count": "Schools ({{count}})",
+            "title_loading": "Schools (...)",
+            "empty": "No schools found nearby.",
+            "merit": "Merit value",
+            "merit_value": "Merit value",
             "goal_achievement": "Goal ach.",
             "teachers": "Teachers",
             "students_count": "{{count}} students",

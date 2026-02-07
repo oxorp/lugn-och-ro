@@ -17,6 +17,8 @@ RUN apt-get update && apt-get install -y \
     zip \
     unzip \
     openscad \
+    python3-pip \
+    python3-venv \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -38,6 +40,11 @@ RUN docker-php-ext-configure intl \
 # Install Redis extension
 RUN pecl install redis && docker-php-ext-enable redis
 
+# Install Python dependencies for tile generation
+RUN python3 -m venv /opt/venv \
+    && /opt/venv/bin/pip install --no-cache-dir \
+        h3 numpy pillow psycopg2-binary shapely
+
 # Install Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
@@ -52,6 +59,8 @@ RUN groupadd --gid ${GROUP_ID} www \
     && useradd --uid ${USER_ID} --gid www --shell /bin/bash --create-home www
 
 # Set working directory
+ENV PATH="/opt/venv/bin:$PATH"
+
 WORKDIR /var/www
 
 # Copy PHP configuration

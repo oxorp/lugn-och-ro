@@ -4,13 +4,13 @@ use App\Http\Controllers\AdminDataQualityController;
 use App\Http\Controllers\AdminIndicatorController;
 use App\Http\Controllers\AdminPipelineController;
 use App\Http\Controllers\AdminScoreController;
-use App\Http\Controllers\CompareController;
 use App\Http\Controllers\DesoController;
-use App\Http\Controllers\GeocodeController;
 use App\Http\Controllers\H3Controller;
+use App\Http\Controllers\LocationController;
 use App\Http\Controllers\MapController;
 use App\Http\Controllers\PageController;
 use App\Http\Controllers\PoiController;
+use App\Http\Controllers\TileController;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
@@ -25,10 +25,6 @@ Route::middleware('throttle:deso-detail')->group(function () {
     Route::get('/api/deso/{desoCode}/indicators', [DesoController::class, 'indicators'])->name('deso.indicators');
 });
 
-Route::get('/api/geocode/resolve-deso', [GeocodeController::class, 'resolveDeso'])->name('geocode.resolve-deso');
-
-Route::post('/api/compare', [CompareController::class, 'compare'])->name('api.compare');
-
 Route::get('/api/h3/scores', [H3Controller::class, 'scores'])->name('h3.scores');
 Route::get('/api/h3/viewport', [H3Controller::class, 'viewport'])->name('h3.viewport');
 Route::get('/api/h3/smoothing-configs', [H3Controller::class, 'smoothingConfigs'])->name('h3.smoothing-configs');
@@ -36,9 +32,20 @@ Route::get('/api/h3/smoothing-configs', [H3Controller::class, 'smoothingConfigs'
 Route::get('/api/pois', [PoiController::class, 'index'])->name('pois.index');
 Route::get('/api/pois/categories', [PoiController::class, 'categories'])->name('pois.categories');
 
+Route::get('/api/location/{lat},{lng}', [LocationController::class, 'show'])
+    ->where(['lat' => '[0-9.-]+', 'lng' => '[0-9.-]+'])
+    ->name('location.show');
+
+Route::get('/tiles/{year}/{z}/{x}/{y}.png', [TileController::class, 'serve'])
+    ->where(['year' => '[0-9]+', 'z' => '[0-9]+', 'x' => '[0-9]+', 'y' => '[0-9]+'])
+    ->name('tiles.serve');
+
 // Shared route definitions (used for both Swedish and English)
 $webRoutes = function () {
     Route::get('/', [MapController::class, 'index'])->name('map');
+    Route::get('/explore/{lat},{lng}', [MapController::class, 'index'])
+        ->where(['lat' => '[0-9.-]+', 'lng' => '[0-9.-]+'])
+        ->name('explore');
     Route::get('/methodology', [PageController::class, 'methodology'])->name('methodology');
 
     Route::middleware(['auth', 'verified'])->group(function () {
