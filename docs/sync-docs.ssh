@@ -1,0 +1,38 @@
+cat > /path/to/platsindex-docs/sync-docs.sh << 'SYNC_EOF'
+#!/bin/bash
+# Run this in a third terminal, or as a cron job
+# It syncs main→docs and docs→main every 5 minutes
+
+MAIN_DIR="/path/to/platsindex"
+DOCS_DIR="/path/to/platsindex-docs"
+
+while true; do
+    echo "[$(date)] Syncing docs..."
+    
+    # Pull latest main into docs worktree
+    cd "$DOCS_DIR"
+    git fetch origin main 2>/dev/null
+    git merge origin/main --no-edit 2>/dev/null
+    
+    # If docs branch has new commits, merge into main
+    DOCS_AHEAD=$(git log main..docs --oneline 2>/dev/null | wc -l)
+    if [ "$DOCS_AHEAD" -gt 0 ]; then
+        echo "  Docs is $DOCS_AHEAD commits ahead of main. Merging..."
+        cd "$MAIN_DIR"
+        git merge docs --no-ff -m "docs: auto-merge documentation updates" 2>/dev/null
+        if [ $? -eq 0 ]; then
+            echo "  ✅ Merged docs → main"
+        else
+            echo "  ⚠️ Merge conflict — skipping, will retry next cycle"
+            git merge --abort 2>/dev/null
+        fi
+    else
+        echo "  No new docs to merge."
+    fi
+    
+    echo "  Sleeping 5 minutes..."
+    sleep 300
+done
+SYNC_EOF
+
+chmod +x /path/to/platsindex-docs/sync-docs.sh
