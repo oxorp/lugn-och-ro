@@ -198,6 +198,56 @@ class DesoController extends Controller
         ]);
     }
 
+    public function pois(string $desoCode): JsonResponse
+    {
+        $deso = DB::table('deso_areas')
+            ->where('deso_code', $desoCode)
+            ->select('deso_code')
+            ->first();
+
+        if (! $deso) {
+            return response()->json(['error' => 'DeSO not found'], 404);
+        }
+
+        // POIs within the DeSO + nearby (within catchment) grouped by category
+        $pois = DB::select("
+            SELECT
+                p.id, p.name, p.category, p.subcategory,
+                p.lat, p.lng, p.source,
+                p.deso_code = ? AS is_within_deso
+            FROM pois p
+            WHERE p.status = 'active'
+              AND p.geom IS NOT NULL
+              AND ST_DWithin(
+                  p.geom::geography,
+                  (SELECT ST_Centroid(geom)::geography FROM deso_areas WHERE deso_code = ?),
+                  3000
+              )
+            ORDER BY p.category, p.name
+        ", [$desoCode, $desoCode]);
+
+        // Group by category
+        $grouped = collect($pois)->groupBy('category')->map(function ($items, $category) {
+            return [
+                'category' => $category,
+                'count' => $items->count(),
+                'within_deso' => $items->where('is_within_deso', true)->count(),
+                'items' => $items->map(fn ($p) => [
+                    'name' => $p->name,
+                    'lat' => (float) $p->lat,
+                    'lng' => (float) $p->lng,
+                    'source' => $p->source,
+                    'within_deso' => (bool) $p->is_within_deso,
+                ])->values()->all(),
+            ];
+        })->values();
+
+        return response()->json([
+            'deso_code' => $desoCode,
+            'categories' => $grouped,
+        ]);
+    }
+
     public function financial(string $desoCode, Request $request): JsonResponse
     {
         $year = $request->integer('year', now()->year);

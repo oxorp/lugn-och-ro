@@ -18,6 +18,7 @@ Route::get('/api/deso/scores', [DesoController::class, 'scores'])->name('deso.sc
 Route::get('/api/deso/{desoCode}/schools', [DesoController::class, 'schools'])->name('deso.schools');
 Route::get('/api/deso/{desoCode}/crime', [DesoController::class, 'crime'])->name('deso.crime');
 Route::get('/api/deso/{desoCode}/financial', [DesoController::class, 'financial'])->name('deso.financial');
+Route::get('/api/deso/{desoCode}/pois', [DesoController::class, 'pois'])->name('deso.pois');
 
 Route::get('/api/h3/scores', [H3Controller::class, 'scores'])->name('h3.scores');
 Route::get('/api/h3/viewport', [H3Controller::class, 'viewport'])->name('h3.viewport');
