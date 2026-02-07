@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Console\Concerns\LogsIngestion;
+use App\Models\Tenant;
 use App\Services\ScoringService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -13,7 +14,9 @@ class ComputeScores extends Command
     use LogsIngestion;
 
     protected $signature = 'compute:scores
-        {--year= : Year to compute scores for (defaults to current year)}';
+        {--year= : Year to compute scores for (defaults to current year)}
+        {--tenant= : Tenant UUID to compute scores for (omit for public/default scores)}
+        {--all-tenants : Compute scores for all tenants}';
 
     protected $description = 'Compute composite neighborhood scores from normalized indicator values';
 
@@ -23,9 +26,25 @@ class ComputeScores extends Command
         $this->startIngestionLog('scoring', 'compute:scores');
 
         try {
+            $tenant = null;
+
+            if ($this->option('all-tenants')) {
+                return $this->computeForAllTenants($service, $year);
+            }
+
+            if ($this->option('tenant')) {
+                $tenant = Tenant::where('uuid', $this->option('tenant'))->first();
+                if (! $tenant) {
+                    $this->error("Tenant not found: {$this->option('tenant')}");
+
+                    return self::FAILURE;
+                }
+                $this->info("Computing scores for tenant: {$tenant->uuid}");
+            }
+
             $this->info("Computing composite scores for year {$year}...");
 
-            $count = $service->computeScores($year);
+            $count = $service->computeScores($year, $tenant);
             $this->processed = $count;
             $this->updated = $count;
             $this->addStat('year', $year);
@@ -52,5 +71,25 @@ class ComputeScores extends Command
 
             return self::FAILURE;
         }
+    }
+
+    private function computeForAllTenants(ScoringService $service, int $year): int
+    {
+        // First compute public/default scores
+        $this->info('Computing default (public) scores...');
+        $count = $service->computeScores($year);
+        $this->info("Default: {$count} DeSOs scored.");
+
+        // Then compute per-tenant
+        $tenants = Tenant::all();
+        foreach ($tenants as $tenant) {
+            $this->info("Computing scores for tenant {$tenant->uuid}...");
+            $tenantCount = $service->computeScores($year, $tenant);
+            $this->info("Tenant {$tenant->uuid}: {$tenantCount} DeSOs scored.");
+        }
+
+        $this->completeIngestionLog();
+
+        return self::SUCCESS;
     }
 }

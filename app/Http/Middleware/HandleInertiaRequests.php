@@ -39,8 +39,19 @@ class HandleInertiaRequests extends Middleware
             ...parent::share($request),
             'name' => config('app.name'),
             'auth' => [
-                'user' => $request->user(),
+                'user' => $request->user() ? [
+                    'id' => $request->user()->id,
+                    'name' => $request->user()->name,
+                    'email' => $request->user()->email,
+                    'is_admin' => $request->user()->is_admin,
+                    'email_verified_at' => $request->user()->email_verified_at,
+                    'two_factor_enabled' => ! is_null($request->user()->two_factor_confirmed_at),
+                ] : null,
             ],
+            'tenant' => $request->user()?->tenant ? [
+                'id' => $request->user()->tenant->id,
+                'uuid' => $request->user()->tenant->uuid,
+            ] : null,
             'locale' => fn () => app()->getLocale(),
             'appEnv' => config('app.env'),
             'sidebarOpen' => ! $request->hasCookie('sidebar_state') || $request->cookie('sidebar_state') === 'true',

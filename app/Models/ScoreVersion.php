@@ -3,12 +3,14 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class ScoreVersion extends Model
 {
     protected $fillable = [
         'year',
+        'tenant_id',
         'status',
         'indicators_used',
         'ingestion_log_ids',
@@ -38,6 +40,11 @@ class ScoreVersion extends Model
             'computed_at' => 'datetime',
             'published_at' => 'datetime',
         ];
+    }
+
+    public function tenant(): BelongsTo
+    {
+        return $this->belongsTo(Tenant::class);
     }
 
     public function compositeScores(): HasMany

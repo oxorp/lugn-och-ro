@@ -7,7 +7,9 @@
         "methodology": "Metodik",
         "dashboard": "Instrumentpanel",
         "admin_indicators": "Indikatorer",
-        "admin_data_quality": "Datakvalitet"
+        "admin_data_quality": "Datakvalitet",
+        "signIn": "Logga in",
+        "signOut": "Logga ut"
     },
     "map": {
         "head_title": "Karta",

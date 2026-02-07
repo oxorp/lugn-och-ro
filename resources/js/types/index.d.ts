@@ -22,9 +22,15 @@ export interface NavItem {
     isActive?: boolean;
 }
 
+export interface Tenant {
+    id: number;
+    uuid: string;
+}
+
 export interface SharedData {
     name: string;
     auth: Auth;
+    tenant: Tenant | null;
     locale: 'en' | 'sv';
     sidebarOpen: boolean;
     [key: string]: unknown;
@@ -34,10 +40,11 @@ export interface User {
     id: number;
     name: string;
     email: string;
+    is_admin: boolean;
     avatar?: string;
     email_verified_at: string | null;
     two_factor_enabled?: boolean;
     created_at: string;
     updated_at: string;
-    [key: string]: unknown; // This allows for additional properties...
+    [key: string]: unknown;
 }

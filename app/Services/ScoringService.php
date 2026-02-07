@@ -4,6 +4,8 @@ namespace App\Services;
 
 use App\Models\Indicator;
 use App\Models\ScoreVersion;
+use App\Models\Tenant;
+use App\Models\TenantIndicatorWeight;
 use Illuminate\Support\Facades\DB;
 
 class ScoringService
@@ -11,29 +13,32 @@ class ScoringService
     /**
      * Compute composite scores for all DeSOs for a given year.
      * Creates a new ScoreVersion and associates all scores with it.
+     *
+     * If a tenant is provided, uses tenant-specific weights from tenant_indicator_weights.
+     * Otherwise, uses the default weights from the indicators table (public scores).
      */
-    public function computeScores(int $year): int
+    public function computeScores(int $year, ?Tenant $tenant = null): int
     {
-        $indicators = Indicator::query()
-            ->where('is_active', true)
-            ->where('weight', '>', 0)
-            ->get();
+        $weightMap = $this->resolveWeights($tenant);
 
-        if ($indicators->isEmpty()) {
+        if ($weightMap->isEmpty()) {
             return 0;
         }
+
+        $indicators = Indicator::query()->whereIn('id', $weightMap->keys())->get();
 
         // Create a new score version
         $version = ScoreVersion::query()->create([
             'year' => $year,
+            'tenant_id' => $tenant?->id,
             'status' => 'pending',
             'indicators_used' => $indicators->map(fn (Indicator $i) => [
                 'slug' => $i->slug,
-                'weight' => (float) $i->weight,
-                'direction' => $i->direction,
+                'weight' => (float) $weightMap[$i->id]['weight'],
+                'direction' => $weightMap[$i->id]['direction'],
             ])->toArray(),
             'computed_at' => now(),
-            'computed_by' => 'system',
+            'computed_by' => $tenant ? "tenant:{$tenant->uuid}" : 'system',
         ]);
 
         $indicatorData = $this->fetchIndicatorData($indicators, $year);
@@ -58,7 +63,9 @@ class ScoringService
                     continue;
                 }
 
-                $directedValue = match ($indicator->direction) {
+                $w = $weightMap[$indicator->id];
+
+                $directedValue = match ($w['direction']) {
                     'positive' => (float) $normalizedValue,
                     'negative' => 1.0 - (float) $normalizedValue,
                     default => null,
@@ -68,8 +75,8 @@ class ScoringService
                     continue;
                 }
 
-                $weightedSum += $indicator->weight * $directedValue;
-                $availableWeight += (float) $indicator->weight;
+                $weightedSum += $w['weight'] * $directedValue;
+                $availableWeight += (float) $w['weight'];
                 $factorScores[$indicator->slug] = round($directedValue, 4);
 
                 if ($directedValue >= 0.7) {
@@ -145,6 +152,37 @@ class ScoringService
             ->where('year', $year)
             ->latest('computed_at')
             ->first();
+    }
+
+    /**
+     * Resolve indicator weights — from tenant or from indicator defaults.
+     *
+     * @return \Illuminate\Support\Collection<int, array{weight: float, direction: string}>
+     */
+    private function resolveWeights(?Tenant $tenant): \Illuminate\Support\Collection
+    {
+        if ($tenant) {
+            return TenantIndicatorWeight::query()
+                ->where('tenant_id', $tenant->id)
+                ->where('is_active', true)
+                ->where('weight', '>', 0)
+                ->get()
+                ->keyBy('indicator_id')
+                ->map(fn (TenantIndicatorWeight $w) => [
+                    'weight' => (float) $w->weight,
+                    'direction' => $w->direction,
+                ]);
+        }
+
+        return Indicator::query()
+            ->where('is_active', true)
+            ->where('weight', '>', 0)
+            ->get()
+            ->keyBy('id')
+            ->map(fn (Indicator $i) => [
+                'weight' => (float) $i->weight,
+                'direction' => $i->direction,
+            ]);
     }
 
     /**

@@ -5,7 +5,7 @@ import LanguageSwitcher from '@/components/language-switcher';
 import LocaleSync from '@/components/locale-sync';
 import { Toaster } from '@/components/ui/sonner';
 import { useTranslation } from '@/hooks/use-translation';
-import { map, methodology } from '@/routes';
+import { login, logout, map, methodology } from '@/routes';
 import type { SharedData } from '@/types';
 
 interface MapLayoutProps {
@@ -47,19 +47,42 @@ export default function MapLayout({ children }: MapLayoutProps) {
                             Pipeline
                         </Link>
                     </nav>
-                    {isLocal && user && (
-                        <button
-                            onClick={() => router.post('/dev/toggle-admin', {}, { preserveScroll: true })}
-                            className={`rounded-md border px-2 py-0.5 text-xs font-medium transition-colors ${
-                                isAdmin
-                                    ? 'border-amber-500/50 bg-amber-500/10 text-amber-600'
-                                    : 'border-border bg-muted text-muted-foreground'
-                            }`}
-                        >
-                            {isAdmin ? 'Admin' : 'User'}
-                        </button>
-                    )}
-                    <LanguageSwitcher />
+                    <div className="flex items-center gap-3">
+                        {user ? (
+                            <>
+                                <span className="text-sm text-muted-foreground">
+                                    {user.name}
+                                </span>
+                                {isAdmin && (
+                                    <span className="rounded-md border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 text-xs font-medium text-amber-600">
+                                        Admin
+                                    </span>
+                                )}
+                                {isLocal && (
+                                    <button
+                                        onClick={() => router.post('/dev/toggle-admin', {}, { preserveScroll: true })}
+                                        className="rounded-md border border-border bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+                                    >
+                                        Toggle role
+                                    </button>
+                                )}
+                                <button
+                                    onClick={() => router.post(logout().url)}
+                                    className="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+                                >
+                                    {t('nav.signOut')}
+                                </button>
+                            </>
+                        ) : (
+                            <Link
+                                href={login().url}
+                                className="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+                            >
+                                {t('nav.signIn')}
+                            </Link>
+                        )}
+                        <LanguageSwitcher />
+                    </div>
                 </div>
             </header>
             <main className="relative flex min-h-0 flex-1 flex-col md:flex-row">

@@ -7,7 +7,9 @@
         "methodology": "Methodology",
         "dashboard": "Dashboard",
         "admin_indicators": "Indicators",
-        "admin_data_quality": "Data Quality"
+        "admin_data_quality": "Data Quality",
+        "signIn": "Sign in",
+        "signOut": "Sign out"
     },
     "map": {
         "head_title": "Map",

@@ -72,13 +72,28 @@ class DesoController extends Controller
     public function scores(Request $request): JsonResponse
     {
         $year = $request->integer('year', now()->year);
+        $tenant = currentTenant();
 
-        // Serve scores from the latest published version, falling back to any scores for the year
-        $publishedVersion = ScoreVersion::query()
-            ->where('year', $year)
-            ->where('status', 'published')
-            ->latest('published_at')
-            ->first();
+        // Try tenant-specific published version first, then fall back to default (null tenant)
+        $publishedVersion = null;
+
+        if ($tenant) {
+            $publishedVersion = ScoreVersion::query()
+                ->where('year', $year)
+                ->where('tenant_id', $tenant->id)
+                ->where('status', 'published')
+                ->latest('published_at')
+                ->first();
+        }
+
+        if (! $publishedVersion) {
+            $publishedVersion = ScoreVersion::query()
+                ->where('year', $year)
+                ->whereNull('tenant_id')
+                ->where('status', 'published')
+                ->latest('published_at')
+                ->first();
+        }
 
         $query = DB::table('composite_scores')
             ->leftJoin('deso_areas', 'deso_areas.deso_code', '=', 'composite_scores.deso_code')
