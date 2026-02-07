@@ -4,6 +4,7 @@ use App\Http\Controllers\AdminDataQualityController;
 use App\Http\Controllers\AdminIndicatorController;
 use App\Http\Controllers\AdminScoreController;
 use App\Http\Controllers\DesoController;
+use App\Http\Controllers\GeocodeController;
 use App\Http\Controllers\H3Controller;
 use App\Http\Controllers\MapController;
 use App\Http\Controllers\PageController;
@@ -19,6 +20,8 @@ Route::get('/api/deso/{desoCode}/schools', [DesoController::class, 'schools'])->
 Route::get('/api/deso/{desoCode}/crime', [DesoController::class, 'crime'])->name('deso.crime');
 Route::get('/api/deso/{desoCode}/financial', [DesoController::class, 'financial'])->name('deso.financial');
 Route::get('/api/deso/{desoCode}/pois', [DesoController::class, 'pois'])->name('deso.pois');
+
+Route::get('/api/geocode/resolve-deso', [GeocodeController::class, 'resolveDeso'])->name('geocode.resolve-deso');
 
 Route::get('/api/h3/scores', [H3Controller::class, 'scores'])->name('h3.scores');
 Route::get('/api/h3/viewport', [H3Controller::class, 'viewport'])->name('h3.viewport');

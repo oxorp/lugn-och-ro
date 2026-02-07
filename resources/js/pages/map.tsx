@@ -13,13 +13,20 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import DesoMap, {
+    type DesoMapHandle,
     type DesoProperties,
     type DesoScore,
 } from '@/components/deso-map';
+import MapSearch from '@/components/map-search';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import MapLayout from '@/layouts/map-layout';
+import {
+    type SearchResult,
+    getZoomForType,
+    shouldAutoSelectDeso,
+} from '@/services/geocoding';
 
 interface MapPageProps {
     initialCenter: [number, number];
@@ -559,14 +566,16 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes }:
     const [financialData, setFinancialData] = useState<FinancialData | null>(null);
     const [financialLoading, setFinancialLoading] = useState(false);
     const [highlightedSchool, setHighlightedSchool] = useState<string | null>(null);
+    const [searchNotInDeso, setSearchNotInDeso] = useState(false);
     const schoolRefs = useRef<Record<string, HTMLDivElement | null>>({});
-    const mapRef = useRef<{ updateSize: () => void; clearSchoolMarkers: () => void; setSchoolMarkers: (schools: School[]) => void } | null>(null);
+    const mapRef = useRef<DesoMapHandle | null>(null);
 
     const handleFeatureSelect = useCallback(
         (properties: DesoProperties | null, score: DesoScore | null) => {
             setSelectedDeso(properties);
             setSelectedScore(score);
             setHighlightedSchool(null);
+            setSearchNotInDeso(false);
 
             if (properties) {
                 setSchoolsLoading(true);
@@ -625,6 +634,78 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes }:
         }
     }, []);
 
+    const handleSearchResult = useCallback(
+        (result: SearchResult) => {
+            setSearchNotInDeso(false);
+
+            // Clear previous search state
+            mapRef.current?.clearSearchMarker();
+
+            // Zoom to result
+            if (result.extent) {
+                const [west, north, east, south] = result.extent;
+                mapRef.current?.zoomToExtent(west, south, east, north);
+            } else {
+                const zoom = getZoomForType(result.type);
+                mapRef.current?.zoomToPoint(result.lat, result.lng, zoom);
+            }
+
+            // Place search pin
+            mapRef.current?.placeSearchMarker(result.lat, result.lng);
+
+            // Auto-select DeSO for precise results
+            if (shouldAutoSelectDeso(result.type)) {
+                fetch(
+                    `/api/geocode/resolve-deso?lat=${result.lat}&lng=${result.lng}`,
+                )
+                    .then((r) => r.json())
+                    .then((data: { deso: { deso_code: string; deso_name: string; kommun_name: string; lan_name: string } | null }) => {
+                        if (data.deso) {
+                            mapRef.current?.selectDesoByCode(
+                                data.deso.deso_code,
+                            );
+
+                            // Update URL
+                            const url = new URL(window.location.href);
+                            url.searchParams.set('q', result.name);
+                            url.searchParams.set('deso', data.deso.deso_code);
+                            window.history.replaceState({}, '', url.toString());
+                        } else {
+                            setSearchNotInDeso(true);
+                            // Update URL with just the search query
+                            const url = new URL(window.location.href);
+                            url.searchParams.set('q', result.name);
+                            url.searchParams.delete('deso');
+                            window.history.replaceState({}, '', url.toString());
+                        }
+                    })
+                    .catch(() => {
+                        // Don't block the UI if resolve fails
+                    });
+            } else {
+                // City/county/state: just update URL, no DeSO selection
+                const url = new URL(window.location.href);
+                url.searchParams.set('q', result.name);
+                url.searchParams.delete('deso');
+                window.history.replaceState({}, '', url.toString());
+            }
+        },
+        [],
+    );
+
+    const handleSearchClear = useCallback(() => {
+        setSearchNotInDeso(false);
+        mapRef.current?.clearSearchMarker();
+        mapRef.current?.clearSelection();
+        mapRef.current?.clearSchoolMarkers();
+
+        // Remove search params from URL
+        const url = new URL(window.location.href);
+        url.searchParams.delete('q');
+        url.searchParams.delete('deso');
+        window.history.replaceState({}, '', url.toString());
+    }, []);
+
     // Notify map to resize when sidebar content changes
     useEffect(() => {
         const timer = setTimeout(() => {
@@ -637,13 +718,17 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes }:
         <MapLayout>
             <Head title="Map" />
 
-            <div className="min-h-0 flex-1">
+            <div className="relative min-h-0 flex-1">
                 <DesoMap
                     ref={mapRef}
                     initialCenter={initialCenter}
                     initialZoom={initialZoom}
                     onFeatureSelect={handleFeatureSelect}
                     onSchoolClick={handleSchoolClick}
+                />
+                <MapSearch
+                    onResultSelect={handleSearchResult}
+                    onClear={handleSearchClear}
                 />
             </div>
 
@@ -813,10 +898,23 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes }:
                         <div className="flex h-full items-center justify-center p-8 text-center">
                             <div>
                                 <MapPin className="text-muted-foreground mx-auto mb-3 h-8 w-8" />
-                                <div className="text-sm font-medium">Click a DeSO area</div>
-                                <div className="text-muted-foreground mt-1 text-xs">
-                                    Select an area on the map to view demographic details, scores, and schools
-                                </div>
+                                {searchNotInDeso ? (
+                                    <>
+                                        <div className="text-sm font-medium">
+                                            Not within a statistical area
+                                        </div>
+                                        <div className="text-muted-foreground mt-1 text-xs">
+                                            This location is not within a DeSO area. Click a nearby colored area for details.
+                                        </div>
+                                    </>
+                                ) : (
+                                    <>
+                                        <div className="text-sm font-medium">Click a DeSO area</div>
+                                        <div className="text-muted-foreground mt-1 text-xs">
+                                            Select an area on the map to view demographic details, scores, and schools
+                                        </div>
+                                    </>
+                                )}
                             </div>
                         </div>
                     )}

@@ -52,6 +52,17 @@ export interface DesoMapHandle {
     updateSize: () => void;
     clearSchoolMarkers: () => void;
     setSchoolMarkers: (schools: School[]) => void;
+    placeSearchMarker: (lat: number, lng: number) => void;
+    clearSearchMarker: () => void;
+    zoomToPoint: (lat: number, lng: number, zoom: number) => void;
+    zoomToExtent: (
+        west: number,
+        south: number,
+        east: number,
+        north: number,
+    ) => void;
+    selectDesoByCode: (desoCode: string) => void;
+    clearSelection: () => void;
 }
 
 type LayerMode = 'hexagons' | 'deso';
@@ -234,6 +245,7 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
     const h3LayerRef = useRef<VectorLayer | null>(null);
     const desoLayerRef = useRef<VectorLayer | null>(null);
     const desoSourceRef = useRef<VectorSource | null>(null);
+    const searchMarkerSourceRef = useRef<VectorSource | null>(null);
     const fetchControllerRef = useRef<AbortController | null>(null);
     const [loading, setLoading] = useState(true);
     const [layerMode, setLayerMode] = useState<LayerMode>('hexagons');
@@ -293,6 +305,65 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
                 });
 
             source.addFeatures(features);
+        },
+        placeSearchMarker(lat: number, lng: number) {
+            const source = searchMarkerSourceRef.current;
+            if (!source) return;
+            source.clear();
+            const feature = new Feature({
+                geometry: new Point(fromLonLat([lng, lat])),
+            });
+            source.addFeature(feature);
+        },
+        clearSearchMarker() {
+            searchMarkerSourceRef.current?.clear();
+        },
+        zoomToPoint(lat: number, lng: number, zoom: number) {
+            const view = mapInstance.current?.getView();
+            if (!view) return;
+            view.animate({
+                center: fromLonLat([lng, lat]),
+                zoom,
+                duration: 800,
+            });
+        },
+        zoomToExtent(
+            west: number,
+            south: number,
+            east: number,
+            north: number,
+        ) {
+            const view = mapInstance.current?.getView();
+            if (!view) return;
+            const extent = transformExtent(
+                [west, south, east, north],
+                'EPSG:4326',
+                'EPSG:3857',
+            );
+            view.fit(extent, {
+                padding: [50, 50, 50, 50],
+                duration: 800,
+                maxZoom: 18,
+            });
+        },
+        selectDesoByCode(desoCode: string) {
+            const props = desoPropsRef.current[desoCode];
+            const scoreData = scoresRef.current[desoCode] || null;
+            if (props) {
+                // Clear old selection
+                if (selectedFeature.current) {
+                    selectedFeature.current.setStyle(undefined);
+                    selectedFeature.current = null;
+                }
+                handleFeatureSelect(props, scoreData);
+            }
+        },
+        clearSelection() {
+            if (selectedFeature.current) {
+                selectedFeature.current.setStyle(undefined);
+                selectedFeature.current = null;
+            }
+            handleFeatureSelect(null, null);
         },
     }));
 
@@ -400,6 +471,21 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
         });
         schoolLayerRef.current = schoolLayer;
 
+        // Search marker layer (highest z-index)
+        const searchMarkerSource = new VectorSource();
+        searchMarkerSourceRef.current = searchMarkerSource;
+        const searchMarkerLayer = new VectorLayer({
+            source: searchMarkerSource,
+            zIndex: 100,
+            style: new Style({
+                image: new CircleStyle({
+                    radius: 6,
+                    fill: new Fill({ color: '#3b82f6' }),
+                    stroke: new Stroke({ color: '#ffffff', width: 2 }),
+                }),
+            }),
+        });
+
         // Tooltip overlay
         const tooltipOverlay = new Overlay({
             element: tooltipRef.current,
@@ -416,6 +502,7 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
                 desoLayer,
                 h3Layer,
                 schoolLayer,
+                searchMarkerLayer,
             ],
             overlays: [tooltipOverlay],
             view: new View({
