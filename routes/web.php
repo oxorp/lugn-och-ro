@@ -3,6 +3,7 @@
 use App\Http\Controllers\AdminDataQualityController;
 use App\Http\Controllers\AdminIndicatorController;
 use App\Http\Controllers\AdminScoreController;
+use App\Http\Controllers\CompareController;
 use App\Http\Controllers\DesoController;
 use App\Http\Controllers\GeocodeController;
 use App\Http\Controllers\H3Controller;
@@ -21,6 +22,8 @@ Route::get('/api/deso/{desoCode}/pois', [DesoController::class, 'pois'])->name('
 Route::get('/api/deso/{desoCode}/indicators', [DesoController::class, 'indicators'])->name('deso.indicators');
 
 Route::get('/api/geocode/resolve-deso', [GeocodeController::class, 'resolveDeso'])->name('geocode.resolve-deso');
+
+Route::post('/api/compare', [CompareController::class, 'compare'])->name('api.compare');
 
 Route::get('/api/h3/scores', [H3Controller::class, 'scores'])->name('h3.scores');
 Route::get('/api/h3/viewport', [H3Controller::class, 'viewport'])->name('h3.viewport');

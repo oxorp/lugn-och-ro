@@ -280,6 +280,43 @@
             "error_other": "{{count}} errors"
         }
     },
+    "geolocation": {
+        "not_available": "Location services not available in your browser.",
+        "denied": "Location access denied. Enable it in browser settings.",
+        "error": "Couldn't determine your location. Try again.",
+        "outside_sweden": "You appear to be outside Sweden. This map covers Swedish neighborhoods only.",
+        "approximate": "Location is approximate.",
+        "you_are_here": "You're here"
+    },
+    "compare": {
+        "button_title": "Compare locations",
+        "banner": "Click two points to compare, or search for addresses",
+        "banner_pin_a_placed": "Click another point to compare with",
+        "exit": "Exit comparison",
+        "clear": "Clear comparison",
+        "back_to_map": "Back to map",
+        "compare_with": "Compare with another area",
+        "swap": "Swap A and B",
+        "share": "Share comparison",
+        "share_copied": "Comparison link copied to clipboard",
+        "pdf_locked": "Full comparison reports are available with a premium account. Coming soon.",
+        "save_pdf": "Save as PDF",
+        "same_area": "These locations are in the same area. Try comparing locations further apart.",
+        "loading": "Loading comparison...",
+        "error": "Couldn't load comparison data.",
+        "no_data": "No data",
+        "composite_score": "Composite Score",
+        "indicator_breakdown": "Indicator Breakdown",
+        "verdict": "Verdict",
+        "a_stronger": "A is stronger in",
+        "b_stronger": "B is stronger in",
+        "similar_in": "Similar in",
+        "a_higher": "A is {{pct}}% higher",
+        "b_higher": "B is {{pct}}% higher",
+        "similar_label": "Similar",
+        "pts_diff": "+{{value}} pctl pts",
+        "score_diff": "+{{value}} points"
+    },
     "common": {
         "loading": "Loading...",
         "error": "Something went wrong",

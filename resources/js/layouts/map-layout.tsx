@@ -3,6 +3,7 @@ import { type ReactNode } from 'react';
 
 import LanguageSwitcher from '@/components/language-switcher';
 import LocaleSync from '@/components/locale-sync';
+import { Toaster } from '@/components/ui/sonner';
 import { useTranslation } from '@/hooks/use-translation';
 import { map, methodology } from '@/routes';
 
@@ -41,6 +42,7 @@ export default function MapLayout({ children }: MapLayoutProps) {
             <main className="relative flex min-h-0 flex-1 flex-col md:flex-row">
                 {children}
             </main>
+            <Toaster position="bottom-left" />
         </div>
     );
 }

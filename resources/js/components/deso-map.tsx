@@ -4,11 +4,12 @@ import Map from 'ol/Map';
 import Overlay from 'ol/Overlay';
 import View from 'ol/View';
 import GeoJSON from 'ol/format/GeoJSON';
+import LineString from 'ol/geom/LineString';
 import Point from 'ol/geom/Point';
 import Polygon from 'ol/geom/Polygon';
 import TileLayer from 'ol/layer/Tile';
 import VectorLayer from 'ol/layer/Vector';
-import { fromLonLat, transformExtent } from 'ol/proj';
+import { fromLonLat, toLonLat, transformExtent } from 'ol/proj';
 import OSM from 'ol/source/OSM';
 import VectorSource from 'ol/source/Vector';
 import CircleStyle from 'ol/style/Circle';
@@ -16,6 +17,7 @@ import Fill from 'ol/style/Fill';
 import RegularShape from 'ol/style/RegularShape';
 import Stroke from 'ol/style/Stroke';
 import Style from 'ol/style/Style';
+import Text from 'ol/style/Text';
 import {
     forwardRef,
     useCallback,
@@ -65,6 +67,11 @@ export interface DesoMapHandle {
     ) => void;
     selectDesoByCode: (desoCode: string) => void;
     clearSelection: () => void;
+    placeComparePin: (id: 'a' | 'b', lat: number, lng: number) => void;
+    clearComparePins: () => void;
+    placeLocationMarker: (lat: number, lng: number, accuracy: number) => void;
+    clearLocationMarker: () => void;
+    fitToPoints: (points: Array<{ lat: number; lng: number }>) => void;
 }
 
 type LayerMode = 'hexagons' | 'deso';
@@ -77,6 +84,8 @@ interface DesoMapProps {
         score: DesoScore | null,
     ) => void;
     onSchoolClick?: (schoolCode: string) => void;
+    compareMode?: boolean;
+    onCompareClick?: (lat: number, lng: number) => void;
 }
 
 // Color stops: purple(0) -> red-purple(25) -> yellow(50) -> light-green(75) -> deep-green(100)
@@ -252,7 +261,7 @@ function LoadingOverlay() {
 }
 
 const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
-    { initialCenter, initialZoom, onFeatureSelect, onSchoolClick },
+    { initialCenter, initialZoom, onFeatureSelect, onSchoolClick, compareMode, onCompareClick },
     ref,
 ) {
     const mapDivRef = useRef<HTMLDivElement>(null);
@@ -270,6 +279,9 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
     const desoLayerRef = useRef<VectorLayer | null>(null);
     const desoSourceRef = useRef<VectorSource | null>(null);
     const searchMarkerSourceRef = useRef<VectorSource | null>(null);
+    const comparePinSourceRef = useRef<VectorSource | null>(null);
+    const locationMarkerSourceRef = useRef<VectorSource | null>(null);
+    const locationPulseTimerRef = useRef<number | null>(null);
     const fetchControllerRef = useRef<AbortController | null>(null);
     const [loading, setLoading] = useState(true);
     const [layerMode, setLayerMode] = useState<LayerMode>('hexagons');
@@ -277,6 +289,8 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
     const [debugZoom, setDebugZoom] = useState(initialZoom);
     const layerModeRef = useRef<LayerMode>('hexagons');
     const smoothedRef = useRef(true);
+    const compareModeRef = useRef(false);
+    const onCompareClickRef = useRef(onCompareClick);
 
     const handleFeatureSelect = useCallback(
         (properties: DesoProperties | null, score: DesoScore | null) => {
@@ -285,7 +299,7 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
         [onFeatureSelect],
     );
 
-    // Keep refs in sync with state
+    // Keep refs in sync with state/props
     useEffect(() => {
         layerModeRef.current = layerMode;
     }, [layerMode]);
@@ -293,6 +307,18 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
     useEffect(() => {
         smoothedRef.current = smoothed;
     }, [smoothed]);
+
+    useEffect(() => {
+        compareModeRef.current = !!compareMode;
+        const el = mapInstance.current?.getTargetElement();
+        if (el) {
+            el.style.cursor = compareMode ? 'crosshair' : '';
+        }
+    }, [compareMode]);
+
+    useEffect(() => {
+        onCompareClickRef.current = onCompareClick;
+    }, [onCompareClick]);
 
     useImperativeHandle(ref, () => ({
         updateSize() {
@@ -411,6 +437,175 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
             }
             handleFeatureSelect(null, null);
         },
+        placeComparePin(id: 'a' | 'b', lat: number, lng: number) {
+            const source = comparePinSourceRef.current;
+            if (!source) return;
+
+            // Remove existing pin with same id
+            const existing = source.getFeatures().filter((f) => f.get('pinId') === id);
+            existing.forEach((f) => source.removeFeature(f));
+
+            // Remove existing connection line
+            const lines = source.getFeatures().filter((f) => f.get('pinId') === 'line');
+            lines.forEach((f) => source.removeFeature(f));
+
+            const isA = id === 'a';
+            const color = isA ? '#3b82f6' : '#f59e0b';
+            const label = isA ? 'A' : 'B';
+
+            const feature = new Feature({
+                geometry: new Point(fromLonLat([lng, lat])),
+                pinId: id,
+            });
+            feature.setStyle(
+                new Style({
+                    image: new CircleStyle({
+                        radius: 12,
+                        fill: new Fill({ color }),
+                        stroke: new Stroke({ color: '#ffffff', width: 2 }),
+                    }),
+                    text: new Text({
+                        text: label,
+                        fill: new Fill({ color: '#ffffff' }),
+                        font: 'bold 11px sans-serif',
+                        offsetY: 1,
+                    }),
+                }),
+            );
+            source.addFeature(feature);
+
+            // Draw connection line if both pins exist
+            const pinFeatures = source.getFeatures().filter((f) => f.get('pinId') === 'a' || f.get('pinId') === 'b');
+            if (pinFeatures.length === 2) {
+                const pA = pinFeatures.find((f) => f.get('pinId') === 'a')!;
+                const pB = pinFeatures.find((f) => f.get('pinId') === 'b')!;
+                const coordA = (pA.getGeometry() as Point).getCoordinates();
+                const coordB = (pB.getGeometry() as Point).getCoordinates();
+
+                const lineFeature = new Feature({
+                    geometry: new LineString([coordA, coordB]),
+                    pinId: 'line',
+                });
+                lineFeature.setStyle(
+                    new Style({
+                        stroke: new Stroke({
+                            color: 'rgba(100, 116, 139, 0.6)',
+                            width: 1.5,
+                            lineDash: [6, 4],
+                        }),
+                    }),
+                );
+                source.addFeature(lineFeature);
+            }
+        },
+        clearComparePins() {
+            comparePinSourceRef.current?.clear();
+        },
+        placeLocationMarker(lat: number, lng: number, accuracy: number) {
+            const source = locationMarkerSourceRef.current;
+            if (!source) return;
+            source.clear();
+
+            // Cancel any existing pulse animation
+            if (locationPulseTimerRef.current) {
+                cancelAnimationFrame(locationPulseTimerRef.current);
+                locationPulseTimerRef.current = null;
+            }
+
+            // Inner dot
+            const dotFeature = new Feature({
+                geometry: new Point(fromLonLat([lng, lat])),
+                locationType: 'dot',
+            });
+            dotFeature.setStyle(
+                new Style({
+                    image: new CircleStyle({
+                        radius: 6,
+                        fill: new Fill({ color: '#3b82f6' }),
+                        stroke: new Stroke({ color: '#ffffff', width: 2 }),
+                    }),
+                }),
+            );
+            source.addFeature(dotFeature);
+
+            // Pulse ring (animated)
+            const pulseFeature = new Feature({
+                geometry: new Point(fromLonLat([lng, lat])),
+                locationType: 'pulse',
+            });
+            source.addFeature(pulseFeature);
+
+            let pulseRadius = 8;
+            let pulseOpacity = 0.8;
+            const animatePulse = () => {
+                pulseRadius += 0.3;
+                pulseOpacity -= 0.015;
+                if (pulseOpacity <= 0) {
+                    pulseRadius = 8;
+                    pulseOpacity = 0.8;
+                }
+                pulseFeature.setStyle(
+                    new Style({
+                        image: new CircleStyle({
+                            radius: pulseRadius,
+                            fill: new Fill({ color: `rgba(59, 130, 246, ${pulseOpacity * 0.3})` }),
+                            stroke: new Stroke({ color: `rgba(59, 130, 246, ${pulseOpacity})`, width: 1.5 }),
+                        }),
+                    }),
+                );
+                locationPulseTimerRef.current = requestAnimationFrame(animatePulse);
+            };
+            animatePulse();
+
+            // Accuracy circle if > 100m
+            if (accuracy > 100) {
+                const map = mapInstance.current;
+                if (map) {
+                    const center = fromLonLat([lng, lat]);
+                    const view = map.getView();
+                    const resolution = view.getResolution() ?? 1;
+                    const radiusPx = accuracy / resolution;
+                    const accFeature = new Feature({
+                        geometry: new Point(center),
+                        locationType: 'accuracy',
+                    });
+                    accFeature.setStyle(
+                        new Style({
+                            image: new CircleStyle({
+                                radius: Math.min(radiusPx, 100),
+                                fill: new Fill({ color: 'rgba(59, 130, 246, 0.08)' }),
+                                stroke: new Stroke({ color: 'rgba(59, 130, 246, 0.25)', width: 1 }),
+                            }),
+                        }),
+                    );
+                    source.addFeature(accFeature);
+                }
+            }
+        },
+        clearLocationMarker() {
+            locationMarkerSourceRef.current?.clear();
+            if (locationPulseTimerRef.current) {
+                cancelAnimationFrame(locationPulseTimerRef.current);
+                locationPulseTimerRef.current = null;
+            }
+        },
+        fitToPoints(points: Array<{ lat: number; lng: number }>) {
+            const view = mapInstance.current?.getView();
+            if (!view || points.length < 2) return;
+
+            const coords = points.map((p) => fromLonLat([p.lng, p.lat]));
+            const minX = Math.min(...coords.map((c) => c[0]));
+            const minY = Math.min(...coords.map((c) => c[1]));
+            const maxX = Math.max(...coords.map((c) => c[0]));
+            const maxY = Math.max(...coords.map((c) => c[1]));
+
+            const extent = [minX, minY, maxX, maxY] as [number, number, number, number];
+            view.fit(extent, {
+                padding: [80, 80, 80, 80],
+                duration: 800,
+                maxZoom: 15,
+            });
+        },
     }));
 
     // Fetch H3 hexes for the current viewport
@@ -517,12 +712,12 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
         });
         schoolLayerRef.current = schoolLayer;
 
-        // Search marker layer (highest z-index)
+        // Search marker layer
         const searchMarkerSource = new VectorSource();
         searchMarkerSourceRef.current = searchMarkerSource;
         const searchMarkerLayer = new VectorLayer({
             source: searchMarkerSource,
-            zIndex: 100,
+            zIndex: 50,
             style: new Style({
                 image: new CircleStyle({
                     radius: 6,
@@ -530,6 +725,22 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
                     stroke: new Stroke({ color: '#ffffff', width: 2 }),
                 }),
             }),
+        });
+
+        // Compare pin layer
+        const comparePinSource = new VectorSource();
+        comparePinSourceRef.current = comparePinSource;
+        const comparePinLayer = new VectorLayer({
+            source: comparePinSource,
+            zIndex: 100,
+        });
+
+        // Location marker layer
+        const locationMarkerSource = new VectorSource();
+        locationMarkerSourceRef.current = locationMarkerSource;
+        const locationMarkerLayer = new VectorLayer({
+            source: locationMarkerSource,
+            zIndex: 90,
         });
 
         // Tooltip overlay
@@ -549,6 +760,8 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
                 h3Layer,
                 schoolLayer,
                 searchMarkerLayer,
+                locationMarkerLayer,
+                comparePinLayer,
             ],
             overlays: [tooltipOverlay],
             view: new View({
@@ -742,7 +955,7 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
                     tooltipOverlay.setPosition(evt.coordinate);
                 }
             } else if (!feature) {
-                map.getTargetElement().style.cursor = '';
+                map.getTargetElement().style.cursor = compareModeRef.current ? 'crosshair' : '';
                 if (layerModeRef.current === 'hexagons' && tooltipRef.current) {
                     tooltipRef.current.style.display = 'none';
                 }
@@ -753,6 +966,13 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
 
         // Click interaction
         map.on('click', (evt) => {
+            // Compare mode: forward click to parent
+            if (compareModeRef.current && onCompareClickRef.current) {
+                const coords = toLonLat(evt.coordinate);
+                onCompareClickRef.current(coords[1], coords[0]); // lat, lng
+                return;
+            }
+
             // Check school markers first
             const schoolFeature = map.forEachFeatureAtPixel(
                 evt.pixel,
@@ -867,6 +1087,9 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
 
         return () => {
             map.setTarget(undefined);
+            if (locationPulseTimerRef.current) {
+                cancelAnimationFrame(locationPulseTimerRef.current);
+            }
         };
     }, [initialCenter, initialZoom, handleFeatureSelect, onSchoolClick, loadH3Viewport]);
 

@@ -154,6 +154,43 @@
             "filter_other": "\u00d6vriga"
         }
     },
+    "geolocation": {
+        "not_available": "Platstj\u00e4nster \u00e4r inte tillg\u00e4ngliga i din webbl\u00e4sare.",
+        "denied": "Plats\u00e5tkomst nekad. Aktivera i webbl\u00e4sarens inst\u00e4llningar.",
+        "error": "Kunde inte best\u00e4mma din plats. F\u00f6rs\u00f6k igen.",
+        "outside_sweden": "Du verkar befinna dig utanf\u00f6r Sverige. Kartan visar svenska bostadsomr\u00e5den.",
+        "approximate": "Platsen \u00e4r ungef\u00e4rlig.",
+        "you_are_here": "Du \u00e4r h\u00e4r"
+    },
+    "compare": {
+        "button_title": "J\u00e4mf\u00f6r platser",
+        "banner": "Klicka p\u00e5 tv\u00e5 punkter f\u00f6r att j\u00e4mf\u00f6ra, eller s\u00f6k adresser",
+        "banner_pin_a_placed": "Klicka p\u00e5 en annan punkt f\u00f6r att j\u00e4mf\u00f6ra med",
+        "exit": "Avsluta j\u00e4mf\u00f6relse",
+        "clear": "Rensa j\u00e4mf\u00f6relse",
+        "back_to_map": "Tillbaka till kartan",
+        "compare_with": "J\u00e4mf\u00f6r med ett annat omr\u00e5de",
+        "swap": "Byt A och B",
+        "share": "Dela j\u00e4mf\u00f6relse",
+        "share_copied": "J\u00e4mf\u00f6relsel\u00e4nk kopierad till urklipp",
+        "pdf_locked": "Fullst\u00e4ndiga j\u00e4mf\u00f6relserapporter \u00e4r tillg\u00e4ngliga med ett premiumkonto. Kommer snart.",
+        "save_pdf": "Spara som PDF",
+        "same_area": "Dessa platser \u00e4r i samma omr\u00e5de. F\u00f6rs\u00f6k j\u00e4mf\u00f6ra platser l\u00e4ngre is\u00e4r.",
+        "loading": "Laddar j\u00e4mf\u00f6relse...",
+        "error": "Kunde inte ladda j\u00e4mf\u00f6relsedata.",
+        "no_data": "Ingen data",
+        "composite_score": "\u00d6vergripande po\u00e4ng",
+        "indicator_breakdown": "Indikatoruppdelning",
+        "verdict": "Sammanfattning",
+        "a_stronger": "A \u00e4r starkare i",
+        "b_stronger": "B \u00e4r starkare i",
+        "similar_in": "Liknande i",
+        "a_higher": "A \u00e4r {{pct}}% h\u00f6gre",
+        "b_higher": "B \u00e4r {{pct}}% h\u00f6gre",
+        "similar_label": "Liknande",
+        "pts_diff": "+{{value}} pktl po\u00e4ng",
+        "score_diff": "+{{value}} po\u00e4ng"
+    },
     "common": {
         "loading": "Laddar...",
         "error": "N\u00e5got gick fel",

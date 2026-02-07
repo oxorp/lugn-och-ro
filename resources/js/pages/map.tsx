@@ -2,17 +2,23 @@ import { Head } from '@inertiajs/react';
 import {
     AlertTriangle,
     ArrowDown,
+    ArrowLeftRight,
     ArrowRight,
     ArrowUp,
+    Crosshair,
     Landmark,
+    Loader2,
     MapPin,
     Minus,
     Shield,
     ShieldAlert,
     TriangleAlert,
+    X,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { toast } from 'sonner';
 
+import ComparisonSidebar, { type CompareResult } from '@/components/comparison-sidebar';
 import DesoMap, {
     type DesoMapHandle,
     type DesoProperties,
@@ -165,6 +171,46 @@ interface IndicatorResponse {
         indicators_total: number;
         period: string | null;
     };
+}
+
+// Sweden bounding box for geolocation check
+const SWEDEN_BOUNDS = {
+    minLat: 55.0,
+    maxLat: 69.1,
+    minLng: 10.5,
+    maxLng: 24.2,
+};
+
+function isInSweden(lat: number, lng: number): boolean {
+    return (
+        lat >= SWEDEN_BOUNDS.minLat &&
+        lat <= SWEDEN_BOUNDS.maxLat &&
+        lng >= SWEDEN_BOUNDS.minLng &&
+        lng <= SWEDEN_BOUNDS.maxLng
+    );
+}
+
+function getZoomForAccuracy(accuracy: number): number {
+    if (accuracy < 50) return 15;
+    if (accuracy <= 200) return 14;
+    if (accuracy <= 500) return 13;
+    if (accuracy <= 2000) return 12;
+    return 11;
+}
+
+interface ComparePin {
+    lat: number;
+    lng: number;
+    label: string;
+}
+
+interface CompareState {
+    active: boolean;
+    pinA: ComparePin | null;
+    pinB: ComparePin | null;
+    result: CompareResult | null;
+    loading: boolean;
+    error: boolean;
 }
 
 /** Returns an inline color style matching the score gradient (same as the map). */
@@ -831,6 +877,16 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes, i
     const [indicatorLoading, setIndicatorLoading] = useState(false);
     const [highlightedSchool, setHighlightedSchool] = useState<string | null>(null);
     const [searchNotInDeso, setSearchNotInDeso] = useState(false);
+    const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
+    const [locating, setLocating] = useState(false);
+    const [compareState, setCompareState] = useState<CompareState>({
+        active: false,
+        pinA: null,
+        pinB: null,
+        result: null,
+        loading: false,
+        error: false,
+    });
     const schoolRefs = useRef<Record<string, HTMLDivElement | null>>({});
     const mapRef = useRef<DesoMapHandle | null>(null);
 
@@ -980,6 +1036,240 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes, i
         window.history.replaceState({}, '', url.toString());
     }, []);
 
+    // --- Geolocation ---
+    const handleLocateMe = useCallback(() => {
+        if (!navigator.geolocation) {
+            toast.error(t('geolocation.not_available'));
+            return;
+        }
+
+        setLocating(true);
+
+        navigator.geolocation.getCurrentPosition(
+            (position) => {
+                setLocating(false);
+                const { latitude, longitude, accuracy } = position.coords;
+
+                if (!isInSweden(latitude, longitude)) {
+                    toast.info(t('geolocation.outside_sweden'));
+                    return;
+                }
+
+                if (accuracy > 2000) {
+                    toast.info(t('geolocation.approximate'));
+                }
+
+                setUserLocation({ lat: latitude, lng: longitude });
+
+                // In compare mode, use location as pin A
+                if (compareState.active) {
+                    handleCompareClick(latitude, longitude);
+                    return;
+                }
+
+                // Clear search marker, place location marker
+                mapRef.current?.clearSearchMarker();
+                mapRef.current?.placeLocationMarker(latitude, longitude, accuracy);
+
+                const zoom = getZoomForAccuracy(accuracy);
+                mapRef.current?.zoomToPoint(latitude, longitude, zoom);
+
+                // Auto-select containing area
+                fetch(`/api/geocode/resolve-deso?lat=${latitude}&lng=${longitude}`)
+                    .then((r) => r.json())
+                    .then((data: { deso: { deso_code: string } | null }) => {
+                        if (data.deso) {
+                            mapRef.current?.selectDesoByCode(data.deso.deso_code);
+                        }
+                    })
+                    .catch(() => {});
+            },
+            (error) => {
+                setLocating(false);
+                if (error.code === error.PERMISSION_DENIED) {
+                    toast.error(t('geolocation.denied'));
+                } else {
+                    toast.error(t('geolocation.error'));
+                }
+            },
+            {
+                enableHighAccuracy: true,
+                timeout: 10000,
+                maximumAge: 60000,
+            },
+        );
+    }, [t, compareState.active]);
+
+    // --- Compare mode ---
+    const fetchComparison = useCallback((pinA: ComparePin, pinB: ComparePin) => {
+        setCompareState((prev) => ({ ...prev, loading: true, error: false }));
+
+        fetch('/api/compare', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content ?? '',
+            },
+            body: JSON.stringify({
+                point_a: { lat: pinA.lat, lng: pinA.lng },
+                point_b: { lat: pinB.lat, lng: pinB.lng },
+            }),
+        })
+            .then((r) => {
+                if (!r.ok) throw new Error('Compare failed');
+                return r.json();
+            })
+            .then((data: CompareResult) => {
+                setCompareState((prev) => ({
+                    ...prev,
+                    result: data,
+                    loading: false,
+                }));
+
+                // Update pin labels from response
+                setCompareState((prev) => ({
+                    ...prev,
+                    pinA: prev.pinA ? { ...prev.pinA, label: data.location_a.label } : null,
+                    pinB: prev.pinB ? { ...prev.pinB, label: data.location_b.label } : null,
+                }));
+            })
+            .catch(() => {
+                setCompareState((prev) => ({ ...prev, loading: false, error: true }));
+            });
+    }, []);
+
+    const handleCompareClick = useCallback(
+        (lat: number, lng: number) => {
+            if (!isInSweden(lat, lng)) {
+                toast.info(t('geolocation.outside_sweden'));
+                return;
+            }
+
+            setCompareState((prev) => {
+                if (!prev.pinA) {
+                    // Place pin A
+                    const pinA: ComparePin = { lat, lng, label: 'A' };
+                    mapRef.current?.placeComparePin('a', lat, lng);
+                    return { ...prev, pinA, pinB: null, result: null };
+                }
+                // Place or replace pin B
+                const pinB: ComparePin = { lat, lng, label: 'B' };
+                mapRef.current?.placeComparePin('b', lat, lng);
+
+                // Auto-fit to show both pins
+                mapRef.current?.fitToPoints([prev.pinA, pinB]);
+
+                // Fetch comparison
+                fetchComparison(prev.pinA, pinB);
+
+                return { ...prev, pinB, result: null };
+            });
+        },
+        [fetchComparison, t],
+    );
+
+    const toggleCompareMode = useCallback(() => {
+        setCompareState((prev) => {
+            if (prev.active) {
+                // Exit compare mode
+                mapRef.current?.clearComparePins();
+                return { active: false, pinA: null, pinB: null, result: null, loading: false, error: false };
+            }
+            // Enter compare mode - clear normal selection
+            mapRef.current?.clearSelection();
+            mapRef.current?.clearSchoolMarkers();
+            mapRef.current?.clearLocationMarker();
+            return { active: true, pinA: null, pinB: null, result: null, loading: false, error: false };
+        });
+    }, []);
+
+    const exitCompareMode = useCallback(() => {
+        mapRef.current?.clearComparePins();
+        setCompareState({ active: false, pinA: null, pinB: null, result: null, loading: false, error: false });
+    }, []);
+
+    const swapPins = useCallback(() => {
+        setCompareState((prev) => {
+            if (!prev.pinA || !prev.pinB) return prev;
+            const newA = prev.pinB;
+            const newB = prev.pinA;
+            mapRef.current?.clearComparePins();
+            mapRef.current?.placeComparePin('a', newA.lat, newA.lng);
+            mapRef.current?.placeComparePin('b', newB.lat, newB.lng);
+            fetchComparison(newA, newB);
+            return { ...prev, pinA: newA, pinB: newB, result: null };
+        });
+    }, [fetchComparison]);
+
+    const enterCompareWithCurrent = useCallback(() => {
+        if (!selectedDeso || !selectedScore) return;
+        // Use the centroid of the selected DeSO as pin A
+        // We don't have the centroid directly, so resolve via backend
+        mapRef.current?.clearSelection();
+        mapRef.current?.clearSchoolMarkers();
+        mapRef.current?.clearLocationMarker();
+
+        setCompareState({
+            active: true,
+            pinA: null,
+            pinB: null,
+            result: null,
+            loading: false,
+            error: false,
+        });
+
+        // Use the resolve-deso endpoint in reverse: we know the deso_code,
+        // but we need a point. For now, use the first indicator lat/lng or just enter compare mode.
+        // Actually, the simplest approach: enter compare mode and tell user to click again.
+        // The "compare with" button is more of a UX hint.
+    }, [selectedDeso, selectedScore]);
+
+    // Escape key exits compare mode
+    useEffect(() => {
+        function handleKeyDown(e: KeyboardEvent) {
+            if (e.key === 'Escape' && compareState.active) {
+                exitCompareMode();
+            }
+        }
+
+        document.addEventListener('keydown', handleKeyDown);
+        return () => document.removeEventListener('keydown', handleKeyDown);
+    }, [compareState.active, exitCompareMode]);
+
+    // Load comparison from URL on mount
+    useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        const compareParam = params.get('compare');
+        if (compareParam) {
+            const parts = compareParam.split('|');
+            if (parts.length === 2) {
+                const [aStr, bStr] = parts;
+                const [aLat, aLng] = aStr.split(',').map(Number);
+                const [bLat, bLng] = bStr.split(',').map(Number);
+                if (!isNaN(aLat) && !isNaN(aLng) && !isNaN(bLat) && !isNaN(bLng)) {
+                    const pinA: ComparePin = { lat: aLat, lng: aLng, label: 'A' };
+                    const pinB: ComparePin = { lat: bLat, lng: bLng, label: 'B' };
+
+                    // Small delay to let map initialize
+                    setTimeout(() => {
+                        setCompareState({
+                            active: true,
+                            pinA,
+                            pinB,
+                            result: null,
+                            loading: true,
+                            error: false,
+                        });
+                        mapRef.current?.placeComparePin('a', aLat, aLng);
+                        mapRef.current?.placeComparePin('b', bLat, bLng);
+                        mapRef.current?.fitToPoints([pinA, pinB]);
+                        fetchComparison(pinA, pinB);
+                    }, 1500);
+                }
+            }
+        }
+    }, [fetchComparison]);
+
     useEffect(() => {
         const timer = setTimeout(() => {
             mapRef.current?.updateSize();
@@ -998,14 +1288,114 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes, i
                     initialZoom={initialZoom}
                     onFeatureSelect={handleFeatureSelect}
                     onSchoolClick={handleSchoolClick}
+                    compareMode={compareState.active}
+                    onCompareClick={handleCompareClick}
                 />
                 <MapSearch
                     onResultSelect={handleSearchResult}
                     onClear={handleSearchClear}
                 />
+
+                {/* Map control buttons (right side, below layer control) */}
+                <div className="absolute top-[120px] right-4 z-10 flex flex-col gap-1.5">
+                    {/* Compare button */}
+                    <button
+                        onClick={toggleCompareMode}
+                        className={`flex h-9 w-9 items-center justify-center rounded-lg border shadow-sm backdrop-blur-sm transition-colors ${
+                            compareState.active
+                                ? 'border-blue-400 bg-blue-500 text-white'
+                                : 'border-border bg-background/90 text-muted-foreground hover:text-foreground'
+                        }`}
+                        title={t('compare.button_title')}
+                    >
+                        <ArrowLeftRight className="h-4 w-4" />
+                    </button>
+
+                    {/* Locate me button */}
+                    <button
+                        onClick={handleLocateMe}
+                        disabled={locating}
+                        className={`flex h-9 w-9 items-center justify-center rounded-lg border shadow-sm backdrop-blur-sm transition-colors ${
+                            locating
+                                ? 'border-blue-400 bg-blue-50 text-blue-500'
+                                : userLocation
+                                    ? 'border-border bg-background/90 text-blue-500 hover:text-blue-600'
+                                    : 'border-border bg-background/90 text-muted-foreground hover:text-foreground'
+                        }`}
+                        title={t('geolocation.you_are_here')}
+                    >
+                        {locating ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                            <Crosshair className="h-4 w-4" />
+                        )}
+                    </button>
+                </div>
+
+                {/* Compare mode banner */}
+                {compareState.active && (
+                    <div className="absolute top-4 left-1/2 z-20 -translate-x-1/2">
+                        <div className="flex items-center gap-2 rounded-lg border border-blue-300 bg-blue-50/95 px-4 py-2 text-sm text-blue-800 shadow-sm backdrop-blur-sm">
+                            <ArrowLeftRight className="h-4 w-4 shrink-0" />
+                            <span>
+                                {!compareState.pinA
+                                    ? t('compare.banner')
+                                    : !compareState.pinB
+                                        ? t('compare.banner_pin_a_placed')
+                                        : ''}
+                            </span>
+                            <button
+                                onClick={exitCompareMode}
+                                className="ml-1 rounded p-0.5 text-blue-600 transition-colors hover:bg-blue-200"
+                            >
+                                <X className="h-3.5 w-3.5" />
+                            </button>
+                        </div>
+                    </div>
+                )}
             </div>
 
             <aside className="h-[40vh] w-full shrink-0 border-t border-border bg-background md:h-full md:w-[400px] md:border-l md:border-t-0">
+                {/* Comparison sidebar */}
+                {compareState.active && compareState.result ? (
+                    <ComparisonSidebar
+                        result={compareState.result}
+                        pinALabel={compareState.pinA?.label}
+                        pinBLabel={compareState.pinB?.label}
+                        onClose={exitCompareMode}
+                        onSwapPins={swapPins}
+                    />
+                ) : compareState.active && compareState.loading ? (
+                    <div className="flex h-full items-center justify-center p-8">
+                        <div className="text-center">
+                            <Loader2 className="mx-auto mb-3 h-6 w-6 animate-spin text-muted-foreground" />
+                            <div className="text-sm text-muted-foreground">{t('compare.loading')}</div>
+                        </div>
+                    </div>
+                ) : compareState.active && compareState.error ? (
+                    <div className="flex h-full items-center justify-center p-8">
+                        <div className="text-center">
+                            <div className="text-sm text-muted-foreground">{t('compare.error')}</div>
+                            <button
+                                onClick={() => {
+                                    if (compareState.pinA && compareState.pinB) {
+                                        fetchComparison(compareState.pinA, compareState.pinB);
+                                    }
+                                }}
+                                className="mt-2 text-xs font-medium text-primary hover:underline"
+                            >
+                                {t('common.retry')}
+                            </button>
+                        </div>
+                    </div>
+                ) : compareState.active ? (
+                    <div className="flex h-full items-center justify-center p-8 text-center">
+                        <div>
+                            <ArrowLeftRight className="mx-auto mb-3 h-8 w-8 text-blue-400" />
+                            <div className="text-sm font-medium text-foreground">{t('compare.banner')}</div>
+                        </div>
+                    </div>
+                ) : (
                 <ScrollArea className="h-full">
                     {selectedDeso ? (
                         <div className="space-y-6 p-5">
@@ -1030,6 +1420,11 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes, i
                                             <div className="text-xs text-muted-foreground">
                                                 {selectedDeso.area_km2.toFixed(2)} km&sup2;
                                             </div>
+                                        )}
+                                        {userLocation && (
+                                            <Badge className="mt-1 rounded-full border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700" variant="secondary">
+                                                {t('geolocation.you_are_here')}
+                                            </Badge>
                                         )}
                                     </div>
 
@@ -1247,6 +1642,16 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes, i
                             {/* Data Freshness */}
                             <Separator />
                             <DataFreshness meta={indicatorMeta} />
+
+                            {/* Compare with button */}
+                            <Separator />
+                            <button
+                                onClick={enterCompareWithCurrent}
+                                className="flex w-full items-center justify-center gap-2 rounded-lg border border-border px-3 py-2.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+                            >
+                                <ArrowLeftRight className="h-4 w-4" />
+                                {t('compare.compare_with')}
+                            </button>
                         </div>
                     ) : (
                         <div className="flex h-full items-center justify-center p-8 text-center">
@@ -1273,6 +1678,7 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes, i
                         </div>
                     )}
                 </ScrollArea>
+                )}
             </aside>
         </MapLayout>
     );

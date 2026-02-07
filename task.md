@@ -1,612 +1,536 @@
-# TASK: School Data Audit & Re-ingestion
+# TASK: Area Comparison — Compare Two Locations Side by Side
 
 ## Context
 
-We have ~7,000 schools in the database. The real number is **~10,600+** school units in Sweden. We're missing roughly 3,000–4,000 schools, which means our school quality indicators are computed from incomplete data — entire DeSOs that should show school quality scores are showing "no schools" because the schools in their area were never ingested.
+The single most common use case for homebuyers: "I'm choosing between Årsta and Hägersten — how do they compare?" Right now you can only view one area at a time. This task adds the ability to compare two locations side by side, with every indicator shown as a paired bar chart so differences jump out instantly.
 
-This task audits what went wrong, fixes the ingestion, and addresses the related statistics availability problem.
-
-## The Real Numbers
-
-According to Skolverket's geodata portal, the actual school unit counts by school form are:
-
-| School form | Count |
-|---|---|
-| Förskoleklass (preschool class) | 3,618 |
-| **Grundskola** (compulsory school) | **4,748** |
-| Sameskola (Sami school) | 5 |
-| Specialskola (special needs school) | 10 |
-| **Gymnasieskola** (upper secondary) | **1,313** |
-| Anpassad grundskola (adapted compulsory) | 667 |
-| Anpassad gymnasieskola (adapted upper secondary) | 251 |
-| **Total** | **~10,600+** |
-
-Additionally there are Komvux (adult education), folkhögskola, and other education providers in the registry.
-
-Our 7,000 is **not plausible** for a complete fetch. We're getting roughly 65% of what's in the registry.
-
-## Probable Causes of Missing Schools
-
-### Cause 1: API v1 Deprecation / Pagination Failure
-
-The original ingestion was built on Skolenhetsregistret API v1. Skolverket moved to v2 as the active version on 2024-12-13, and v1 was planned for deprecation at the end of 2025/2026. The API pagination may have stopped returning complete results, the API may have become intermittently unreliable, or the page size / offset handling may have been incorrect.
-
-**API v2 is now the recommended version.** The ingestion must be migrated to v2.
-
-### Cause 2: Overly Aggressive Filtering
-
-The original task said to focus on grundskola for the quality indicators, which is correct for *scoring*. But the command may have been built to only *fetch* grundskola, skipping gymnasieskola and other school forms entirely. We should **store all school forms** in the database (for display on the map as markers, for showing in the sidebar, for completeness) and then **filter to grundskola only** when computing DeSO-level quality indicators.
-
-Parents care about grundskola for the score, but when browsing a DeSO, seeing *all* schools (including the local gymnasium) gives a more complete picture of the area.
-
-### Cause 3: Schools Without Coordinates Silently Dropped
-
-If the ingestion skipped schools that had no lat/lng in the API response, many schools may have been lost. Some schools — especially newer ones, schools in temporary locations, or komvux providers — may not have coordinates in the registry. These should still be stored (with null coordinates) and can potentially be geocoded from their address.
-
-### Cause 4: Inactive/Ceased Schools Excluded
-
-The v2 API now explicitly exposes ceased (upphörda) school units. The original v1 fetch may have been implicitly filtering to active only. We should store both active and inactive schools (with a status field) but only display active ones on the map.
+**Why this is hard:** We operate on an H3 hexagonal grid. Users don't think in hex cell IDs — they think in addresses, neighborhoods, or map clicks. The comparison must feel like "compare Drottninggatan 53 vs Kungsholmsgatan 12" while under the hood resolving those to H3 cells and pulling their smoothed scores. The UX must be dead simple despite the spatial complexity.
 
 ---
 
-## Step 1: Audit Current State
+## The UX Problem
 
-Before re-ingesting, understand what we have:
+There are three fundamental approaches to comparison on a map product. Each has tradeoffs:
 
-```bash
-php artisan tinker
-```
+**A. Split-screen (two maps side by side)**
+Used by: Esri Swipe Tool, old Google Maps compare. Problem: halves your map viewport, terrible on mobile, disorienting because you lose spatial context of how the two locations relate to each other.
 
-```php
-// Total schools
-\App\Models\School::count();  // ~7000
+**B. Pin & compare (select two points on the same map)**
+Used by: what we'll build. Both locations visible on one map, sidebar shows comparison. Preserves spatial context — you can see the two locations in relation to each other, which matters enormously for real estate ("how far is it from Årsta to Hägersten?").
 
-// By school type
-\App\Models\School::select('type_of_schooling', DB::raw('count(*)'))
-    ->groupBy('type_of_schooling')
-    ->orderByDesc(DB::raw('count(*)'))
-    ->get();
+**C. Dedicated comparison page (table view, no map)**
+Used by: NeighborhoodScout "Match Any Neighborhood", Niche. Problem: loses the map entirely. Fine for national comparisons but wrong for our use case where relative location matters.
 
-// How many have coordinates?
-\App\Models\School::whereNotNull('lat')->count();
-
-// How many have DeSO assignment?
-\App\Models\School::whereNotNull('deso_code')->count();
-
-// How many have statistics?
-\App\Models\SchoolStatistic::distinct('school_unit_code')->count();
-
-// Which municipality has the most schools?
-\App\Models\School::select('municipality_name', DB::raw('count(*)'))
-    ->groupBy('municipality_name')
-    ->orderByDesc(DB::raw('count(*)'))
-    ->limit(10)
-    ->get();
-```
-
-Log the results. Compare against the known totals above. Determine which school forms are missing and how many schools lack coordinates.
+**We go with B. One map, two pins, comparison in sidebar.**
 
 ---
 
-## Step 2: Migrate to Skolenhetsregistret API v2
+## Step 1: The Comparison Mental Model
 
-### 2.1 API v2 Changes
+### 1.1 What Users Compare
 
-Key differences from v1 (from Skolverket's changelog):
+Users compare **locations**, not abstract hex IDs. A location is:
+- An address they type ("Drottninggatan 53, Stockholm")
+- A point they click on the map
+- Their current geolocation (via the locate-me button from the geolocation task)
 
-- Adapted to recommended REST API profile for public actors
-- Service and parameter names translated to English
-- Can combine search parameters when searching school units and principals
-- **Ceased school units are now accessible** (new feature)
-- Services for listing municipalities and school forms removed
-- `harbetygsratt` replaced with search parameter `?grading_rights=true`
-- If a variable is null, it's not included in the response (both v1 and v2)
+Each location resolves to an H3 cell (or set of cells if smoothing radius is active), which has scores. The user never sees H3 IDs — they see the address or a human-readable label.
 
-### 2.2 API v2 Swagger
+### 1.2 Naming the Locations
 
-Explore the v2 Swagger docs:
-`https://api.skolverket.se/skolenhetsregistret/swagger-ui/index.html`
+Each pinned location needs a short, recognizable label. Derive it from:
 
-The agent should fetch the swagger and map the exact endpoint paths, pagination parameters, and response shapes for v2.
+1. **If entered as address:** Use the address ("Drottninggatan 53")
+2. **If clicked on map:** Reverse-geocode to nearest address or use DeSO name ("Årsta 0020")
+3. **If from geolocation:** "My Location"
 
-### 2.3 Update SkolverketApiService
+Labels must be short — they appear in column headers of the comparison table. Truncate to ~25 characters with ellipsis if needed.
 
-Rewrite `app/Services/SkolverketApiService.php` to use v2:
+### 1.3 Color Coding
+
+- **Location A:** Blue pin + blue accent in comparison columns (blue-500)
+- **Location B:** Orange pin + orange accent in comparison columns (amber-500)
+
+These colors are deliberately chosen to NOT conflict with the score gradient (purple→yellow→green). Blue and orange are absent from the score palette.
+
+---
+
+## Step 2: Entering Compare Mode
+
+### 2.1 The Compare Button
+
+Add a "Compare" button to the map controls (top-right, below zoom controls, near the layer toggle). Use a simple icon: two vertical bars or a ⇔ symbol.
+
+```
+┌─────────┐
+│  + / -  │  ← zoom
+│  🔍     │  ← search (from search task)
+│  ⇔      │  ← compare (NEW)
+│  📍     │  ← locate me (from geolocation task)
+│  🗺️     │  ← layer toggle
+└─────────┘
+```
+
+Clicking "Compare" enters **compare mode**. The button gets an active state (filled blue background).
+
+### 2.2 Compare Mode Behavior
+
+When compare mode is active:
+
+1. **The cursor changes** to a crosshair (CSS `cursor: crosshair`) over the map
+2. **A banner appears** at the top of the map: "Click two points to compare, or search for addresses" with a small × to exit compare mode
+3. **First click** drops Pin A (blue) at that location
+4. **Second click** drops Pin B (orange) at that location
+5. **Sidebar switches** to comparison view (see Step 4)
+6. **Clicking a third time** replaces Pin B (the most recent one). Pin A stays. This lets users "browse" by keeping their home location pinned and clicking around.
+
+### 2.3 Alternative Entry: Search
+
+If the search bar is used while in compare mode:
+- First search result → Pin A
+- Second search result → Pin B
+
+If one pin is already placed and the user searches, the result becomes the empty slot (or replaces B if both are placed).
+
+### 2.4 Alternative Entry: Sidebar "Compare with..." Button
+
+When viewing a single area's details in the sidebar (normal mode, not compare mode), add a button: **"Compare with another area"**. Clicking this:
+1. Enters compare mode
+2. Sets the currently viewed area as Pin A
+3. Prompts for Pin B ("Click the map or search for a second location")
+
+This is the most natural entry point — user is already looking at an area and wants to compare it.
+
+### 2.5 Exiting Compare Mode
+
+- Click the Compare button again (toggles off)
+- Click the × on the banner
+- Press Escape
+- Click the "Back to map" or "Clear comparison" button in the sidebar
+
+Exiting removes both pins and returns to normal single-area view.
+
+---
+
+## Step 3: Map Visualization During Comparison
+
+### 3.1 Pin Markers
+
+Two distinct pin markers on the map:
+
+**Pin A (Blue):**
+- Circle marker, 10px radius, blue-500 fill (#3b82f6), white 2px border
+- Label "A" centered in the circle (white, bold, 11px)
+- Drop shadow for depth
+- zIndex: 100
+
+**Pin B (Orange):**
+- Same style but amber-500 fill (#f59e0b)
+- Label "B"
+- zIndex: 101
+
+Both pins are **draggable**. User can adjust either pin's position after placing it. When dragged, the comparison data updates (with a small debounce — don't re-fetch on every pixel).
+
+### 3.2 Connection Line
+
+Draw a subtle dashed line between Pin A and Pin B:
+- 1px dashed, slate-400 color
+- Show distance label at midpoint: "2.3 km" (computed from the two points using Haversine or PostGIS)
+
+This gives instant spatial context: how far apart are these two locations?
+
+### 3.3 Highlight Both Areas
+
+Both H3 cells (or DeSO areas if at that zoom level) should be highlighted:
+- Pin A's area: blue tinted outline (2px blue-500)
+- Pin B's area: orange tinted outline (2px amber-500)
+- Both slightly brighter fill than surrounding hexes to stand out
+
+### 3.4 Auto-fit View
+
+After both pins are placed, the map should auto-fit to show both locations with padding. Use OpenLayers `view.fit(extent)` with the bounding box of both points plus 20% padding. Don't zoom in further than level 14 — keep surrounding context visible.
+
+If pins are very close (< 500m), zoom to level 15 max. If very far (> 50km), cap at level 9.
+
+---
+
+## Step 4: Comparison Sidebar
+
+### 4.1 Sidebar Layout
+
+When both pins are placed, the sidebar completely changes to comparison mode:
+
+```
+┌─────────────────────────────────────────┐
+│  ← Back to map       [Clear comparison] │
+├─────────────────────────────────────────┤
+│                                         │
+│  ● Drottninggatan 53    ● Kungsholms... │
+│    Stockholm              Stockholm     │
+│    Norrmalm                Kungsholmen  │
+│                                         │
+│  ─────────── 2.3 km ───────────         │
+│                                         │
+├─────────────────────────────────────────┤
+│                                         │
+│  COMPOSITE SCORE                        │
+│     72              vs          58      │
+│   ██████████████       ██████████       │
+│   Stable              Mixed Signals     │
+│                                         │
+├─────────────────────────────────────────┤
+│                                         │
+│  INDICATOR BREAKDOWN                    │
+│                                         │
+│  Median Income                          │
+│  A ████████████░░  78th  287,000 SEK    │
+│  B ██████████░░░░  64th  245,000 SEK    │
+│     A is 17% higher                     │
+│                                         │
+│  School Quality                         │
+│  A ██████████████  91st  241 pts        │
+│  B ████████░░░░░░  52nd  209 pts        │
+│     A is 15% higher                     │
+│                                         │
+│  Employment Rate                        │
+│  A ██████████░░░░  65th  74.2%          │
+│  B ████████████░░  78th  79.1%          │
+│     B is 7% higher                      │
+│                                         │
+│  ... (all active indicators)            │
+│                                         │
+├─────────────────────────────────────────┤
+│                                         │
+│  VERDICT                                │
+│                                         │
+│  A is stronger in:                      │
+│  🟢 School Quality (+39 percentile pts) │
+│  🟢 Median Income (+14 percentile pts)  │
+│                                         │
+│  B is stronger in:                      │
+│  🟠 Employment Rate (+13 percentile pts)│
+│  🟠 Financial Stability (+8 pctl pts)   │
+│                                         │
+│  Similar in:                            │
+│  ⚪ Education Level (within 5 pts)      │
+│                                         │
+├─────────────────────────────────────────┤
+│                                         │
+│  [Share comparison]  [Save as PDF 🔒]   │
+│                                         │
+└─────────────────────────────────────────┘
+```
+
+### 4.2 Header Section
+
+Each location shows:
+- Pin color dot (blue/orange) + address or area name
+- Municipality name
+- DeSO area name (if available)
+- Distance between the two locations
+
+### 4.3 Composite Score Section
+
+Big numbers side by side. Each colored by the score gradient. Include the score label ("Stable", "Mixed Signals"). Show the difference: "+14 points" in favor of the higher one.
+
+### 4.4 Indicator Breakdown
+
+For each active indicator (sorted by weight, highest first):
+
+- Indicator name
+- Two horizontal bars (A on top, B below), each showing percentile rank
+- Raw value in parentheses
+- **Comparison sentence:** "A is 17% higher" or "Similar (within 3%)" or "B is 12% higher"
+- The "winner" bar gets its pin color accent; the "loser" gets a muted gray
+- If difference < 5 percentile points → show as "Similar" with neutral gray for both
+
+### 4.5 Verdict Section
+
+Summarize which location wins on which dimensions:
+
+- **A is stronger in:** list indicators where A leads by > 5 percentile points, sorted by gap size
+- **B is stronger in:** same for B
+- **Similar in:** indicators within 5 percentile point gap
+
+Use green badges for A's strengths, orange for B's strengths, gray for similar. This gives users the instant "bottom line" without reading every bar.
+
+### 4.6 Share Button
+
+"Share comparison" copies a URL like:
+```
+https://[domain]/?compare=59.3293,18.0686|59.3310,18.0300
+```
+
+This URL contains both lat/lng pairs. On load, it enters compare mode and places both pins.
+
+### 4.7 PDF Report (Paywall Placeholder)
+
+"Save as PDF" button with a lock icon (🔒). Clicking shows a gentle paywall message: "Full comparison reports are available with a premium account. Coming soon." This is a placeholder for the future payment system — the button exists now to signal the feature exists.
+
+---
+
+## Step 5: Backend — Comparison API
+
+### 5.1 Endpoint
 
 ```php
-class SkolverketApiService
+Route::post('/api/compare', [CompareController::class, 'compare']);
+```
+
+Request body:
+```json
 {
-    private string $registryBaseUrl = 'https://api.skolverket.se/skolenhetsregistret/v2';
-    private string $statsBaseUrl = 'https://api.skolverket.se/planned-educations/v3';
-
-    /**
-     * Fetch ALL school units from the registry, paginating through all pages.
-     * Returns a generator to avoid loading 10,000+ schools into memory at once.
-     */
-    public function fetchAllSchoolUnits(): \Generator
-    {
-        $page = 0;
-        $size = 100;  // Or whatever v2's max page size is
-
-        do {
-            $response = Http::acceptJson()
-                ->get("{$this->registryBaseUrl}/school-units", [
-                    'page' => $page,
-                    'size' => $size,
-                ]);
-
-            if (!$response->successful()) {
-                Log::error("Skolverket API error on page {$page}", [
-                    'status' => $response->status(),
-                    'body' => $response->body(),
-                ]);
-                break;
-            }
-
-            $data = $response->json();
-            $schoolUnits = $data['body'] ?? $data['_embedded']['school-units'] ?? $data;
-
-            // The exact response structure depends on v2 — agent must check Swagger
-            if (empty($schoolUnits) || !is_array($schoolUnits)) {
-                break;
-            }
-
-            foreach ($schoolUnits as $unit) {
-                yield $unit;
-            }
-
-            $page++;
-
-            // Rate limiting: be polite
-            usleep(150_000); // 150ms between requests
-
-            // Detect last page (check total pages from response metadata)
-            $totalPages = $data['totalPages'] ?? null;
-            $hasMore = $totalPages ? ($page < $totalPages) : (count($schoolUnits) === $size);
-
-        } while ($hasMore);
-    }
+  "point_a": { "lat": 59.3293, "lng": 18.0686 },
+  "point_b": { "lat": 59.3310, "lng": 18.0300 }
 }
 ```
 
-### 2.4 Key Fields to Extract per School Unit
+### 5.2 Response
 
-Map v2 field names (which are now in English) to our database columns:
-
-| v2 field (expected) | Our column |
-|---|---|
-| `schoolUnitCode` | `school_unit_code` |
-| `schoolUnitName` | `name` |
-| `municipalityCode` | `municipality_code` |
-| `municipalityName` | `municipality_name` |
-| `typeOfSchooling` | `type_of_schooling` |
-| `principalOrganizerType` | `operator_type` |
-| `principalOrganizerName` | `operator_name` |
-| `status` | `status` |
-| `wgs84Latitude` or equivalent | `lat` |
-| `wgs84Longitude` or equivalent | `lng` |
-| `postalAddress.street` | `address` |
-| `postalAddress.postalCode` | `postal_code` |
-| `postalAddress.city` | `city` |
-
-**Important:** The exact v2 field names may differ from v1. The agent MUST check the Swagger docs and/or make a sample API call to verify field names before writing the mapping code.
-
----
-
-## Step 3: Re-ingest All Schools
-
-### 3.1 Updated Command
-
-```bash
-php artisan ingest:skolverket-schools --force
+```json
+{
+  "location_a": {
+    "lat": 59.3293,
+    "lng": 18.0686,
+    "h3_index": "881f1d4a7ffffff",
+    "deso_code": "0180C1020",
+    "deso_name": "Norrmalm 0020",
+    "kommun_name": "Stockholm",
+    "label": "Norrmalm 0020",
+    "composite_score": 72.4,
+    "score_label": "Stable / Positive Outlook",
+    "indicators": {
+      "median_income": { "raw_value": 287000, "normalized": 0.78, "percentile": 78, "unit": "SEK" },
+      "school_merit_value_avg": { "raw_value": 241.2, "normalized": 0.91, "percentile": 91, "unit": "points" }
+    }
+  },
+  "location_b": {
+    // same structure
+  },
+  "distance_km": 2.31,
+  "comparison": {
+    "score_difference": 14.2,
+    "a_stronger": ["school_merit_value_avg", "median_income"],
+    "b_stronger": ["employment_rate"],
+    "similar": ["education_post_secondary_pct"]
+  }
+}
 ```
 
-The `--force` flag means: clear and re-import everything, not just upsert new ones. For a one-time re-ingestion to fix the data gap, this is cleaner than trying to incrementally patch.
-
-The command should:
-
-1. Fetch ALL school units from the v2 API (no school form filter — get everything)
-2. For each school unit:
-   - Parse all fields including coordinates and address
-   - Store type_of_schooling as-is (may be a list: a school unit can offer both grundskola and förskoleklass)
-   - If coordinates are present, create PostGIS point geometry
-   - Store with status (active/ceased)
-3. After import: run PostGIS spatial join to assign DeSO codes
-4. For schools without coordinates but with address: attempt geocoding (Step 4)
-5. Log comprehensive stats:
-
-```
-Total school units in API: 10,612
-  - Active: 10,198
-  - Ceased: 414
-  - With coordinates: 9,847
-  - Without coordinates: 765
-  - DeSO assigned: 9,721
-School forms breakdown:
-  - Grundskola: 4,748
-  - Gymnasieskola: 1,313
-  - Förskoleklass: 3,618
-  - Anpassad grundskola: 667
-  - Anpassad gymnasieskola: 251
-  - Specialskola: 10
-  - Sameskola: 5
-```
-
-### 3.2 Handle Multiple School Forms per Unit
-
-A single school unit code can offer multiple school forms (e.g., both grundskola and förskoleklass, or grundskola + anpassad grundskola). The `type_of_schooling` field may be a comma-separated list or an array.
-
-Store it as-is in a string field, but also add a JSON column for structured access:
-
-**Migration update:**
-
-```php
-$table->json('school_forms')->nullable();  // ["Grundskola", "Förskoleklass"]
-```
-
-When filtering for grundskola during indicator aggregation, use:
-
-```php
-School::whereJsonContains('school_forms', 'Grundskola')
-```
-
-Or if stored as a string:
-
-```php
-School::where('type_of_schooling', 'like', '%Grundskola%')
-```
-
----
-
-## Step 4: Geocoding Schools Without Coordinates
-
-### 4.1 The Problem
-
-Some schools in the registry have a street address but no lat/lng. These are still real schools that serve students in a DeSO — we shouldn't silently ignore them.
-
-### 4.2 Geocoding Strategy
-
-For schools with address + postal code + city but no coordinates:
-
-**Option A: Nominatim (free, OSM-based)**
-
-```php
-$response = Http::get('https://nominatim.openstreetmap.org/search', [
-    'q' => "{$school->address}, {$school->postal_code} {$school->city}, Sweden",
-    'format' => 'json',
-    'limit' => 1,
-    'countrycodes' => 'se',
-]);
-```
-
-Rate limit: 1 request per second. For ~700 schools, that's ~12 minutes.
-
-**Option B: Skip for now**
-
-If geocoding is too complex for this task, store the schools without coordinates and note them. They won't appear on the map and won't get DeSO assignments, but they'll be in the database for future geocoding.
-
-**Recommendation:** Use Nominatim. It's free, it's accurate enough for Sweden, and recovering ~700 schools from address data is worth 12 minutes of API calls.
-
-### 4.3 Geocoding Command
-
-```bash
-php artisan geocode:schools --source=nominatim
-```
-
-Runs only on schools where `lat IS NULL AND address IS NOT NULL`. Updates lat, lng, and geom. Then re-runs the DeSO spatial join for newly geocoded schools.
-
----
-
-## Step 5: Statistics Availability Problem
-
-### 5.1 The Sekretess Saga
-
-In September 2020, Skolverket was forced to stop publishing per-school statistics due to a court ruling that friskola (independent school) statistics are business secrets under Swedish secrecy law. This affected betyg, elevsammansättning, and behöriga lärare statistics.
-
-The situation has partially resolved:
-- **Pre-September 2020 statistics** were re-published (old data is available)
-- **New statistics** are being published again through Skolverket's search interface and the Planned Educations API, but with some restrictions
-- A temporary law allows Skolverket to share school-level data, but the permanent legal solution is still being worked out
-
-### 5.2 What This Means for Us
-
-The Planned Educations API v3 *should* have per-school statistics, but:
-- Not all schools may have stats (especially newer friskolor)
-- Some statistics may be suppressed if publishing them would identify a specific school with fewer than a threshold number of students
-- The API response structure for statistics may be complex
-
-### 5.3 Alternative/Supplementary Statistics Sources
-
-If the Planned Educations API doesn't give us sufficient coverage, these alternatives exist:
-
-**Source 1: Skolverket's "Sök statistik" Excel Downloads**
-
-Skolverket's statistics search page lets you download per-school data as Excel files:
-`https://www.skolverket.se/skolutveckling/statistik/sok-statistik-om-forskola-skola-och-vuxenutbildning`
-
-Download the bulk Excel file for grundskola with betyg/meritvärde. This may have broader coverage than the API for per-school grade data.
-
-**Source 2: Skolverket's "Välja skola" / Utbildningsguiden**
-
-Skolverket's school choice guide publishes per-school data for parents:
-- Grades (meritvärde)
-- Behöriga lärare percentage
-- National test results
-- Andel som nått kunskapskraven
-
-The underlying data is what we want. Check if it's available through an API or download.
-
-**Source 3: Kolada (Municipality Comparison Database)**
-
-SKR (Sveriges Kommuner och Regioner) publishes school statistics per municipality in Kolada:
-`https://www.kolada.se/`
-
-This is aggregated to municipality level (not per-school), but provides a fallback for municipalities where per-school data is restricted.
-
-**Source 4: J++ Skolstatistik Archive**
-
-Data journalists at J++ Stockholm scraped and archived Skolverket statistics before the 2020 blackout:
-`https://github.com/jplusplus/skolstatistik`
-
-Historical per-school data is available in their S3 archive. Useful for historical trends but should be used as supplementary data, not primary.
-
-### 5.4 Multi-Source Statistics Strategy
-
-1. **Primary:** Try Planned Educations API v3 for each school
-2. **Fallback 1:** Download Skolverket's bulk Excel statistics files for grundskola betyg
-3. **Fallback 2:** Use Kolada for municipal-level averages where per-school data is unavailable
-4. **Never:** Don't fabricate per-school stats from municipal averages — if we don't have per-school data, store NULL
-
----
-
-## Step 6: Rebuild Statistics Ingestion
-
-### 6.1 Updated Stats Command
-
-```bash
-php artisan ingest:skolverket-stats [--academic-year=2023/24] [--fallback-excel]
-```
-
-The command should:
-
-1. **Primary path:** For each active grundskola in our database, try the Planned Educations API v3
-   - Fetch `GET /v3/school-units/{schoolUnitCode}`
-   - Parse meritvärde, goal achievement, teacher certification from the response
-   - The agent MUST explore the Swagger docs to find the exact field paths — these are nested and may differ from expectations
-   - Accept header: `application/vnd.skolverket.plannededucations.api.v3.hal+json`
-
-2. **Fallback path:** If the API returns no statistics for many schools (>50% missing), download the bulk Excel file from Skolverket's statistics page and parse it with PhpSpreadsheet
-
-3. **Store all available stats** in `school_statistics` table
-
-4. **Log coverage:**
-
-```
-Statistics ingestion for 2023/24:
-  Grundskolor attempted: 4,748
-  Stats from API: 3,200
-  Stats from Excel fallback: 800
-  No stats available: 748
-  
-  Merit value: 3,100 schools (avg: 228.4, min: 148, max: 302)
-  Goal achievement: 3,400 schools
-  Teacher certification: 3,800 schools
-```
-
-### 6.2 Handle the "Dots" Problem
-
-Skolverket represents suppressed data as "." (a dot) in their statistics. This means the value exists but is hidden to protect student privacy (typically when fewer than 10 students are in a cohort). Store these as NULL in our database, not as 0. The distinction matters: 0 merit value means "all students failed" (which never happens), NULL means "data suppressed or unavailable."
-
----
-
-## Step 7: Re-aggregate School Quality Indicators
-
-After clean data is loaded:
-
-```bash
-# 1. Re-aggregate school quality to DeSO level
-php artisan aggregate:school-indicators --academic-year=2023/24
-
-# 2. Re-normalize all indicators (school quality percentiles will shift)
-php artisan normalize:indicators --year=2024
-
-# 3. Recompute composite scores (school quality now based on complete data)
-php artisan compute:scores --year=2024
-```
-
-### 7.1 Expected Impact
-
-With ~4,700 grundskolor instead of ~4,000 (or whatever subset we had before), more DeSOs will have school quality data. The indicators should now cover:
-- ~2,000-2,500 DeSOs with at least one grundskola (out of 6,160)
-- Remaining DeSOs have no schools and get NULL for school indicators (rural areas, industrial zones, etc.)
-
-The composite scores will shift because the school quality normalization is based on a more complete dataset.
-
-### 7.2 Updated Aggregation: Include Gymnasieskola?
-
-The original task said "only aggregate grundskola." Revisit this:
-
-**Keep grundskola as the primary quality indicator** (parents choosing where to live care most about grundskola). But **add a secondary indicator for gymnasieskola** quality in DeSOs that have one:
-
-| Indicator | School form | Weight |
-|---|---|---|
-| `school_merit_value_avg` | Grundskola | 0.12 |
-| `school_goal_achievement_avg` | Grundskola | 0.08 |
-| `school_teacher_certification_avg` | Grundskola | 0.05 |
-| `gymnasie_merit_avg` | Gymnasieskola | 0.00 (neutral, display only) |
-
-Gymnasieskola merit value is shown in the sidebar for information but doesn't contribute to the composite score. Students travel across municipalities for gymnasium — its presence in a DeSO doesn't affect real estate prices the way a good grundskola does.
-
----
-
-## Step 8: Update School Display
-
-### 8.1 School Form Badges in Sidebar
-
-Now that we have all school forms, the sidebar school list should show clear badges:
-
-```
-🏫 Årstaskolan                        
-Grundskola · F-9 · Kommunal            
-
-🏫 Östra Real
-Gymnasieskola · Kommunal               
-
-🏫 Danderyd anpassad grundskola
-Anpassad grundskola · Kommunal         
-```
-
-Use different badge colors for different school forms:
-- Grundskola: default (primary)
-- Gymnasieskola: blue badge
-- Anpassad grundskola/gymnasieskola: purple badge
-- Förskoleklass: gray badge (less important for our use case)
-
-### 8.2 Filter in Sidebar
-
-Add a simple filter toggle in the schools section:
-
-```
-Schools in this area (12)
-[All] [Grundskola] [Gymnasie] [Other]
-```
-
-Default to "All" but let users filter. The count updates based on the filter.
-
-### 8.3 Map Markers
-
-School markers on the map (for selected DeSO) should also reflect school form:
-- Grundskola: circle marker colored by quality (green/yellow/orange)
-- Gymnasieskola: square or diamond marker colored by quality
-- Other: small gray dot
-
----
-
-## Step 9: Verification
-
-### 9.1 Database Checks
+### 5.3 Resolution Logic
+
+For each point:
+1. Compute H3 index at resolution 8: `h3_latlng_to_cell(point, 8)`
+2. Look up smoothed score for that cell (from the h3_scores table)
+3. Look up all indicator values (join through deso_h3_mapping or direct h3 lookup depending on architecture)
+4. Resolve DeSO code via `ST_Contains` for the label
+5. Reverse-geocode via Photon (optional — only if we want address labels instead of DeSO names)
+
+### 5.4 Distance Calculation
 
 ```sql
--- Total schools after re-ingestion
-SELECT COUNT(*) FROM schools;
--- Target: 10,000-11,000 (including ceased schools)
-
--- Active schools
-SELECT COUNT(*) FROM schools WHERE status = 'active';
--- Target: ~10,000-10,200
-
--- Schools by form
-SELECT type_of_schooling, COUNT(*)
-FROM schools
-WHERE status = 'active'
-GROUP BY type_of_schooling
-ORDER BY COUNT(*) DESC;
--- Verify grundskola ~4,700, gymnasie ~1,300, etc.
-
--- Schools with coordinates
-SELECT COUNT(*) FROM schools WHERE lat IS NOT NULL AND status = 'active';
--- Target: 9,500+ (most should have coords after geocoding)
-
--- Schools with DeSO assignment
-SELECT COUNT(*) FROM schools WHERE deso_code IS NOT NULL AND status = 'active';
--- Target: 9,500+ (same as coordinates — PostGIS assigns from coords)
-
--- DeSOs with at least one grundskola
-SELECT COUNT(DISTINCT deso_code)
-FROM schools
-WHERE type_of_schooling LIKE '%Grundskola%'
-  AND status = 'active'
-  AND deso_code IS NOT NULL;
--- Target: 2,000-2,500 DeSOs
-
--- Statistics coverage
-SELECT COUNT(DISTINCT ss.school_unit_code)
-FROM school_statistics ss
-JOIN schools s ON s.school_unit_code = ss.school_unit_code
-WHERE s.type_of_schooling LIKE '%Grundskola%';
--- Target: 3,500+ grundskolor with some statistics
-
--- Schools in Stockholm kommun (sanity check)
-SELECT type_of_schooling, COUNT(*)
-FROM schools
-WHERE municipality_code = '0180'
-  AND status = 'active'
-GROUP BY type_of_schooling;
--- Stockholm should have hundreds of schools
+SELECT ST_Distance(
+    ST_SetSRID(ST_MakePoint(:lng_a, :lat_a), 4326)::geography,
+    ST_SetSRID(ST_MakePoint(:lng_b, :lat_b), 4326)::geography
+) / 1000 as distance_km;
 ```
 
-### 9.2 Compare Before and After
+---
 
-```sql
--- How many DeSOs gained school quality indicators?
--- (Compare indicator_values count for school indicators before and after)
-SELECT i.slug, COUNT(iv.id) as deso_count
-FROM indicator_values iv
-JOIN indicators i ON i.id = iv.indicator_id
-WHERE i.source = 'skolverket'
-GROUP BY i.slug;
+## Step 6: Frontend Implementation
 
--- Score shift: how much did the top/bottom DeSOs change?
--- (Compare with previous composite_scores if you have a backup)
+### 6.1 State Management
+
+Compare mode state:
+```typescript
+interface CompareState {
+  active: boolean;
+  pinA: { lat: number; lng: number; label: string } | null;
+  pinB: { lat: number; lng: number; label: string } | null;
+  result: CompareResult | null;
+  loading: boolean;
+}
 ```
 
-### 9.3 Visual Checklist
+Store in React state (not URL — URL only gets synced when user clicks "Share"). The compare state lives alongside the existing selected-area state and overrides the sidebar when active.
 
-- [ ] School count in database matches expected totals (~10,000+ active)
-- [ ] All major school forms present (grundskola, gymnasie, förskoleklass, anpassad)
-- [ ] Schools visible on map for selected DeSOs — more than before
-- [ ] Sidebar school list shows school form badges
-- [ ] School filter works in sidebar
-- [ ] DeSOs that previously showed "no schools" now show schools (if applicable)
-- [ ] Statistics coverage is reasonable (~70-80% of grundskolor have meritvärde data)
-- [ ] Composite scores have shifted slightly (expected — more complete data)
-- [ ] Stockholm inner city DeSOs show dozens of schools (sanity check)
-- [ ] Rural DeSOs correctly show 0-1 schools (not a data gap — genuinely no schools)
+### 6.2 Map Click Handler
+
+In compare mode, the map click handler changes:
+```typescript
+if (compareState.active) {
+  const coords = toLonLat(evt.coordinate);
+  if (!compareState.pinA) {
+    setCompareState(prev => ({ ...prev, pinA: { lat: coords[1], lng: coords[0] } }));
+  } else {
+    setCompareState(prev => ({ ...prev, pinB: { lat: coords[1], lng: coords[0] } }));
+    // Fetch comparison data
+    fetchComparison(compareState.pinA, { lat: coords[1], lng: coords[0] });
+  }
+} else {
+  // Normal hex/DeSO click behavior
+}
+```
+
+### 6.3 OpenLayers Layers
+
+Add a dedicated `VectorLayer` for comparison markers:
+- Two point features for Pin A and Pin B
+- One LineString feature for the connection line
+- Styled with the blue/orange color scheme
+- Layer zIndex above the hex layer but below any overlays
+
+### 6.4 ComparisonSidebar Component
+
+Replace the normal sidebar content when compare result is available:
+
+```tsx
+<ComparisonSidebar
+  result={compareResult}
+  onClose={() => exitCompareMode()}
+  onSwapPins={() => swapPins()}
+  onShare={() => copyShareUrl()}
+/>
+```
+
+Include a **swap button** (⇄) in the header that swaps Pin A and Pin B. This is a small touch that feels great — user placed pins in the wrong order, one click fixes it.
+
+---
+
+## Step 7: Mobile
+
+### 7.1 Mobile Compare Flow
+
+On mobile (< 768px), comparison works differently:
+
+1. Compare button enters compare mode with same banner
+2. First tap places Pin A, bottom sheet shows "Pin A placed at [location]. Tap another point."
+3. Second tap places Pin B, bottom sheet expands to show comparison
+4. Bottom sheet is scrollable with all comparison sections
+5. Map is still visible above (60% map, 40% bottom sheet, same as existing layout)
+
+### 7.2 Mobile Sidebar Adjustments
+
+The comparison sidebar content should stack vertically on mobile. Indicator bars still work (they're already full-width). The "A vs B" layout switches from side-by-side to stacked:
+
+```
+COMPOSITE SCORE
+● A: Norrmalm — 72 (Stable)
+● B: Kungsholmen — 58 (Mixed)
+Difference: +14 points
+```
+
+---
+
+## Step 8: URL State & Sharing
+
+### 8.1 URL Format
+
+When user clicks "Share comparison":
+```
+https://[domain]/?compare=59.3293,18.0686|59.3310,18.0300
+```
+
+### 8.2 Load from URL
+
+On page load, check for `compare` parameter:
+1. Parse the two coordinate pairs
+2. Enter compare mode
+3. Place both pins
+4. Fetch comparison data
+5. Show results in sidebar
+
+### 8.3 Integration with Search URL
+
+If the search task already uses `?q=...` parameter, comparison uses `?compare=...`. They're mutually exclusive — a URL has either `q` or `compare`, never both.
+
+---
+
+## Step 9: Edge Cases
+
+### 9.1 Same Location
+
+If both pins are in the same H3 cell (or within 50m of each other), show a friendly message: "These locations are in the same area. Try comparing locations further apart." Don't block — still show the (identical) data.
+
+### 9.2 Location Outside Sweden
+
+If either pin is outside Sweden's bounding box (lat 55.0–69.5, lng 10.5–24.5), show: "Comparison is only available for locations within Sweden." Don't place the pin.
+
+### 9.3 Missing Data
+
+If one location has data but the other doesn't (e.g., a rural area with no scores), show what's available with "No data" for missing indicators. Don't block the entire comparison.
+
+### 9.4 Network Error
+
+If the comparison API fails, show a retry button: "Couldn't load comparison data. [Retry]"
+
+---
+
+## Step 10: Verification
+
+### 10.1 Functional Checklist
+
+- [ ] Compare button appears in map controls
+- [ ] Clicking it enters compare mode (crosshair cursor, banner)
+- [ ] First map click places blue Pin A
+- [ ] Second map click places orange Pin B
+- [ ] Sidebar switches to comparison view with both locations' data
+- [ ] All active indicators shown as paired bars with percentile + raw value
+- [ ] Verdict section correctly identifies which location wins on which indicators
+- [ ] Distance shown between the two points
+- [ ] Pins are draggable — dragging updates the comparison
+- [ ] Third click replaces Pin B (not A)
+- [ ] "Compare with another area" button works from single-area view
+- [ ] Search works in compare mode (results become pins)
+- [ ] Swap button switches A and B
+- [ ] Share button copies URL with both coordinates
+- [ ] Loading shared URL enters compare mode with correct pins
+- [ ] Exiting compare mode clears pins and returns to normal view
+- [ ] Escape key exits compare mode
+- [ ] Mobile: comparison works with bottom sheet
+
+### 10.2 Test Scenarios
+
+1. **Stockholm inner city vs suburb:** Norrmalm vs Rinkeby — should show dramatic differences across most indicators
+2. **Adjacent areas:** Two DeSOs next to each other — differences should be small, verdict shows mostly "Similar"
+3. **Different cities:** Stockholm vs Gothenburg — works, shows distance
+4. **Same area:** Click the same spot twice — shows "same area" message
+5. **Rural vs urban:** A Norrland DeSO vs central Stockholm — some indicators may be missing for rural area
+6. **Pin outside Sweden:** Click on Norway — rejects with message
 
 ---
 
 ## Notes for the Agent
 
-### API v2 is Critical
+### Why Not DeSO-to-DeSO Comparison
 
-Do not try to fix this by patching the v1 ingestion. v1 is deprecated and will stop working. Migrate to v2 first, then re-ingest. The agent should explore the v2 Swagger docs carefully before writing any code.
+The original question was "compare two fully qualified addresses or two points." This is better than DeSO-to-DeSO because:
+1. Users think in addresses, not administrative units
+2. With H3 + smoothing, the score at any point is unique (not one flat score per polygon)
+3. Address entry feels more natural: "compare my apartment vs the one I'm looking at on Hemnet"
+4. It works regardless of zoom level or spatial unit
 
-### The Excel Download is a Safety Net
+### The "Pin A stays, Pin B rotates" Pattern
 
-Skolverket publishes a daily Excel extract of the full registry:
-`https://www.skolverket.se/om-skolverket/webbplatser-och-tjanster/andra-webbplatser-och-tjanster/skolenhetsregistret`
+This is deliberate. The primary use case is: "I live at X, should I move to Y or Z?" Pin A is "home base." The user places it once, then clicks around exploring alternatives. Each click updates Pin B and refreshes the comparison. This is much faster than having to place two new pins each time.
 
-If the API v2 migration is proving difficult, download the Excel file, parse it with PhpSpreadsheet, and import from there. It contains the same data. The API is better for ongoing daily updates, but the Excel file works perfectly for a one-time re-ingestion.
+### Don't Over-engineer the Backend
 
-### Statistics Are the Harder Problem
+The comparison endpoint is just two parallel score lookups + a diff. Don't build a special comparison table or pre-compute pairs. The data already exists — we're just presenting two results side by side with some computed differences.
 
-Getting all school *locations* is straightforward (the registry API has them). Getting *statistics* (meritvärde, goal achievement) is harder due to the sekretess situation. The Planned Educations API may not have stats for all schools. The agent should:
+### Integration Dependencies
 
-1. Try the API first
-2. Check coverage (what percentage of grundskolor got stats?)
-3. If coverage is low (<60%), download the bulk Excel statistics from Skolverket's stats page
-4. If coverage is still low, accept it — some schools genuinely don't have published statistics (small cohorts, new schools, schools that opted out of the system)
+This task depends on:
+- **Map search** (Photon geocoding) — for address entry in compare mode
+- **H3 implementation** — for resolving points to scored cells
+- **Geolocation** (locate-me) — optional, but "compare my location with..." is a great flow
 
-### Don't Delete Schools That Exist
-
-When re-ingesting, use upsert (updateOrCreate) on school_unit_code. Don't truncate the table — you'll lose any manual corrections or geocoding results. The `--force` flag should mean "re-fetch and overwrite from API" not "delete everything."
-
-### What to Prioritize
-
-1. **Audit current state** — understand exactly what we have and what's missing
-2. **Migrate to API v2** — this is the root fix
-3. **Re-ingest all school units** — get to ~10,000+
-4. **Geocode missing coordinates** — recover ~700 schools
-5. **Re-run DeSO spatial join** — assign newly imported schools to DeSOs
-6. **Re-ingest statistics** — this is where it gets messy
-7. **Re-aggregate and recompute** — update the scores
-8. **UI updates** (badges, filters) — polish, do last
+If search isn't implemented yet, comparison still works via map clicks only. Search integration can be added later.
 
 ### What NOT to Do
 
-- Don't keep using API v1 — it's deprecated
-- Don't only import grundskola — import all forms, filter for scoring
-- Don't fabricate statistics for schools that don't have data
-- Don't treat "." (dot) values as zero — they're suppressed data, store as NULL
-- Don't skip geocoding — 700 schools is significant coverage
-- Don't assume the v2 API has the same field names as v1 — check the Swagger
+- Don't build a separate comparison page — keep it in the sidebar on the same map
+- Don't allow comparing more than 2 locations (keep it simple — 3-way comparison is confusing)
+- Don't show comparison in a modal/overlay — the sidebar is the right place
+- Don't hide the map during comparison — both pins visible on the map IS the feature
+- Don't use DeSO names as the only identifier — always try to show an address or at least kommun + area name
