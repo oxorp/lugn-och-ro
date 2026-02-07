@@ -21,6 +21,7 @@ import MapSearch from '@/components/map-search';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
+import { useTranslation } from '@/hooks/use-translation';
 import MapLayout from '@/layouts/map-layout';
 import {
     type SearchResult,
@@ -90,28 +91,6 @@ interface FinancialData {
     is_estimated: boolean;
 }
 
-const INDICATOR_LABELS: Record<string, string> = {
-    median_income: 'Median Income',
-    low_economic_standard_pct: 'Low Economic Standard',
-    employment_rate: 'Employment Rate',
-    education_post_secondary_pct: 'Post-Secondary Education',
-    education_below_secondary_pct: 'Below Secondary Education',
-    foreign_background_pct: 'Foreign Background',
-    population: 'Population',
-    rental_tenure_pct: 'Rental Housing',
-    school_merit_value_avg: 'School Merit Value',
-    school_goal_achievement_avg: 'School Goal Achievement',
-    school_teacher_certification_avg: 'Teacher Certification',
-    crime_violent_rate: 'Violent Crime Rate',
-    crime_property_rate: 'Property Crime Rate',
-    crime_total_rate: 'Total Crime Rate',
-    perceived_safety: 'Perceived Safety',
-    vulnerability_flag: 'Vulnerability Area',
-    debt_rate_pct: 'Debt Rate (KFM)',
-    eviction_rate: 'Eviction Rate',
-    median_debt_sek: 'Median Debt',
-};
-
 function scoreColor(score: number): string {
     if (score >= 70) return 'text-green-700';
     if (score >= 40) return 'text-yellow-700';
@@ -124,12 +103,15 @@ function scoreBgColor(score: number): string {
     return 'bg-purple-700';
 }
 
-function scoreLabel(score: number): string {
-    if (score >= 80) return 'Strong Growth Area';
-    if (score >= 60) return 'Positive Indicators';
-    if (score >= 40) return 'Mixed Signals';
-    if (score >= 20) return 'Challenging Area';
-    return 'High Risk Area';
+function useScoreLabel(): (score: number) => string {
+    const { t } = useTranslation();
+    return (score: number) => {
+        if (score >= 80) return t('sidebar.score.strong_growth');
+        if (score >= 60) return t('sidebar.score.positive');
+        if (score >= 40) return t('sidebar.score.mixed');
+        if (score >= 20) return t('sidebar.score.challenging');
+        return t('sidebar.score.high_risk');
+    };
 }
 
 function TrendIcon({ trend }: { trend: number | null }) {
@@ -140,12 +122,6 @@ function TrendIcon({ trend }: { trend: number | null }) {
         return <ArrowDown className="h-4 w-4 text-red-600" />;
     return <ArrowRight className="h-4 w-4 text-gray-400" />;
 }
-
-const URBANITY_LABELS: Record<string, string> = {
-    urban: 'urban',
-    semi_urban: 'semi-urban',
-    rural: 'rural',
-};
 
 function FactorBar({
     label,
@@ -158,16 +134,21 @@ function FactorBar({
     scope?: 'national' | 'urbanity_stratified';
     urbanityTier?: string | null;
 }) {
+    const { t } = useTranslation();
     const pct = Math.round(value * 100);
     const isStratified = scope === 'urbanity_stratified' && urbanityTier;
-    const tierLabel = urbanityTier ? URBANITY_LABELS[urbanityTier] ?? urbanityTier : '';
+    const tierLabel = urbanityTier
+        ? t(`sidebar.urbanity.${urbanityTier}`, { defaultValue: urbanityTier })
+        : '';
 
     return (
         <div className="space-y-0.5">
             <div className="flex justify-between text-xs">
                 <span className="text-muted-foreground">{label}</span>
                 <span className="font-medium">
-                    {pct}{isStratified ? `th among ${tierLabel}` : 'th pctl'}
+                    {isStratified
+                        ? t('sidebar.indicators.percentile_stratified', { value: pct, tier: tierLabel })
+                        : t('sidebar.indicators.percentile_national', { value: pct })}
                 </span>
             </div>
             <div className="h-2 w-full overflow-hidden rounded-full bg-gray-100">
@@ -196,6 +177,8 @@ function SchoolCard({
     highlighted: boolean;
     onRef: (el: HTMLDivElement | null) => void;
 }) {
+    const { t } = useTranslation();
+
     return (
         <div
             ref={onRef}
@@ -206,7 +189,7 @@ function SchoolCard({
                     <div className="truncate text-sm font-medium">{school.name}</div>
                     <div className="text-muted-foreground flex items-center gap-1.5 text-xs">
                         {school.type && <span>{school.type}</span>}
-                        {school.type && school.operator_type && <span>·</span>}
+                        {school.type && school.operator_type && <span>&middot;</span>}
                         {school.operator_type && (
                             <Badge variant="outline" className="text-[10px] px-1 py-0">
                                 {school.operator_type}
@@ -219,7 +202,7 @@ function SchoolCard({
                 {school.merit_value !== null && (
                     <div className="space-y-0.5">
                         <div className="flex justify-between text-xs">
-                            <span className="text-muted-foreground">Meritvärde</span>
+                            <span className="text-muted-foreground">{t('sidebar.schools.merit_value')}</span>
                             <span className="font-medium">{school.merit_value.toFixed(0)}</span>
                         </div>
                         <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
@@ -233,7 +216,7 @@ function SchoolCard({
                 {school.goal_achievement !== null && (
                     <div className="space-y-0.5">
                         <div className="flex justify-between text-xs">
-                            <span className="text-muted-foreground">Goal ach.</span>
+                            <span className="text-muted-foreground">{t('sidebar.schools.goal_achievement')}</span>
                             <span className="font-medium">{school.goal_achievement.toFixed(0)}%</span>
                         </div>
                         <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
@@ -247,7 +230,7 @@ function SchoolCard({
                 {school.teacher_certification !== null && (
                     <div className="space-y-0.5">
                         <div className="flex justify-between text-xs">
-                            <span className="text-muted-foreground">Teachers</span>
+                            <span className="text-muted-foreground">{t('sidebar.schools.teachers')}</span>
                             <span className="font-medium">{school.teacher_certification.toFixed(0)}%</span>
                         </div>
                         <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
@@ -260,7 +243,7 @@ function SchoolCard({
                 )}
                 {school.student_count !== null && (
                     <div className="text-muted-foreground mt-1 text-xs">
-                        {school.student_count} students
+                        {t('sidebar.schools.students_count', { count: school.student_count })}
                     </div>
                 )}
             </div>
@@ -269,6 +252,8 @@ function SchoolCard({
 }
 
 function VulnerabilityCard({ vulnerability }: { vulnerability: CrimeData['vulnerability'] }) {
+    const { t } = useTranslation();
+
     if (!vulnerability) return null;
 
     const isSarskilt = vulnerability.tier === 'sarskilt_utsatt';
@@ -294,17 +279,16 @@ function VulnerabilityCard({ vulnerability }: { vulnerability: CrimeData['vulner
                             isSarskilt ? 'text-red-800' : 'text-amber-800'
                         }`}
                     >
-                        Polisens {vulnerability.tier_label}
+                        {t('sidebar.vulnerability.police_label', { label: vulnerability.tier_label })}
                     </div>
                     <div
                         className={`mt-1 text-xs ${
                             isSarskilt ? 'text-red-700' : 'text-amber-700'
                         }`}
                     >
-                        This area overlaps with &ldquo;{vulnerability.name}&rdquo; &mdash;
-                        classified as{' '}
+                        {t('sidebar.vulnerability.overlap_description', { name: vulnerability.name })}{' '}
                         <span className="font-semibold uppercase">
-                            {isSarskilt ? 'SÄRSKILT UTSATT' : 'UTSATT'}
+                            {isSarskilt ? t('sidebar.vulnerability.sarskilt_utsatt') : t('sidebar.vulnerability.utsatt')}
                         </span>{' '}
                         ({vulnerability.assessment_year})
                     </div>
@@ -323,16 +307,16 @@ function CrimeRateBar({
     rate: number | null;
     percentile: number | null;
 }) {
+    const { t } = useTranslation();
+
     if (rate === null || percentile === null) return null;
 
-    // For crime: low percentile = low crime = good, high = bad
-    // Invert display: show "safeness" where 100 = safest
     const safeness = 100 - percentile;
     return (
         <div className="space-y-0.5">
             <div className="flex justify-between text-xs">
                 <span className="text-muted-foreground">{label}</span>
-                <span className="font-medium">{Math.round(safeness)}th pctl</span>
+                <span className="font-medium">{t('sidebar.indicators.percentile_national', { value: Math.round(safeness) })}</span>
             </div>
             <div className="h-2 w-full overflow-hidden rounded-full bg-gray-100">
                 <div
@@ -341,7 +325,7 @@ function CrimeRateBar({
                 />
             </div>
             <div className="text-muted-foreground text-[10px]">
-                est. {rate.toLocaleString()}/100k
+                {t('sidebar.crime.estimated_rate', { value: rate.toLocaleString() })}
             </div>
         </div>
     );
@@ -354,6 +338,8 @@ function CrimeSection({
     crimeData: CrimeData | null;
     loading: boolean;
 }) {
+    const { t } = useTranslation();
+
     if (loading) {
         return (
             <div className="space-y-3">
@@ -374,16 +360,16 @@ function CrimeSection({
             <div>
                 <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     <Shield className="h-3.5 w-3.5" />
-                    Crime & Safety
+                    {t('sidebar.crime.title')}
                 </div>
                 <div className="space-y-2.5">
                     <CrimeRateBar
-                        label="Violent crime"
+                        label={t('sidebar.crime.violent')}
                         rate={crimeData.estimated_rates.violent.rate}
                         percentile={crimeData.estimated_rates.violent.percentile}
                     />
                     <CrimeRateBar
-                        label="Property crime"
+                        label={t('sidebar.crime.property')}
                         rate={crimeData.estimated_rates.property.rate}
                         percentile={crimeData.estimated_rates.property.percentile}
                     />
@@ -392,10 +378,10 @@ function CrimeSection({
                             <div className="space-y-0.5">
                                 <div className="flex justify-between text-xs">
                                     <span className="text-muted-foreground">
-                                        Perceived safety
+                                        {t('sidebar.crime.perceived_safety')}
                                     </span>
                                     <span className="font-medium">
-                                        {Math.round(crimeData.perceived_safety.percentile)}th pctl
+                                        {t('sidebar.indicators.percentile_national', { value: Math.round(crimeData.perceived_safety.percentile) })}
                                     </span>
                                 </div>
                                 <div className="h-2 w-full overflow-hidden rounded-full bg-gray-100">
@@ -407,7 +393,7 @@ function CrimeSection({
                                     />
                                 </div>
                                 <div className="text-muted-foreground text-[10px]">
-                                    {crimeData.perceived_safety.percent_safe}% feel safe at night
+                                    {t('sidebar.crime.feel_safe', { value: crimeData.perceived_safety.percent_safe })}
                                 </div>
                             </div>
                         )}
@@ -415,17 +401,18 @@ function CrimeSection({
             </div>
 
             <div className="rounded border border-dashed border-gray-200 px-2.5 py-2 text-[10px] text-muted-foreground">
-                Crime rates are estimated from kommun-level data ({crimeData.kommun_name}) using
-                demographic weighting. Kommun total: {crimeData.kommun_actual_rates.total?.toLocaleString()}/100k.
+                {t('sidebar.crime.disclaimer', {
+                    kommun: crimeData.kommun_name,
+                    total: crimeData.kommun_actual_rates.total?.toLocaleString() ?? '',
+                })}
             </div>
 
-            {/* Future: Recent Incidents placeholder */}
             <div className="rounded-lg border border-dashed p-3 text-center">
                 <div className="text-xs font-medium text-muted-foreground">
-                    Recent Incidents
+                    {t('sidebar.crime.recent_incidents')}
                 </div>
                 <div className="mt-0.5 text-[10px] text-muted-foreground">
-                    Coming soon &mdash; real-time tracking of police reports and news.
+                    {t('sidebar.crime.recent_incidents_hint')}
                 </div>
             </div>
         </div>
@@ -472,6 +459,8 @@ function FinancialSection({
     data: FinancialData | null;
     loading: boolean;
 }) {
+    const { t } = useTranslation();
+
     if (loading) {
         return (
             <div className="space-y-3">
@@ -491,12 +480,13 @@ function FinancialSection({
                         <TriangleAlert className="mt-0.5 h-5 w-5 shrink-0 text-orange-600" />
                         <div>
                             <div className="text-sm font-semibold text-orange-800">
-                                Elevated Financial Distress
+                                {t('sidebar.financial.elevated_distress')}
                             </div>
                             <div className="mt-1 text-xs text-orange-700">
-                                Estimated debt rate of {data.estimated_debt_rate}%,
-                                significantly above the national average of{' '}
-                                {data.national_avg_rate}%.
+                                {t('sidebar.financial.elevated_distress_desc', {
+                                    rate: data.estimated_debt_rate,
+                                    avg: data.national_avg_rate,
+                                })}
                             </div>
                         </div>
                     </div>
@@ -506,22 +496,22 @@ function FinancialSection({
             <div>
                 <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     <Landmark className="h-3.5 w-3.5" />
-                    Financial Health
+                    {t('sidebar.financial.title')}
                 </div>
                 <div className="space-y-2.5">
                     <FinancialRateBar
-                        label="Debt rate"
+                        label={t('sidebar.financial.debt_rate')}
                         value={data.estimated_debt_rate}
                         suffix="%"
                         maxValue={10}
                     />
                     {data.kommun_actual_rate !== null && (
                         <div className="text-muted-foreground -mt-1.5 text-[10px]">
-                            kommun avg: {data.kommun_actual_rate}%
+                            {t('sidebar.financial.kommun_avg', { value: data.kommun_actual_rate })}
                         </div>
                     )}
                     <FinancialRateBar
-                        label="Evictions"
+                        label={t('sidebar.financial.evictions')}
                         value={data.estimated_eviction_rate}
                         suffix="/100k"
                         maxValue={80}
@@ -530,13 +520,12 @@ function FinancialSection({
                         <div className="space-y-0.5">
                             <div className="flex justify-between text-xs">
                                 <span className="text-muted-foreground">
-                                    Median debt
+                                    {t('sidebar.financial.median_debt')}
                                 </span>
                                 <span className="font-medium">
-                                    {Math.round(
-                                        data.kommun_median_debt / 1000,
-                                    ).toLocaleString()}
-                                    k SEK
+                                    {t('sidebar.financial.sek_thousands', {
+                                        value: Math.round(data.kommun_median_debt / 1000).toLocaleString(),
+                                    })}
                                 </span>
                             </div>
                         </div>
@@ -545,18 +534,23 @@ function FinancialSection({
             </div>
 
             <div className="rounded border border-dashed border-gray-200 px-2.5 py-2 text-[10px] text-muted-foreground">
-                Estimated from kommun-level Kronofogden data
-                {data.kommun_name && <> ({data.kommun_name})</>} using demographic
-                weighting.
-                {data.kommun_actual_rate !== null && (
-                    <> Kommun actual rate: {data.kommun_actual_rate}%.</>
-                )}
+                {data.kommun_actual_rate !== null
+                    ? t('sidebar.financial.disclaimer', {
+                          kommun: data.kommun_name ?? '',
+                          rate: data.kommun_actual_rate,
+                      })
+                    : t('sidebar.financial.disclaimer_no_rate', {
+                          kommun: data.kommun_name ?? '',
+                      })}
             </div>
         </div>
     );
 }
 
 export default function MapPage({ initialCenter, initialZoom, indicatorScopes }: MapPageProps) {
+    const { t } = useTranslation();
+    const scoreLabel = useScoreLabel();
+
     const [selectedDeso, setSelectedDeso] = useState<DesoProperties | null>(null);
     const [selectedScore, setSelectedScore] = useState<DesoScore | null>(null);
     const [schools, setSchools] = useState<School[]>([]);
@@ -569,6 +563,11 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes }:
     const [searchNotInDeso, setSearchNotInDeso] = useState(false);
     const schoolRefs = useRef<Record<string, HTMLDivElement | null>>({});
     const mapRef = useRef<DesoMapHandle | null>(null);
+
+    const indicatorLabel = useCallback(
+        (slug: string) => t(`sidebar.indicators.labels.${slug}`, { defaultValue: slug }),
+        [t],
+    );
 
     const handleFeatureSelect = useCallback(
         (properties: DesoProperties | null, score: DesoScore | null) => {
@@ -638,10 +637,8 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes }:
         (result: SearchResult) => {
             setSearchNotInDeso(false);
 
-            // Clear previous search state
             mapRef.current?.clearSearchMarker();
 
-            // Zoom to result
             if (result.extent) {
                 const [west, north, east, south] = result.extent;
                 mapRef.current?.zoomToExtent(west, south, east, north);
@@ -650,10 +647,8 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes }:
                 mapRef.current?.zoomToPoint(result.lat, result.lng, zoom);
             }
 
-            // Place search pin
             mapRef.current?.placeSearchMarker(result.lat, result.lng);
 
-            // Auto-select DeSO for precise results
             if (shouldAutoSelectDeso(result.type)) {
                 fetch(
                     `/api/geocode/resolve-deso?lat=${result.lat}&lng=${result.lng}`,
@@ -665,14 +660,12 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes }:
                                 data.deso.deso_code,
                             );
 
-                            // Update URL
                             const url = new URL(window.location.href);
                             url.searchParams.set('q', result.name);
                             url.searchParams.set('deso', data.deso.deso_code);
                             window.history.replaceState({}, '', url.toString());
                         } else {
                             setSearchNotInDeso(true);
-                            // Update URL with just the search query
                             const url = new URL(window.location.href);
                             url.searchParams.set('q', result.name);
                             url.searchParams.delete('deso');
@@ -683,7 +676,6 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes }:
                         // Don't block the UI if resolve fails
                     });
             } else {
-                // City/county/state: just update URL, no DeSO selection
                 const url = new URL(window.location.href);
                 url.searchParams.set('q', result.name);
                 url.searchParams.delete('deso');
@@ -699,14 +691,12 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes }:
         mapRef.current?.clearSelection();
         mapRef.current?.clearSchoolMarkers();
 
-        // Remove search params from URL
         const url = new URL(window.location.href);
         url.searchParams.delete('q');
         url.searchParams.delete('deso');
         window.history.replaceState({}, '', url.toString());
     }, []);
 
-    // Notify map to resize when sidebar content changes
     useEffect(() => {
         const timer = setTimeout(() => {
             mapRef.current?.updateSize();
@@ -716,7 +706,7 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes }:
 
     return (
         <MapLayout>
-            <Head title="Map" />
+            <Head title={t('map.head_title')} />
 
             <div className="relative min-h-0 flex-1">
                 <DesoMap
@@ -751,9 +741,9 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes }:
                                         </div>
                                     )}
                                     <div className="text-muted-foreground mt-1 text-xs">
-                                        {selectedDeso.kommun_name ?? 'Unknown'} · {selectedDeso.lan_name ?? 'Unknown'}
+                                        {selectedDeso.kommun_name ?? t('sidebar.header.unknown')} &middot; {selectedDeso.lan_name ?? t('sidebar.header.unknown')}
                                         {selectedDeso.area_km2 !== null && (
-                                            <> · {selectedDeso.area_km2.toFixed(2)} km²</>
+                                            <> &middot; {selectedDeso.area_km2.toFixed(2)} km&sup2;</>
                                         )}
                                     </div>
                                 </div>
@@ -770,7 +760,7 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes }:
                                             <span className="text-muted-foreground text-xs">
                                                 {selectedScore.trend_1y !== null
                                                     ? `${selectedScore.trend_1y > 0 ? '+' : ''}${selectedScore.trend_1y.toFixed(1)}`
-                                                    : 'N/A'}
+                                                    : t('sidebar.score.na')}
                                             </span>
                                         </div>
                                         <div className="text-muted-foreground mt-0.5 text-[11px]">
@@ -786,14 +776,14 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes }:
                                     <Separator />
                                     <div>
                                         <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                                            Indicator Breakdown
+                                            {t('sidebar.indicators.title')}
                                         </div>
                                         <div className="space-y-2">
                                             {Object.entries(selectedScore.factor_scores).map(
                                                 ([slug, value]) => (
                                                     <FactorBar
                                                         key={slug}
-                                                        label={INDICATOR_LABELS[slug] || slug}
+                                                        label={indicatorLabel(slug)}
                                                         value={value}
                                                         scope={indicatorScopes[slug]}
                                                         urbanityTier={selectedScore.urbanity_tier}
@@ -817,7 +807,9 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes }:
                             <Separator />
                             <div>
                                 <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                                    Schools in this area ({schoolsLoading ? '...' : schools.length})
+                                    {schoolsLoading
+                                        ? t('sidebar.schools.title_loading')
+                                        : t('sidebar.schools.title_count', { count: schools.length })}
                                 </div>
                                 {schoolsLoading ? (
                                     <div className="space-y-3">
@@ -840,7 +832,7 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes }:
                                     </div>
                                 ) : (
                                     <div className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">
-                                        No schools are located in this DeSO area.
+                                        {t('sidebar.schools.empty')}
                                     </div>
                                 )}
                             </div>
@@ -855,7 +847,7 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes }:
                                             selectedScore.top_positive.length > 0 && (
                                                 <div>
                                                     <div className="mb-1 text-xs font-medium text-green-700">
-                                                        Strengths
+                                                        {t('sidebar.strengths')}
                                                     </div>
                                                     <div className="flex flex-wrap gap-1">
                                                         {selectedScore.top_positive.map((slug) => (
@@ -864,7 +856,7 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes }:
                                                                 className="bg-green-100 text-green-800"
                                                                 variant="secondary"
                                                             >
-                                                                {INDICATOR_LABELS[slug] || slug}
+                                                                {indicatorLabel(slug)}
                                                             </Badge>
                                                         ))}
                                                     </div>
@@ -875,7 +867,7 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes }:
                                             selectedScore.top_negative.length > 0 && (
                                                 <div>
                                                     <div className="mb-1 text-xs font-medium text-purple-700">
-                                                        Weaknesses
+                                                        {t('sidebar.weaknesses')}
                                                     </div>
                                                     <div className="flex flex-wrap gap-1">
                                                         {selectedScore.top_negative.map((slug) => (
@@ -884,7 +876,7 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes }:
                                                                 className="bg-purple-100 text-purple-800"
                                                                 variant="secondary"
                                                             >
-                                                                {INDICATOR_LABELS[slug] || slug}
+                                                                {indicatorLabel(slug)}
                                                             </Badge>
                                                         ))}
                                                     </div>
@@ -901,17 +893,17 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes }:
                                 {searchNotInDeso ? (
                                     <>
                                         <div className="text-sm font-medium">
-                                            Not within a statistical area
+                                            {t('sidebar.empty_no_deso.title')}
                                         </div>
                                         <div className="text-muted-foreground mt-1 text-xs">
-                                            This location is not within a DeSO area. Click a nearby colored area for details.
+                                            {t('sidebar.empty_no_deso.subtitle')}
                                         </div>
                                     </>
                                 ) : (
                                     <>
-                                        <div className="text-sm font-medium">Click a DeSO area</div>
+                                        <div className="text-sm font-medium">{t('sidebar.empty.title')}</div>
                                         <div className="text-muted-foreground mt-1 text-xs">
-                                            Select an area on the map to view demographic details, scores, and schools
+                                            {t('sidebar.empty.subtitle')}
                                         </div>
                                     </>
                                 )}

@@ -1,6 +1,7 @@
 import { Head, router } from '@inertiajs/react';
 import { useState } from 'react';
 
+import LocaleSync from '@/components/locale-sync';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -12,6 +13,7 @@ import {
     TableHeader,
     TableRow,
 } from '@/components/ui/table';
+import { useTranslation } from '@/hooks/use-translation';
 
 interface OverallHealth {
     status: 'healthy' | 'warning' | 'critical';
@@ -138,8 +140,10 @@ export default function DataQualityPage({
         });
     }
 
+    const { t } = useTranslation();
+
     function handleRollback(versionId: number) {
-        if (!confirm('Are you sure you want to rollback to this version?')) return;
+        if (!confirm(t('admin.data_quality.confirm_rollback'))) return;
         router.post(`/admin/data-quality/rollback/${versionId}`, {}, {
             preserveScroll: true,
         });
@@ -147,12 +151,13 @@ export default function DataQualityPage({
 
     return (
         <div className="mx-auto max-w-7xl p-6">
-            <Head title="Admin - Data Quality" />
+            <LocaleSync />
+            <Head title={t('admin.data_quality.head_title')} />
 
             <div className="mb-6">
-                <h1 className="text-2xl font-bold">Data Quality Dashboard</h1>
+                <h1 className="text-2xl font-bold">{t('admin.data_quality.title')}</h1>
                 <p className="text-muted-foreground text-sm">
-                    Monitor data health, validation results, and score versions.
+                    {t('admin.data_quality.subtitle')}
                 </p>
             </div>
 

@@ -1,0 +1,145 @@
+{
+    "app": {
+        "title": "Svensk Fastighetsplattform"
+    },
+    "nav": {
+        "map": "Karta",
+        "methodology": "Metodik",
+        "dashboard": "Instrumentpanel",
+        "admin_indicators": "Indikatorer",
+        "admin_data_quality": "Datakvalitet"
+    },
+    "map": {
+        "head_title": "Karta",
+        "loading": "Laddar kartdata...",
+        "legend": {
+            "title": "Omr\u00e5desbetyg",
+            "high_risk": "H\u00f6g risk",
+            "mixed": "Blandat",
+            "strong": "Starkt"
+        },
+        "layer_control": {
+            "view": "Vy",
+            "hexagons": "Hexagoner",
+            "statistical_areas": "Statistikomr\u00e5den",
+            "raw_scores": "R\u00e5betyg"
+        }
+    },
+    "search": {
+        "placeholder": "S\u00f6k adress, postnummer eller ort... (/)",
+        "no_results": "Inga resultat hittades i Sverige.",
+        "no_results_hint": "F\u00f6rs\u00f6k med gatunamn, postnummer eller ortnamn.",
+        "type": {
+            "house": "Adress",
+            "street": "Gata",
+            "locality": "Omr\u00e5de",
+            "district": "Omr\u00e5de",
+            "city": "Stad",
+            "county": "L\u00e4n",
+            "state": "Region"
+        }
+    },
+    "sidebar": {
+        "empty": {
+            "title": "Klicka p\u00e5 ett DeSO-omr\u00e5de",
+            "subtitle": "V\u00e4lj ett omr\u00e5de p\u00e5 kartan f\u00f6r att se demografisk information, betyg och skolor"
+        },
+        "empty_no_deso": {
+            "title": "Inte inom ett statistikomr\u00e5de",
+            "subtitle": "Denna plats ligger inte inom ett DeSO-omr\u00e5de. Klicka p\u00e5 ett n\u00e4rliggande f\u00e4rgat omr\u00e5de f\u00f6r detaljer."
+        },
+        "header": {
+            "unknown": "Ok\u00e4nt"
+        },
+        "score": {
+            "na": "Saknas",
+            "strong_growth": "Stark tillv\u00e4xt",
+            "positive": "Positiva indikatorer",
+            "mixed": "Blandade signaler",
+            "challenging": "Utmanande omr\u00e5de",
+            "high_risk": "H\u00f6grisk"
+        },
+        "indicators": {
+            "title": "Indikator\u00f6versikt",
+            "percentile_stratified": "{{value}}:e bland {{tier}}",
+            "percentile_national": "{{value}}:e pctl",
+            "labels": {
+                "median_income": "Median disponibel inkomst",
+                "low_economic_standard_pct": "L\u00e5g ekonomisk standard",
+                "employment_rate": "Syssels\u00e4ttningsgrad",
+                "education_post_secondary_pct": "Eftergymnasial utbildning",
+                "education_below_secondary_pct": "Under gymnasial utbildning",
+                "foreign_background_pct": "Utl\u00e4ndsk bakgrund",
+                "population": "Befolkning",
+                "rental_tenure_pct": "Hyresbost\u00e4der",
+                "school_merit_value_avg": "Meritv\u00e4rde",
+                "school_goal_achievement_avg": "M\u00e5luppfyllelse",
+                "school_teacher_certification_avg": "L\u00e4rarbeh\u00f6righet",
+                "crime_violent_rate": "V\u00e5ldsbrottslighet",
+                "crime_property_rate": "Egendomsbrott",
+                "crime_total_rate": "Total brottslighet",
+                "perceived_safety": "Upplevd trygghet",
+                "vulnerability_flag": "Utsatt omr\u00e5de",
+                "debt_rate_pct": "Skulds\u00e4ttningsgrad (KFM)",
+                "eviction_rate": "Vr\u00e4kningsfrekvens",
+                "median_debt_sek": "Medianskuld"
+            }
+        },
+        "urbanity": {
+            "urban": "urban",
+            "semi_urban": "semi-urban",
+            "rural": "landsbygd"
+        },
+        "strengths": "Styrkor",
+        "weaknesses": "Svagheter",
+        "crime": {
+            "title": "Brott & Trygghet",
+            "violent": "V\u00e5ldsbrott",
+            "property": "Egendomsbrott",
+            "perceived_safety": "Upplevd trygghet",
+            "feel_safe": "{{value}}% k\u00e4nner sig trygga p\u00e5 kv\u00e4llen",
+            "estimated_rate": "ber. {{value}}/100k",
+            "disclaimer": "Brottsfrekvenser \u00e4r uppskattade fr\u00e5n kommundata ({{kommun}}) med demografisk viktning. Kommunens totala frekvens: {{total}}/100k.",
+            "recent_incidents": "Senaste h\u00e4ndelser",
+            "recent_incidents_hint": "Kommer snart \u2014 realtidssp\u00e5rning av polisanm\u00e4lningar och nyheter."
+        },
+        "vulnerability": {
+            "police_label": "Polisens {{label}}",
+            "overlap_description": "Detta omr\u00e5de \u00f6verlappar med \u201c{{name}}\u201d \u2014 klassificerat som",
+            "sarskilt_utsatt": "S\u00c4RSKILT UTSATT",
+            "utsatt": "UTSATT"
+        },
+        "financial": {
+            "title": "Ekonomisk h\u00e4lsa",
+            "elevated_distress": "F\u00f6rh\u00f6jd ekonomisk utsatthet",
+            "elevated_distress_desc": "Uppskattad skulds\u00e4ttningsgrad p\u00e5 {{rate}}%, v\u00e4sentligt \u00f6ver riksgenomsnittet p\u00e5 {{avg}}%.",
+            "debt_rate": "Skulds\u00e4ttningsgrad",
+            "evictions": "Vr\u00e4kningar",
+            "median_debt": "Medianskuld",
+            "kommun_avg": "kommunsnitt: {{value}}%",
+            "sek_thousands": "{{value}}k kr",
+            "disclaimer": "Uppskattat fr\u00e5n kommundata fr\u00e5n Kronofogden ({{kommun}}) med demografisk viktning. Kommunens faktiska frekvens: {{rate}}%.",
+            "disclaimer_no_rate": "Uppskattat fr\u00e5n kommundata fr\u00e5n Kronofogden ({{kommun}}) med demografisk viktning."
+        },
+        "schools": {
+            "title": "Skolor i detta omr\u00e5de",
+            "title_count": "Skolor i detta omr\u00e5de ({{count}})",
+            "title_loading": "Skolor i detta omr\u00e5de (...)",
+            "empty": "Inga skolor finns i detta DeSO-omr\u00e5de.",
+            "merit_value": "Meritv\u00e4rde",
+            "goal_achievement": "M\u00e5luppfyllelse",
+            "teachers": "L\u00e4rare",
+            "students_count": "{{count}} elever"
+        }
+    },
+    "common": {
+        "loading": "Laddar...",
+        "error": "N\u00e5got gick fel",
+        "retry": "F\u00f6rs\u00f6k igen",
+        "close": "St\u00e4ng",
+        "save": "Spara",
+        "cancel": "Avbryt",
+        "search": "S\u00f6k...",
+        "no_results": "Inga resultat hittades"
+    }
+}

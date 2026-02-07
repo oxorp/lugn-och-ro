@@ -6,6 +6,7 @@ import {
     useState,
 } from 'react';
 
+import { useTranslation } from '@/hooks/use-translation';
 import {
     type SearchResult,
     searchPlaces,
@@ -29,32 +30,13 @@ function typeIcon(type: SearchResult['type']) {
     }
 }
 
-function typeLabel(type: SearchResult['type']): string {
-    switch (type) {
-        case 'house':
-            return 'Address';
-        case 'street':
-            return 'Street';
-        case 'locality':
-        case 'district':
-            return 'Area';
-        case 'city':
-            return 'City';
-        case 'county':
-            return 'County';
-        case 'state':
-            return 'Region';
-        default:
-            return '';
-    }
-}
-
 interface MapSearchProps {
     onResultSelect: (result: SearchResult) => void;
     onClear: () => void;
 }
 
 export default function MapSearch({ onResultSelect, onClear }: MapSearchProps) {
+    const { t } = useTranslation();
     const [query, setQuery] = useState('');
     const [results, setResults] = useState<SearchResult[]>([]);
     const [loading, setLoading] = useState(false);
@@ -195,6 +177,11 @@ export default function MapSearch({ onResultSelect, onClear }: MapSearchProps) {
         }
     }
 
+    function typeLabel(type: SearchResult['type']): string {
+        const key = `search.type.${type}`;
+        return t(key, { defaultValue: '' });
+    }
+
     return (
         <div
             ref={containerRef}
@@ -216,7 +203,7 @@ export default function MapSearch({ onResultSelect, onClear }: MapSearchProps) {
                         if (results.length > 0) setOpen(true);
                     }}
                     onKeyDown={handleKeyDown}
-                    placeholder="Search address, postal code, or city... (/)"
+                    placeholder={t('search.placeholder')}
                     className="placeholder:text-muted-foreground min-w-0 flex-1 bg-transparent text-sm outline-none"
                 />
                 {query && (
@@ -279,10 +266,10 @@ export default function MapSearch({ onResultSelect, onClear }: MapSearchProps) {
                     ) : hasSearched && !loading ? (
                         <div className="px-4 py-6 text-center">
                             <div className="text-muted-foreground text-sm">
-                                No results found in Sweden.
+                                {t('search.no_results')}
                             </div>
                             <div className="text-muted-foreground mt-1 text-xs">
-                                Try a street name, postal code, or city name.
+                                {t('search.no_results_hint')}
                             </div>
                         </div>
                     ) : null}

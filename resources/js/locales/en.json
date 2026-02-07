@@ -1,0 +1,278 @@
+{
+    "app": {
+        "title": "Swedish Real Estate Platform"
+    },
+    "nav": {
+        "map": "Map",
+        "methodology": "Methodology",
+        "dashboard": "Dashboard",
+        "admin_indicators": "Indicators",
+        "admin_data_quality": "Data Quality"
+    },
+    "map": {
+        "head_title": "Map",
+        "loading": "Loading map data...",
+        "legend": {
+            "title": "Neighborhood Score",
+            "high_risk": "High Risk",
+            "mixed": "Mixed",
+            "strong": "Strong"
+        },
+        "layer_control": {
+            "view": "View",
+            "hexagons": "Hexagons",
+            "statistical_areas": "Statistical Areas",
+            "raw_scores": "Raw scores"
+        }
+    },
+    "search": {
+        "placeholder": "Search address, postal code, or city... (/)",
+        "no_results": "No results found in Sweden.",
+        "no_results_hint": "Try a street name, postal code, or city name.",
+        "type": {
+            "house": "Address",
+            "street": "Street",
+            "locality": "Area",
+            "district": "Area",
+            "city": "City",
+            "county": "County",
+            "state": "Region"
+        }
+    },
+    "sidebar": {
+        "empty": {
+            "title": "Click a DeSO area",
+            "subtitle": "Select an area on the map to view demographic details, scores, and schools"
+        },
+        "empty_no_deso": {
+            "title": "Not within a statistical area",
+            "subtitle": "This location is not within a DeSO area. Click a nearby colored area for details."
+        },
+        "header": {
+            "unknown": "Unknown"
+        },
+        "score": {
+            "na": "N/A",
+            "strong_growth": "Strong Growth Area",
+            "positive": "Positive Indicators",
+            "mixed": "Mixed Signals",
+            "challenging": "Challenging Area",
+            "high_risk": "High Risk Area"
+        },
+        "indicators": {
+            "title": "Indicator Breakdown",
+            "percentile_stratified": "{{value}}th among {{tier}}",
+            "percentile_national": "{{value}}th pctl",
+            "labels": {
+                "median_income": "Median Income",
+                "low_economic_standard_pct": "Low Economic Standard",
+                "employment_rate": "Employment Rate",
+                "education_post_secondary_pct": "Post-Secondary Education",
+                "education_below_secondary_pct": "Below Secondary Education",
+                "foreign_background_pct": "Foreign Background",
+                "population": "Population",
+                "rental_tenure_pct": "Rental Housing",
+                "school_merit_value_avg": "School Merit Value",
+                "school_goal_achievement_avg": "School Goal Achievement",
+                "school_teacher_certification_avg": "Teacher Certification",
+                "crime_violent_rate": "Violent Crime Rate",
+                "crime_property_rate": "Property Crime Rate",
+                "crime_total_rate": "Total Crime Rate",
+                "perceived_safety": "Perceived Safety",
+                "vulnerability_flag": "Vulnerability Area",
+                "debt_rate_pct": "Debt Rate (KFM)",
+                "eviction_rate": "Eviction Rate",
+                "median_debt_sek": "Median Debt",
+                "grocery_density": "Grocery Access",
+                "healthcare_density": "Healthcare Access",
+                "restaurant_density": "Restaurant Access",
+                "fitness_density": "Fitness Access",
+                "transit_density": "Transit Access",
+                "gambling_density": "Gambling Density",
+                "pawn_shop_density": "Pawn Shop Density",
+                "fast_food_density": "Fast Food Density"
+            }
+        },
+        "urbanity": {
+            "urban": "urban",
+            "semi_urban": "semi-urban",
+            "rural": "rural"
+        },
+        "strengths": "Strengths",
+        "weaknesses": "Weaknesses",
+        "crime": {
+            "title": "Crime & Safety",
+            "violent": "Violent crime",
+            "property": "Property crime",
+            "perceived_safety": "Perceived safety",
+            "feel_safe": "{{value}}% feel safe at night",
+            "estimated_rate": "est. {{value}}/100k",
+            "disclaimer": "Crime rates are estimated from kommun-level data ({{kommun}}) using demographic weighting. Kommun total: {{total}}/100k.",
+            "recent_incidents": "Recent Incidents",
+            "recent_incidents_hint": "Coming soon \u2014 real-time tracking of police reports and news."
+        },
+        "vulnerability": {
+            "police_label": "Polisens {{label}}",
+            "overlap_description": "This area overlaps with \u201c{{name}}\u201d \u2014 classified as",
+            "sarskilt_utsatt": "S\u00c4RSKILT UTSATT",
+            "utsatt": "UTSATT"
+        },
+        "financial": {
+            "title": "Financial Health",
+            "elevated_distress": "Elevated Financial Distress",
+            "elevated_distress_desc": "Estimated debt rate of {{rate}}%, significantly above the national average of {{avg}}%.",
+            "debt_rate": "Debt rate",
+            "evictions": "Evictions",
+            "median_debt": "Median debt",
+            "kommun_avg": "kommun avg: {{value}}%",
+            "sek_thousands": "{{value}}k SEK",
+            "disclaimer": "Estimated from kommun-level Kronofogden data ({{kommun}}) using demographic weighting. Kommun actual rate: {{rate}}%.",
+            "disclaimer_no_rate": "Estimated from kommun-level Kronofogden data ({{kommun}}) using demographic weighting."
+        },
+        "schools": {
+            "title": "Schools in this area",
+            "title_count": "Schools in this area ({{count}})",
+            "title_loading": "Schools in this area (...)",
+            "empty": "No schools are located in this DeSO area.",
+            "merit_value": "Meritv\u00e4rde",
+            "goal_achievement": "Goal ach.",
+            "teachers": "Teachers",
+            "students_count": "{{count}} students"
+        }
+    },
+    "methodology": {
+        "head_title": "Methodology",
+        "hero": {
+            "title": "How the Neighborhood Trajectory Score Works",
+            "intro_1": "Every neighborhood in Sweden receives a score from 0 to 100 that reflects its current conditions and likely trajectory over the coming years. The score combines official government data across multiple dimensions \u2014 economics, education, safety, and financial stability \u2014 into a single number designed to help you understand where an area stands and where it\u2019s heading.",
+            "intro_2": "We built this because no tool like it exists in Sweden. Hemnet shows you listings. Booli shows you prices. We show you why prices move."
+        },
+        "score_glance": {
+            "title": "The Score at a Glance",
+            "sources_label": "Government Data Sources",
+            "normalization": "Normalization & Analysis",
+            "normalization_desc": "Percentile ranking across all 6,160 areas in Sweden",
+            "weighted_score": "Weighted Composite Score",
+            "score_range": "0 \u2013 100",
+            "score_label": "Neighborhood Trajectory Score",
+            "explanation": "Each area is compared against every other area in Sweden using percentile ranking \u2014 meaning a score of 75 tells you this neighborhood outperforms roughly 75% of all areas nationwide on the factors we measure."
+        },
+        "what_we_measure": {
+            "title": "What We Measure",
+            "what_label": "What we measure",
+            "why_label": "Why it matters"
+        },
+        "score_meaning": {
+            "title": "What the Score Means",
+            "disclaimer": "A score is not a verdict \u2014 it\u2019s a starting point. A score of 35 doesn\u2019t mean you shouldn\u2019t buy there; it means you should understand why it scores that way before you do. The factor breakdown for each area (available when you click on the map) shows exactly which dimensions are strong and which are weak, so you can make your own judgment."
+        },
+        "how_we_build": {
+            "title": "How We Build the Score",
+            "relative_title": "Everything is relative, not absolute.",
+            "relative_desc": "We don\u2019t score areas on an abstract scale. Every area is ranked against every other area in Sweden. A score of 73 means this area outperforms 73% of all neighborhoods in the country on the factors we measure. This makes scores directly comparable \u2014 whether you\u2019re looking at central Stockholm or rural Norrland.",
+            "public_title": "All data is public and official.",
+            "public_desc": "Every input to our model comes from Swedish government agencies: SCB, Skolverket, BR\u00c5, Kronofogden, and Polisen. We don\u2019t use proprietary data, surveys of our own, or user-submitted reviews. This means our scores are reproducible, auditable, and grounded in the same statistics that policymakers rely on.",
+            "matters_title": "We measure what matters for real estate.",
+            "matters_desc": "Not every statistic matters equally for property values. We focus on the factors that research and market evidence show actually drive where people want to live and what they\u2019re willing to pay. The weighting of each factor in our model is based on its demonstrated relationship with real estate outcomes in the Swedish market.",
+            "aggregate_title": "We never use individual-level data.",
+            "aggregate_desc": "All our inputs are aggregate statistics \u2014 averages, rates, and percentages across entire areas. We do not access, store, or process any data about individual people. This is a deliberate design choice, both for legal compliance and because aggregate patterns are what drive neighborhood-level trends.",
+            "updates_title": "The score updates as new data becomes available.",
+            "updates_desc": "Government agencies publish new data on different schedules \u2014 some annually, some quarterly. When new data arrives, we re-run the model and the map updates. The \u201clast updated\u201d date for each data source is visible in the area detail view.",
+            "boundaries_title": "Boundaries are not walls.",
+            "boundaries_desc": "Government statistics are published for defined geographic areas \u2014 but reality doesn\u2019t stop at a boundary line. A street that separates two statistical areas doesn\u2019t create a wall between them. That\u2019s why our map defaults to a hexagonal grid rather than showing raw administrative boundaries. Each hexagon blends data from the statistical areas it touches, creating smooth, gradual transitions that reflect how neighborhoods actually work. You can switch to the traditional boundary view at any time, but the hexagonal layer gives you a more honest picture of how conditions shift across the landscape."
+        },
+        "faq": {
+            "title": "Frequently Asked Questions"
+        },
+        "cta": {
+            "title": "Ready to explore?",
+            "subtitle": "Go back to the map and click any area in Sweden to see its score, factor breakdown, and school details.",
+            "button": "Back to Map"
+        }
+    },
+    "admin": {
+        "indicators": {
+            "head_title": "Admin - Indicators",
+            "title": "Indicator Management",
+            "subtitle": "Configure indicator weights, directions, and normalization methods.",
+            "recompute": "Recompute All Scores",
+            "recomputing": "Recomputing...",
+            "weight_allocation": "Weight Allocation",
+            "weight_status": "{{percent}}% allocated ({{used}} / {{total}})",
+            "unallocated": "unallocated: {{value}}",
+            "urbanity_title": "Urbanity Classification",
+            "urbanity_tooltip": "Ranked within urbanity tier (urban / semi-urban / rural) instead of nationally.",
+            "table": {
+                "name": "Name",
+                "slug": "Slug",
+                "source": "Source",
+                "category": "Category",
+                "direction": "Direction",
+                "weight": "Weight",
+                "normalization": "Normalization",
+                "scope": "Scope",
+                "active": "Active",
+                "year": "Year",
+                "coverage": "Coverage"
+            },
+            "urbanity_labels": {
+                "urban": "Urban",
+                "semi_urban": "Semi-urban",
+                "rural": "Rural",
+                "unclassified": "Unclassified"
+            }
+        },
+        "data_quality": {
+            "head_title": "Admin - Data Quality",
+            "title": "Data Quality Dashboard",
+            "subtitle": "Monitor data health, validation results, and score versions.",
+            "source_health": "Source Health",
+            "indicators_count": "({{count}} indicators)",
+            "never": "Never",
+            "latest_version": "Latest Score Version",
+            "latest_version_numbered": "Latest Score Version #{{id}}",
+            "no_versions": "No versions computed yet.",
+            "status": "Status",
+            "computed": "Computed",
+            "desos_scored": "DeSOs scored",
+            "mean_score": "Mean score",
+            "std_deviation": "Std deviation",
+            "sentinel_areas": "Sentinel Areas",
+            "recent_validations": "Recent Validation Results",
+            "no_validations": "No validation results yet",
+            "score_versions": "Score Versions",
+            "ingestion_history": "Ingestion History",
+            "table": {
+                "date": "Date",
+                "source": "Source",
+                "passed": "Passed",
+                "failed": "Failed",
+                "version": "Version",
+                "year": "Year",
+                "desos": "DeSOs",
+                "mean": "Mean",
+                "actions": "Actions",
+                "records": "Records",
+                "duration": "Duration"
+            },
+            "publish": "Publish",
+            "publishing": "Publishing...",
+            "restore": "Restore",
+            "confirm_rollback": "Are you sure you want to rollback to this version?",
+            "warning_one": "{{count}} warning",
+            "warning_other": "{{count}} warnings",
+            "error_one": "{{count}} error",
+            "error_other": "{{count}} errors"
+        }
+    },
+    "common": {
+        "loading": "Loading...",
+        "error": "Something went wrong",
+        "retry": "Try again",
+        "close": "Close",
+        "save": "Save",
+        "cancel": "Cancel",
+        "search": "Search...",
+        "no_results": "No results found"
+    }
+}

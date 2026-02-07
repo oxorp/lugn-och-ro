@@ -24,6 +24,7 @@ import {
     useState,
 } from 'react';
 
+import { useTranslation } from '@/hooks/use-translation';
 import type { School } from '@/pages/map';
 
 import 'ol/ol.css';
@@ -148,10 +149,12 @@ function h3ToFeature(h3Index: string, score: number, primaryDesoCode: string | n
 }
 
 function ScoreLegend() {
+    const { t } = useTranslation();
+
     return (
         <div className="absolute bottom-6 left-6 z-10 rounded-lg bg-white/90 px-4 py-3 shadow-lg backdrop-blur-sm">
             <div className="mb-1.5 text-xs font-medium text-gray-700">
-                Neighborhood Score
+                {t('map.legend.title')}
             </div>
             <div
                 className="mb-1 h-3 w-48 rounded-sm"
@@ -161,9 +164,9 @@ function ScoreLegend() {
                 }}
             />
             <div className="flex justify-between text-[10px] text-gray-500">
-                <span>High Risk</span>
-                <span>Mixed</span>
-                <span>Strong</span>
+                <span>{t('map.legend.high_risk')}</span>
+                <span>{t('map.legend.mixed')}</span>
+                <span>{t('map.legend.strong')}</span>
             </div>
         </div>
     );
@@ -182,10 +185,12 @@ function LayerControl({
     smoothed: boolean;
     onSmoothedChange: (smoothed: boolean) => void;
 }) {
+    const { t } = useTranslation();
+
     return (
         <div className="absolute top-4 right-4 z-10 rounded-lg bg-white/90 px-3 py-2.5 shadow-lg backdrop-blur-sm">
             <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-500">
-                View
+                {t('map.layer_control.view')}
             </div>
             <div className="space-y-1">
                 <label className="flex cursor-pointer items-center gap-2 text-xs">
@@ -196,7 +201,7 @@ function LayerControl({
                         onChange={() => onModeChange('hexagons')}
                         className="h-3 w-3 text-blue-600"
                     />
-                    Hexagons
+                    {t('map.layer_control.hexagons')}
                 </label>
                 <label className="flex cursor-pointer items-center gap-2 text-xs">
                     <input
@@ -206,7 +211,7 @@ function LayerControl({
                         onChange={() => onModeChange('deso')}
                         className="h-3 w-3 text-blue-600"
                     />
-                    Statistical Areas
+                    {t('map.layer_control.statistical_areas')}
                 </label>
             </div>
             {showSmoothing && mode === 'hexagons' && (
@@ -219,10 +224,22 @@ function LayerControl({
                             onChange={() => onSmoothedChange(!smoothed)}
                             className="h-3 w-3 rounded text-blue-600"
                         />
-                        Raw scores
+                        {t('map.layer_control.raw_scores')}
                     </label>
                 </>
             )}
+        </div>
+    );
+}
+
+function LoadingOverlay() {
+    const { t } = useTranslation();
+
+    return (
+        <div className="bg-background/80 absolute inset-0 flex items-center justify-center">
+            <div className="text-muted-foreground text-sm">
+                {t('map.loading')}
+            </div>
         </div>
     );
 }
@@ -873,11 +890,7 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
                 onSmoothedChange={setSmoothed}
             />
             {loading && (
-                <div className="bg-background/80 absolute inset-0 flex items-center justify-center">
-                    <div className="text-muted-foreground text-sm">
-                        Loading map data...
-                    </div>
-                </div>
+                <LoadingOverlay />
             )}
         </div>
     );

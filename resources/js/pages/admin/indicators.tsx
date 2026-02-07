@@ -2,6 +2,7 @@ import { Head, router } from '@inertiajs/react';
 import { Info, RefreshCw } from 'lucide-react';
 import { useState } from 'react';
 
+import LocaleSync from '@/components/locale-sync';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -28,6 +29,7 @@ import {
     TooltipProvider,
     TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { useTranslation } from '@/hooks/use-translation';
 
 interface Indicator {
     id: number;
@@ -59,8 +61,8 @@ const categoryColors: Record<string, string> = {
 };
 
 export default function IndicatorsPage({ indicators, urbanityDistribution }: Props) {
+    const { t } = useTranslation();
     const [recomputing, setRecomputing] = useState(false);
-    const [editingId, setEditingId] = useState<number | null>(null);
 
     const totalWeight = indicators
         .filter((i) => i.is_active && i.direction !== 'neutral')
@@ -108,28 +110,28 @@ export default function IndicatorsPage({ indicators, urbanityDistribution }: Pro
 
     return (
         <div className="mx-auto max-w-7xl p-6">
-            <Head title="Admin - Indicators" />
+            <LocaleSync />
+            <Head title={t('admin.indicators.head_title')} />
 
             <div className="mb-6 flex items-center justify-between">
                 <div>
-                    <h1 className="text-2xl font-bold">Indicator Management</h1>
+                    <h1 className="text-2xl font-bold">{t('admin.indicators.title')}</h1>
                     <p className="text-muted-foreground text-sm">
-                        Configure indicator weights, directions, and normalization
-                        methods.
+                        {t('admin.indicators.subtitle')}
                     </p>
                 </div>
                 <Button onClick={handleRecompute} disabled={recomputing}>
                     <RefreshCw
                         className={`mr-2 h-4 w-4 ${recomputing ? 'animate-spin' : ''}`}
                     />
-                    {recomputing ? 'Recomputing...' : 'Recompute All Scores'}
+                    {recomputing ? t('admin.indicators.recomputing') : t('admin.indicators.recompute')}
                 </Button>
             </div>
 
             <Card className="mb-6">
                 <CardHeader className="pb-3">
                     <CardTitle className="text-sm font-medium">
-                        Weight Allocation
+                        {t('admin.indicators.weight_allocation')}
                     </CardTitle>
                 </CardHeader>
                 <CardContent>
@@ -141,8 +143,11 @@ export default function IndicatorsPage({ indicators, urbanityDistribution }: Pro
                     </div>
                     <div className="flex items-center justify-between text-sm">
                         <span className="text-muted-foreground">
-                            {(totalWeight * 100).toFixed(0)}% allocated (
-                            {totalWeight.toFixed(2)} / 1.00)
+                            {t('admin.indicators.weight_status', {
+                                percent: (totalWeight * 100).toFixed(0),
+                                used: totalWeight.toFixed(2),
+                                total: '1.00',
+                            })}
                         </span>
                         <span className="text-muted-foreground">
                             {Object.entries(weightByCategory)
@@ -150,9 +155,9 @@ export default function IndicatorsPage({ indicators, urbanityDistribution }: Pro
                                     ([cat, w]) =>
                                         `${cat}: ${(w as number).toFixed(2)}`,
                                 )
-                                .join('  ·  ')}
+                                .join('  \u00b7  ')}
                             {totalWeight < 1 &&
-                                `  ·  unallocated: ${(1 - totalWeight).toFixed(2)}`}
+                                `  \u00b7  ${t('admin.indicators.unallocated', { value: (1 - totalWeight).toFixed(2) })}`}
                         </span>
                     </div>
                 </CardContent>
@@ -162,7 +167,7 @@ export default function IndicatorsPage({ indicators, urbanityDistribution }: Pro
                 <Card className="mb-6">
                     <CardHeader className="pb-3">
                         <CardTitle className="text-sm font-medium">
-                            Urbanity Classification
+                            {t('admin.indicators.urbanity_title')}
                         </CardTitle>
                     </CardHeader>
                     <CardContent>
@@ -171,16 +176,12 @@ export default function IndicatorsPage({ indicators, urbanityDistribution }: Pro
                                 const count = urbanityDistribution[tier] ?? 0;
                                 const total = Object.values(urbanityDistribution).reduce((s, v) => s + v, 0);
                                 const pct = total > 0 ? ((count / total) * 100).toFixed(1) : '0.0';
-                                const labels: Record<string, string> = {
-                                    urban: 'Urban',
-                                    semi_urban: 'Semi-urban',
-                                    rural: 'Rural',
-                                    unclassified: 'Unclassified',
-                                };
                                 if (tier === 'unclassified' && count === 0) return null;
                                 return (
                                     <div key={tier} className="rounded-lg border p-3 text-center">
-                                        <div className="text-muted-foreground text-xs">{labels[tier]}</div>
+                                        <div className="text-muted-foreground text-xs">
+                                            {t(`admin.indicators.urbanity_labels.${tier}`)}
+                                        </div>
                                         <div className="text-lg font-semibold">{count.toLocaleString()}</div>
                                         <div className="text-muted-foreground text-xs">{pct}%</div>
                                     </div>
@@ -195,17 +196,17 @@ export default function IndicatorsPage({ indicators, urbanityDistribution }: Pro
                 <Table>
                     <TableHeader>
                         <TableRow>
-                            <TableHead>Name</TableHead>
-                            <TableHead>Slug</TableHead>
-                            <TableHead>Source</TableHead>
-                            <TableHead>Category</TableHead>
-                            <TableHead>Direction</TableHead>
-                            <TableHead>Weight</TableHead>
-                            <TableHead>Normalization</TableHead>
-                            <TableHead>Scope</TableHead>
-                            <TableHead>Active</TableHead>
-                            <TableHead>Year</TableHead>
-                            <TableHead>Coverage</TableHead>
+                            <TableHead>{t('admin.indicators.table.name')}</TableHead>
+                            <TableHead>{t('admin.indicators.table.slug')}</TableHead>
+                            <TableHead>{t('admin.indicators.table.source')}</TableHead>
+                            <TableHead>{t('admin.indicators.table.category')}</TableHead>
+                            <TableHead>{t('admin.indicators.table.direction')}</TableHead>
+                            <TableHead>{t('admin.indicators.table.weight')}</TableHead>
+                            <TableHead>{t('admin.indicators.table.normalization')}</TableHead>
+                            <TableHead>{t('admin.indicators.table.scope')}</TableHead>
+                            <TableHead>{t('admin.indicators.table.active')}</TableHead>
+                            <TableHead>{t('admin.indicators.table.year')}</TableHead>
+                            <TableHead>{t('admin.indicators.table.coverage')}</TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -338,7 +339,7 @@ export default function IndicatorsPage({ indicators, urbanityDistribution }: Pro
                                                     </TooltipTrigger>
                                                     <TooltipContent>
                                                         <p className="max-w-xs text-xs">
-                                                            Ranked within urbanity tier (urban / semi-urban / rural) instead of nationally.
+                                                            {t('admin.indicators.urbanity_tooltip')}
                                                         </p>
                                                     </TooltipContent>
                                                 </Tooltip>
@@ -359,7 +360,7 @@ export default function IndicatorsPage({ indicators, urbanityDistribution }: Pro
                                     />
                                 </TableCell>
                                 <TableCell className="text-muted-foreground text-sm">
-                                    {indicator.latest_year ?? '—'}
+                                    {indicator.latest_year ?? '\u2014'}
                                 </TableCell>
                                 <TableCell className="text-muted-foreground text-sm">
                                     {indicator.coverage} / {indicator.total_desos}
