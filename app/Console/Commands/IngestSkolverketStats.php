@@ -2,7 +2,7 @@
 
 namespace App\Console\Commands;
 
-use App\Models\IngestionLog;
+use App\Console\Concerns\LogsIngestion;
 use App\Models\School;
 use App\Services\SkolverketApiService;
 use Illuminate\Console\Command;
@@ -11,6 +11,8 @@ use Illuminate\Support\Facades\Http;
 
 class IngestSkolverketStats extends Command
 {
+    use LogsIngestion;
+
     protected $signature = 'ingest:skolverket-stats
         {--delay=200 : Delay between batch requests in milliseconds}
         {--batch-size=10 : Number of concurrent requests per batch}
@@ -29,12 +31,7 @@ class IngestSkolverketStats extends Command
         $limit = (int) $this->option('limit');
         $service = new SkolverketApiService($delay);
 
-        $log = IngestionLog::query()->create([
-            'source' => 'skolverket',
-            'command' => 'ingest:skolverket-stats',
-            'status' => 'running',
-            'started_at' => now(),
-        ]);
+        $this->startIngestionLog('skolverket_stats', 'ingest:skolverket-stats');
 
         try {
             $query = School::query()
@@ -125,30 +122,23 @@ class IngestSkolverketStats extends Command
 
             $totalStats = DB::table('school_statistics')->count();
 
-            $log->update([
-                'status' => 'completed',
-                'records_processed' => count($schoolCodes),
-                'records_created' => $fetched,
-                'completed_at' => now(),
-                'metadata' => [
-                    'schools_processed' => count($schoolCodes),
-                    'stats_fetched' => $fetched,
-                    'no_data' => $noData,
-                    'failed' => $failed,
-                    'total_stats_rows' => $totalStats,
-                ],
-            ]);
+            $this->processed = count($schoolCodes);
+            $this->created = $fetched;
+            $this->failed = $failed;
+            $this->skipped = $noData;
+            $this->addStat('schools_processed', count($schoolCodes));
+            $this->addStat('stats_fetched', $fetched);
+            $this->addStat('no_data', $noData);
+            $this->addStat('failed_requests', $failed);
+            $this->addStat('total_stats_rows', $totalStats);
+
+            $this->completeIngestionLog();
 
             $this->info("Stats complete: {$fetched} schools with data, {$noData} no data, {$failed} failed.");
 
             return self::SUCCESS;
         } catch (\Exception $e) {
-            $log->update([
-                'status' => 'failed',
-                'error_message' => $e->getMessage(),
-                'completed_at' => now(),
-            ]);
-
+            $this->failIngestionLog($e->getMessage());
             $this->error("Stats ingestion failed: {$e->getMessage()}");
 
             return self::FAILURE;

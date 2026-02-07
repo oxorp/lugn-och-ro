@@ -2,7 +2,7 @@
 
 namespace App\Console\Commands;
 
-use App\Models\IngestionLog;
+use App\Console\Concerns\LogsIngestion;
 use App\Services\SkolverketApiService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -10,6 +10,8 @@ use Illuminate\Support\Facades\Http;
 
 class IngestSkolverketSchools extends Command
 {
+    use LogsIngestion;
+
     protected $signature = 'ingest:skolverket-schools
         {--delay=100 : Delay between batch requests in milliseconds}
         {--batch-size=10 : Number of concurrent detail requests per batch}
@@ -27,12 +29,7 @@ class IngestSkolverketSchools extends Command
         $batchSize = (int) $this->option('batch-size');
         $service = new SkolverketApiService($delay);
 
-        $log = IngestionLog::query()->create([
-            'source' => 'skolverket',
-            'command' => 'ingest:skolverket-schools',
-            'status' => 'running',
-            'started_at' => now(),
-        ]);
+        $this->startIngestionLog('skolverket_schools', 'ingest:skolverket-schools');
 
         try {
             // Step 1: Fetch all school units from Registry v2
@@ -47,11 +44,7 @@ class IngestSkolverketSchools extends Command
 
             if (empty($schools)) {
                 $this->error('No school units returned from API. Aborting.');
-                $log->update([
-                    'status' => 'failed',
-                    'error_message' => 'Empty response from Registry v2 list endpoint',
-                    'completed_at' => now(),
-                ]);
+                $this->failIngestionLog('Empty response from Registry v2 list endpoint');
 
                 return self::FAILURE;
             }
@@ -100,16 +93,12 @@ class IngestSkolverketSchools extends Command
             $this->assignDesoCodes();
 
             // Log comprehensive stats
-            $this->logStats($log, count($schools));
+            $this->processed = count($schools);
+            $this->logStats(count($schools));
 
             return self::SUCCESS;
         } catch (\Exception $e) {
-            $log->update([
-                'status' => 'failed',
-                'error_message' => $e->getMessage(),
-                'completed_at' => now(),
-            ]);
-
+            $this->failIngestionLog($e->getMessage());
             $this->error("Import failed: {$e->getMessage()}");
 
             return self::FAILURE;
@@ -221,9 +210,9 @@ class IngestSkolverketSchools extends Command
         $this->info("Assigned DeSO codes to {$assigned} schools.");
     }
 
-    private function logStats(IngestionLog $log, int $totalFromApi): void
+    private function logStats(int $totalFromApi): void
     {
-        $stats = DB::select("
+        $dbStats = DB::select("
             SELECT
                 COUNT(*) as total,
                 COUNT(*) FILTER (WHERE status = 'active') as active,
@@ -245,32 +234,27 @@ class IngestSkolverketSchools extends Command
             ORDER BY cnt DESC
         ');
 
-        $log->update([
-            'status' => 'completed',
-            'records_processed' => $totalFromApi,
-            'records_created' => $stats->total,
-            'completed_at' => now(),
-            'metadata' => [
-                'total_schools' => $stats->total,
-                'active' => $stats->active,
-                'ceased' => $stats->ceased,
-                'dormant' => $stats->dormant,
-                'planned' => $stats->planned,
-                'with_coordinates' => $stats->with_coords,
-                'without_coordinates' => $stats->without_coords,
-                'with_deso_code' => $stats->with_deso,
-            ],
-        ]);
+        $this->created = $dbStats->total;
+        $this->addStat('total_schools', $dbStats->total);
+        $this->addStat('active', $dbStats->active);
+        $this->addStat('ceased', $dbStats->ceased);
+        $this->addStat('dormant', $dbStats->dormant);
+        $this->addStat('planned', $dbStats->planned);
+        $this->addStat('with_coordinates', $dbStats->with_coords);
+        $this->addStat('without_coordinates', $dbStats->without_coords);
+        $this->addStat('with_deso_code', $dbStats->with_deso);
+
+        $this->completeIngestionLog();
 
         $this->newLine();
-        $this->info("Total school units in database: {$stats->total}");
-        $this->info("  - Active: {$stats->active}");
-        $this->info("  - Dormant: {$stats->dormant}");
-        $this->info("  - Ceased: {$stats->ceased}");
-        $this->info("  - Planned: {$stats->planned}");
-        $this->info("  - With coordinates: {$stats->with_coords}");
-        $this->info("  - Without coordinates: {$stats->without_coords}");
-        $this->info("  - DeSO assigned: {$stats->with_deso}");
+        $this->info("Total school units in database: {$dbStats->total}");
+        $this->info("  - Active: {$dbStats->active}");
+        $this->info("  - Dormant: {$dbStats->dormant}");
+        $this->info("  - Ceased: {$dbStats->ceased}");
+        $this->info("  - Planned: {$dbStats->planned}");
+        $this->info("  - With coordinates: {$dbStats->with_coords}");
+        $this->info("  - Without coordinates: {$dbStats->without_coords}");
+        $this->info("  - DeSO assigned: {$dbStats->with_deso}");
 
         if (! empty($formBreakdown)) {
             $this->newLine();

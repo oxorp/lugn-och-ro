@@ -2,10 +2,10 @@
 
 namespace App\Console\Commands;
 
+use App\Console\Concerns\LogsIngestion;
 use App\Models\DesoArea;
 use App\Models\Indicator;
 use App\Models\IndicatorValue;
-use App\Models\IngestionLog;
 use App\Services\DataValidationService;
 use App\Services\ScbApiService;
 use Illuminate\Console\Command;
@@ -13,6 +13,8 @@ use Illuminate\Support\Facades\DB;
 
 class IngestScbData extends Command
 {
+    use LogsIngestion;
+
     protected $signature = 'ingest:scb
         {--indicator= : Specific indicator slug to fetch}
         {--year= : Specific year to fetch (defaults to latest available)}
@@ -33,23 +35,12 @@ class IngestScbData extends Command
 
         $years = $this->resolveYears($scbService, $indicators->first());
 
-        $log = IngestionLog::query()->create([
-            'source' => 'scb',
-            'command' => 'ingest:scb',
-            'status' => 'running',
-            'started_at' => now(),
-            'metadata' => [
-                'indicators' => $indicators->pluck('slug')->toArray(),
-                'years' => $years,
-            ],
-        ]);
+        $this->startIngestionLog('scb', 'ingest:scb');
+        $this->addStat('indicators', $indicators->pluck('slug')->toArray());
+        $this->addStat('years', $years);
 
         $desoCodes = DesoArea::query()->pluck('deso_code')->flip()->toArray();
         $codeMappings = DB::table('deso_code_mappings')->pluck('new_code', 'old_code')->toArray();
-
-        $totalCreated = 0;
-        $totalUpdated = 0;
-        $totalProcessed = 0;
 
         try {
             foreach ($indicators as $indicator) {
@@ -59,11 +50,12 @@ class IngestScbData extends Command
                     try {
                         $data = $scbService->fetchIndicator($indicator->slug, $year);
                     } catch (\Exception $e) {
-                        $this->warn("  Failed to fetch {$indicator->slug} for {$year}: {$e->getMessage()}");
+                        $this->addWarning("Failed to fetch {$indicator->slug} for {$year}: {$e->getMessage()}");
 
                         continue;
                     }
                     $this->info('  Received '.count($data).' DeSO values from API');
+                    $this->addStat("api_values_{$indicator->slug}", count($data));
 
                     $rows = [];
                     $unmatched = 0;
@@ -80,6 +72,7 @@ class IngestScbData extends Command
                                 $mapped++;
                             } else {
                                 $unmatched++;
+                                $this->skipped++;
 
                                 continue;
                             }
@@ -114,17 +107,17 @@ class IngestScbData extends Command
                         ->where('year', $year)
                         ->count();
 
-                    $created = $newCount - $existingCount;
-                    $updated = $matched - $created;
+                    $createdNow = $newCount - $existingCount;
+                    $updatedNow = $matched - $createdNow;
 
-                    $totalCreated += $created;
-                    $totalUpdated += $updated;
-                    $totalProcessed += $matched;
+                    $this->created += $createdNow;
+                    $this->updated += $updatedNow;
+                    $this->processed += $matched;
 
-                    $this->info("  Matched: {$matched} (mapped: {$mapped}), Unmatched: {$unmatched}, Created: {$created}, Updated: {$updated}");
+                    $this->info("  Matched: {$matched} (mapped: {$mapped}), Unmatched: {$unmatched}, Created: {$createdNow}, Updated: {$updatedNow}");
 
                     if ($unmatched > 0) {
-                        $this->warn("  {$unmatched} DeSO codes from API not found (likely split/merged areas or RegSO codes)");
+                        $this->addWarning("{$unmatched} DeSO codes from API not found for {$indicator->slug}/{$year}");
                     }
 
                     // Rate limiting between API calls
@@ -132,20 +125,14 @@ class IngestScbData extends Command
                 }
             }
 
-            $log->update([
-                'status' => 'completed',
-                'records_processed' => $totalProcessed,
-                'records_created' => $totalCreated,
-                'records_updated' => $totalUpdated,
-                'completed_at' => now(),
-            ]);
+            $this->completeIngestionLog();
 
             $this->newLine();
-            $this->info("Ingestion complete: {$totalProcessed} processed, {$totalCreated} created, {$totalUpdated} updated.");
+            $this->info("Ingestion complete: {$this->processed} processed, {$this->created} created, {$this->updated} updated.");
 
             // Run validation for the last year only
             $lastYear = end($years);
-            $report = app(DataValidationService::class)->validateIngestion($log, 'scb', $lastYear);
+            $report = app(DataValidationService::class)->validateIngestion($this->ingestionLog, 'scb', $lastYear);
 
             $this->newLine();
             $this->info("Validation: {$report->passedCount()} passed, {$report->failedCount()} failed");
@@ -153,7 +140,7 @@ class IngestScbData extends Command
             if ($report->hasBlockingFailures()) {
                 $this->error('Blocking validation failures detected. Scoring will not proceed.');
                 $this->error($report->summary());
-                $log->update(['status' => 'completed_with_errors', 'metadata' => array_merge($log->metadata ?? [], ['validation' => $report->toArray()])]);
+                $this->ingestionLog->update(['status' => 'completed_with_errors', 'metadata' => array_merge($this->ingestionLog->metadata ?? [], ['validation' => $report->toArray()])]);
 
                 return self::FAILURE;
             }
@@ -163,19 +150,11 @@ class IngestScbData extends Command
                 $this->warn($report->summary());
             }
 
-            $log->update(['metadata' => array_merge($log->metadata ?? [], ['validation' => $report->toArray()])]);
+            $this->ingestionLog->update(['metadata' => array_merge($this->ingestionLog->metadata ?? [], ['validation' => $report->toArray()])]);
 
             return self::SUCCESS;
         } catch (\Exception $e) {
-            $log->update([
-                'status' => 'failed',
-                'error_message' => $e->getMessage(),
-                'records_processed' => $totalProcessed,
-                'records_created' => $totalCreated,
-                'records_updated' => $totalUpdated,
-                'completed_at' => now(),
-            ]);
-
+            $this->failIngestionLog($e->getMessage());
             $this->error("Ingestion failed: {$e->getMessage()}");
 
             return self::FAILURE;

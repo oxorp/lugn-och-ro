@@ -2,12 +2,14 @@
 
 namespace App\Console\Commands;
 
-use App\Models\IngestionLog;
+use App\Console\Concerns\LogsIngestion;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 
 class DisaggregateKronofogden extends Command
 {
+    use LogsIngestion;
+
     protected $signature = 'disaggregate:kronofogden
         {--year=2024 : Year for the data}
         {--validate : Run cross-validation to estimate model quality}';
@@ -20,13 +22,8 @@ class DisaggregateKronofogden extends Command
     {
         $year = (int) $this->option('year');
 
-        $log = IngestionLog::query()->create([
-            'source' => 'kronofogden_disaggregated',
-            'command' => 'disaggregate:kronofogden',
-            'status' => 'running',
-            'started_at' => now(),
-            'metadata' => ['year' => $year],
-        ]);
+        $this->startIngestionLog('kronofogden', 'disaggregate:kronofogden');
+        $this->addStat('year', $year);
 
         $this->info("Disaggregating Kronofogden data to DeSO level for year {$year}...");
 
@@ -50,7 +47,7 @@ class DisaggregateKronofogden extends Command
 
         if ($kommunData->isEmpty()) {
             $this->error('No Kronofogden data found. Run ingest:kronofogden first.');
-            $log->update(['status' => 'failed', 'error_message' => 'No source data', 'completed_at' => now()]);
+            $this->failIngestionLog('No source data');
 
             return self::FAILURE;
         }
@@ -177,17 +174,11 @@ class DisaggregateKronofogden extends Command
 
         $this->info("Done. {$kommunsProcessed} kommuner disaggregated → ".count($records).' DeSO estimates.');
 
-        $log->update([
-            'status' => 'completed',
-            'records_processed' => $kommunsProcessed,
-            'records_created' => count($records),
-            'completed_at' => now(),
-            'metadata' => [
-                'year' => $year,
-                'kommuner_processed' => $kommunsProcessed,
-                'deso_records' => count($records),
-            ],
-        ]);
+        $this->processed = $kommunsProcessed;
+        $this->created = count($records);
+        $this->addStat('kommuner_processed', $kommunsProcessed);
+        $this->addStat('deso_records', count($records));
+        $this->completeIngestionLog();
 
         // Optional cross-validation
         if ($this->option('validate')) {

@@ -2,13 +2,15 @@
 
 namespace App\Console\Commands;
 
-use App\Models\IngestionLog;
+use App\Console\Concerns\LogsIngestion;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 
 class IngestNtu extends Command
 {
+    use LogsIngestion;
+
     protected $signature = 'ingest:ntu
         {--year=2025 : NTU survey year to focus on}
         {--file= : Path to NTU län Excel file}';
@@ -63,18 +65,13 @@ class IngestNtu extends Command
     {
         $targetYear = (int) $this->option('year');
 
-        $log = IngestionLog::query()->create([
-            'source' => 'bra_ntu',
-            'command' => 'ingest:ntu',
-            'status' => 'running',
-            'started_at' => now(),
-            'metadata' => ['year' => $targetYear],
-        ]);
+        $this->startIngestionLog('vulnerability', 'ingest:ntu');
+        $this->addStat('year', $targetYear);
 
         $filePath = $this->option('file') ?: storage_path('app/'.self::DEFAULT_FILE);
         if (! file_exists($filePath)) {
             $this->error("NTU Excel file not found: {$filePath}");
-            $log->update(['status' => 'failed', 'error_message' => 'File not found', 'completed_at' => now()]);
+            $this->failIngestionLog('File not found');
 
             return self::FAILURE;
         }
@@ -152,7 +149,7 @@ class IngestNtu extends Command
 
         if (empty($records)) {
             $this->error('No NTU records extracted.');
-            $log->update(['status' => 'failed', 'error_message' => 'No records extracted', 'completed_at' => now()]);
+            $this->failIngestionLog('No records extracted');
 
             return self::FAILURE;
         }
@@ -170,17 +167,11 @@ class IngestNtu extends Command
         $totalInDb = DB::table('ntu_survey_data')->count();
         $this->info("Done. {$sheetsProcessed} sheets processed, {$totalInDb} NTU records total in database.");
 
-        $log->update([
-            'status' => 'completed',
-            'records_processed' => count($records),
-            'records_created' => count($records),
-            'completed_at' => now(),
-            'metadata' => [
-                'year' => $targetYear,
-                'sheets_processed' => $sheetsProcessed,
-                'total_records' => count($records),
-            ],
-        ]);
+        $this->processed = count($records);
+        $this->created = count($records);
+        $this->addStat('sheets_processed', $sheetsProcessed);
+        $this->addStat('total_records', count($records));
+        $this->completeIngestionLog();
 
         return self::SUCCESS;
     }

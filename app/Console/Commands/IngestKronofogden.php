@@ -2,7 +2,7 @@
 
 namespace App\Console\Commands;
 
-use App\Models\IngestionLog;
+use App\Console\Concerns\LogsIngestion;
 use App\Services\DataValidationService;
 use App\Services\KronofogdenService;
 use Illuminate\Console\Command;
@@ -10,6 +10,8 @@ use Illuminate\Support\Facades\DB;
 
 class IngestKronofogden extends Command
 {
+    use LogsIngestion;
+
     protected $signature = 'ingest:kronofogden
         {--year=2024 : Year for the data}
         {--source=kolada : Data source (kolada)}';
@@ -20,13 +22,8 @@ class IngestKronofogden extends Command
     {
         $year = (int) $this->option('year');
 
-        $log = IngestionLog::query()->create([
-            'source' => 'kronofogden',
-            'command' => 'ingest:kronofogden',
-            'status' => 'running',
-            'started_at' => now(),
-            'metadata' => ['year' => $year],
-        ]);
+        $this->startIngestionLog('kronofogden', 'ingest:kronofogden');
+        $this->addStat('year', $year);
 
         $this->info("Fetching Kronofogden data from Kolada API for year {$year}...");
 
@@ -34,11 +31,7 @@ class IngestKronofogden extends Command
 
         if ($data->isEmpty()) {
             $this->error('No data returned from Kolada API.');
-            $log->update([
-                'status' => 'failed',
-                'error_message' => 'No data from Kolada',
-                'completed_at' => now(),
-            ]);
+            $this->failIngestionLog('No data from Kolada');
 
             return self::FAILURE;
         }
@@ -124,32 +117,24 @@ class IngestKronofogden extends Command
         $this->info('Highest: '.implode(', ', $top->map(fn ($r) => "{$r->municipality_name} ({$r->indebted_pct}%)")->all()));
         $this->info('Lowest: '.implode(', ', $bottom->map(fn ($r) => "{$r->municipality_name} ({$r->indebted_pct}%)")->all()));
 
-        $log->update([
-            'status' => 'completed',
-            'records_processed' => $data->count(),
-            'records_created' => count($records),
-            'completed_at' => now(),
-            'metadata' => [
-                'year' => $year,
-                'kommuner' => $data->count(),
-                'with_debt_rate' => $withDebt,
-                'with_median_debt' => $withMedian,
-                'with_eviction_rate' => $withEviction,
-                'debt_rate_range' => [
-                    'min' => $stats->min_pct,
-                    'max' => $stats->max_pct,
-                    'avg' => round($stats->avg_pct, 2),
-                ],
-            ],
-        ]);
+        $this->processed = $data->count();
+        $this->created = count($records);
+        $this->addStat('kommuner', $data->count());
+        $this->addStat('with_debt_rate', $withDebt);
+        $this->addStat('with_median_debt', $withMedian);
+        $this->addStat('with_eviction_rate', $withEviction);
+        $this->addStat('debt_rate_min', $stats->min_pct);
+        $this->addStat('debt_rate_max', $stats->max_pct);
+        $this->addStat('debt_rate_avg', round($stats->avg_pct, 2));
+        $this->completeIngestionLog();
 
-        $report = app(DataValidationService::class)->validateIngestion($log, 'kronofogden', $year);
+        $report = app(DataValidationService::class)->validateIngestion($this->ingestionLog, 'kronofogden', $year);
         $this->info("Validation: {$report->passedCount()} passed, {$report->failedCount()} failed");
 
         if ($report->hasBlockingFailures()) {
             $this->error('Blocking validation failures detected.');
             $this->error($report->summary());
-            $log->update(['status' => 'completed_with_errors']);
+            $this->ingestionLog->update(['status' => 'completed_with_errors']);
 
             return self::FAILURE;
         }

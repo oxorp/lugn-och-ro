@@ -2,12 +2,14 @@
 
 namespace App\Console\Commands;
 
-use App\Models\IngestionLog;
+use App\Console\Concerns\LogsIngestion;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 
 class AggregateKronofogdenIndicators extends Command
 {
+    use LogsIngestion;
+
     protected $signature = 'aggregate:kronofogden-indicators
         {--year=2024 : Year for the data}';
 
@@ -17,13 +19,8 @@ class AggregateKronofogdenIndicators extends Command
     {
         $year = (int) $this->option('year');
 
-        $log = IngestionLog::query()->create([
-            'source' => 'kronofogden_indicators',
-            'command' => 'aggregate:kronofogden-indicators',
-            'status' => 'running',
-            'started_at' => now(),
-            'metadata' => ['year' => $year],
-        ]);
+        $this->startIngestionLog('kronofogden', 'aggregate:kronofogden-indicators');
+        $this->addStat('year', $year);
 
         // Ensure indicators exist
         $indicators = $this->ensureIndicators();
@@ -36,7 +33,7 @@ class AggregateKronofogdenIndicators extends Command
 
         if ($results->isEmpty()) {
             $this->error('No disaggregation results found. Run disaggregate:kronofogden first.');
-            $log->update(['status' => 'failed', 'error_message' => 'No disaggregation results', 'completed_at' => now()]);
+            $this->failIngestionLog('No disaggregation results');
 
             return self::FAILURE;
         }
@@ -126,16 +123,10 @@ class AggregateKronofogdenIndicators extends Command
             ));
         }
 
-        $log->update([
-            'status' => 'completed',
-            'records_processed' => $results->count(),
-            'records_created' => count($records),
-            'completed_at' => now(),
-            'metadata' => [
-                'year' => $year,
-                'total_records' => count($records),
-            ],
-        ]);
+        $this->processed = $results->count();
+        $this->created = count($records);
+        $this->addStat('total_records', count($records));
+        $this->completeIngestionLog();
 
         return self::SUCCESS;
     }

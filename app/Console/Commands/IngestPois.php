@@ -2,7 +2,7 @@
 
 namespace App\Console\Commands;
 
-use App\Models\IngestionLog;
+use App\Console\Concerns\LogsIngestion;
 use App\Models\Poi;
 use App\Models\PoiCategory;
 use App\Services\OverpassService;
@@ -11,6 +11,8 @@ use Illuminate\Support\Facades\DB;
 
 class IngestPois extends Command
 {
+    use LogsIngestion;
+
     protected $signature = 'ingest:pois
         {--source=osm : Data source (osm, google_places)}
         {--category= : Specific category slug, or omit for all active}
@@ -31,16 +33,9 @@ class IngestPois extends Command
             return self::FAILURE;
         }
 
-        $log = IngestionLog::query()->create([
-            'source' => "poi_{$source}",
-            'command' => 'ingest:pois',
-            'status' => 'running',
-            'started_at' => now(),
-            'metadata' => [
-                'source' => $source,
-                'categories' => $categories->pluck('slug')->all(),
-            ],
-        ]);
+        $this->startIngestionLog('pois', 'ingest:pois');
+        $this->addStat('source', $source);
+        $this->addStat('categories', $categories->pluck('slug')->all());
 
         $totalCreated = 0;
         $totalUpdated = 0;
@@ -145,12 +140,9 @@ class IngestPois extends Command
             }
         }
 
-        $log->update([
-            'status' => 'completed',
-            'records_processed' => $totalCreated + $totalUpdated,
-            'records_created' => $totalCreated,
-            'completed_at' => now(),
-        ]);
+        $this->processed = $totalCreated + $totalUpdated;
+        $this->created = $totalCreated;
+        $this->completeIngestionLog();
 
         $this->newLine();
         $this->info('POI ingestion complete. Run assign:poi-deso next.');

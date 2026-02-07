@@ -35,6 +35,12 @@ export default function MapLayout({ children }: MapLayoutProps) {
                         >
                             {t('nav.methodology')}
                         </Link>
+                        <Link
+                            href="/admin/pipeline"
+                            className="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+                        >
+                            Pipeline
+                        </Link>
                     </nav>
                     <LanguageSwitcher />
                 </div>

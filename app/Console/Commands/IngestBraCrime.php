@@ -2,7 +2,7 @@
 
 namespace App\Console\Commands;
 
-use App\Models\IngestionLog;
+use App\Console\Concerns\LogsIngestion;
 use App\Services\BraDataService;
 use App\Services\DataValidationService;
 use Illuminate\Console\Command;
@@ -10,6 +10,8 @@ use Illuminate\Support\Facades\DB;
 
 class IngestBraCrime extends Command
 {
+    use LogsIngestion;
+
     protected $signature = 'ingest:bra-crime
         {--year=2024 : Year for the data}
         {--file= : Path to kommun CSV file}
@@ -25,20 +27,15 @@ class IngestBraCrime extends Command
     {
         $year = (int) $this->option('year');
 
-        $log = IngestionLog::query()->create([
-            'source' => 'bra',
-            'command' => 'ingest:bra-crime',
-            'status' => 'running',
-            'started_at' => now(),
-            'metadata' => ['year' => $year],
-        ]);
+        $this->startIngestionLog('bra', 'ingest:bra-crime');
+        $this->addStat('year', $year);
 
         // Resolve file paths
         $csvPath = $this->option('file') ?: storage_path('app/'.self::DEFAULT_CSV_PATH);
         if (! file_exists($csvPath)) {
             $this->error("CSV file not found: {$csvPath}");
             $this->info('Place the BRÅ kommun CSV file at: '.storage_path('app/'.self::DEFAULT_CSV_PATH));
-            $log->update(['status' => 'failed', 'error_message' => 'CSV file not found', 'completed_at' => now()]);
+            $this->failIngestionLog('CSV file not found');
 
             return self::FAILURE;
         }
@@ -125,7 +122,7 @@ class IngestBraCrime extends Command
         }
 
         if (count($unmatched) > 0) {
-            $this->warn('Unmatched kommuner ('.count($unmatched).'): '.implode(', ', array_slice($unmatched, 0, 10)));
+            $this->addWarning('Unmatched kommuner ('.count($unmatched).'): '.implode(', ', array_slice($unmatched, 0, 10)));
         }
 
         // Upsert in chunks
@@ -142,26 +139,20 @@ class IngestBraCrime extends Command
         $totalInDb = DB::table('crime_statistics')->where('year', $year)->count();
         $this->info("Done. {$totalInDb} crime statistics records for year {$year}.");
 
-        $log->update([
-            'status' => 'completed',
-            'records_processed' => $kommunData->count(),
-            'records_created' => count($records),
-            'completed_at' => now(),
-            'metadata' => [
-                'year' => $year,
-                'matched' => $matched,
-                'unmatched' => count($unmatched),
-                'total_records' => count($records),
-            ],
-        ]);
+        $this->processed = $kommunData->count();
+        $this->created = count($records);
+        $this->addStat('matched', $matched);
+        $this->addStat('unmatched', count($unmatched));
+        $this->addStat('total_records', count($records));
+        $this->completeIngestionLog();
 
-        $report = app(DataValidationService::class)->validateIngestion($log, 'bra', $year);
+        $report = app(DataValidationService::class)->validateIngestion($this->ingestionLog, 'bra', $year);
         $this->info("Validation: {$report->passedCount()} passed, {$report->failedCount()} failed");
 
         if ($report->hasBlockingFailures()) {
             $this->error('Blocking validation failures detected.');
             $this->error($report->summary());
-            $log->update(['status' => 'completed_with_errors']);
+            $this->ingestionLog->update(['status' => 'completed_with_errors']);
 
             return self::FAILURE;
         }

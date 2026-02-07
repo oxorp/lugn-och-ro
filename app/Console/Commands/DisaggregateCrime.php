@@ -2,12 +2,14 @@
 
 namespace App\Console\Commands;
 
-use App\Models\IngestionLog;
+use App\Console\Concerns\LogsIngestion;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 
 class DisaggregateCrime extends Command
 {
+    use LogsIngestion;
+
     protected $signature = 'disaggregate:crime
         {--year=2024 : Year for the data}';
 
@@ -17,13 +19,8 @@ class DisaggregateCrime extends Command
     {
         $year = (int) $this->option('year');
 
-        $log = IngestionLog::query()->create([
-            'source' => 'bra_disaggregated',
-            'command' => 'disaggregate:crime',
-            'status' => 'running',
-            'started_at' => now(),
-            'metadata' => ['year' => $year],
-        ]);
+        $this->startIngestionLog('bra', 'disaggregate:crime');
+        $this->addStat('year', $year);
 
         $this->info("Disaggregating crime data to DeSO level for year {$year}...");
 
@@ -151,17 +148,11 @@ class DisaggregateCrime extends Command
 
         $this->info("Done. {$kommunsProcessed} kommuner disaggregated, ".count($records).' indicator value records.');
 
-        $log->update([
-            'status' => 'completed',
-            'records_processed' => $kommunsProcessed,
-            'records_created' => count($records),
-            'completed_at' => now(),
-            'metadata' => [
-                'year' => $year,
-                'kommuner_processed' => $kommunsProcessed,
-                'total_records' => count($records),
-            ],
-        ]);
+        $this->processed = $kommunsProcessed;
+        $this->created = count($records);
+        $this->addStat('kommuner_processed', $kommunsProcessed);
+        $this->addStat('total_records', count($records));
+        $this->completeIngestionLog();
 
         return self::SUCCESS;
     }
