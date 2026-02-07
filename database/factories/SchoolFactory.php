@@ -21,6 +21,7 @@ class SchoolFactory extends Factory
             'municipality_code' => fake()->numerify('####'),
             'municipality_name' => fake()->city(),
             'type_of_schooling' => 'Grundskola',
+            'school_forms' => ['Grundskola'],
             'operator_type' => fake()->randomElement(['Kommunal', 'Fristående']),
             'operator_name' => fake()->company(),
             'status' => 'active',

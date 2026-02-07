@@ -64,11 +64,11 @@ class AggregateSchoolIndicators extends Command
                 INNER JOIN school_statistics ss ON ss.school_unit_code = s.school_unit_code
                 WHERE s.deso_code IS NOT NULL
                   AND s.status = 'active'
-                  AND s.type_of_schooling LIKE '%Grundskol%'
+                  AND (s.school_forms::jsonb @> ?::jsonb OR s.type_of_schooling LIKE '%Grundskol%')
                   AND ss.academic_year = ?
                   AND ss.{$statColumn} IS NOT NULL
                 GROUP BY s.deso_code
-            ", [$academicYear]);
+            ", ['["Grundskola"]', $academicYear]);
 
             $rows = [];
             foreach ($aggregates as $agg) {

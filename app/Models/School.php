@@ -18,6 +18,7 @@ class School extends Model
         'municipality_code',
         'municipality_name',
         'type_of_schooling',
+        'school_forms',
         'operator_type',
         'operator_name',
         'status',
@@ -28,6 +29,13 @@ class School extends Model
         'postal_code',
         'city',
     ];
+
+    protected function casts(): array
+    {
+        return [
+            'school_forms' => 'array',
+        ];
+    }
 
     public function statistics(): HasMany
     {

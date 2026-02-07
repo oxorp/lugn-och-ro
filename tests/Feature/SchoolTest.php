@@ -88,6 +88,7 @@ class SchoolTest extends TestCase
         $response->assertJsonCount(1);
         $response->assertJsonPath('0.school_unit_code', $school->school_unit_code);
         $response->assertJsonPath('0.name', $school->name);
+        $response->assertJsonPath('0.school_forms', ['Grundskola']);
         $data = $response->json();
         $this->assertEquals(245.0, $data[0]['merit_value']);
     }
@@ -162,5 +163,54 @@ class SchoolTest extends TestCase
         $this->expectException(\Illuminate\Database\QueryException::class);
 
         School::factory()->create(['school_unit_code' => '12345678']);
+    }
+
+    public function test_school_forms_is_json_cast(): void
+    {
+        $school = School::factory()->create([
+            'school_forms' => ['Grundskola', 'Förskoleklass'],
+        ]);
+
+        $school->refresh();
+
+        $this->assertIsArray($school->school_forms);
+        $this->assertContains('Grundskola', $school->school_forms);
+        $this->assertContains('Förskoleklass', $school->school_forms);
+    }
+
+    public function test_schools_api_returns_school_forms(): void
+    {
+        School::factory()->create([
+            'deso_code' => '0114A0010',
+            'status' => 'active',
+            'school_forms' => ['Gymnasieskola'],
+            'type_of_schooling' => 'Gymnasieskola',
+        ]);
+
+        $response = $this->getJson('/api/deso/0114A0010/schools');
+
+        $response->assertOk();
+        $response->assertJsonPath('0.school_forms', ['Gymnasieskola']);
+    }
+
+    public function test_schools_api_returns_all_school_forms(): void
+    {
+        School::factory()->create([
+            'deso_code' => '0114A0010',
+            'status' => 'active',
+            'school_forms' => ['Grundskola'],
+            'type_of_schooling' => 'Grundskola',
+        ]);
+        School::factory()->create([
+            'deso_code' => '0114A0010',
+            'status' => 'active',
+            'school_forms' => ['Gymnasieskola'],
+            'type_of_schooling' => 'Gymnasieskola',
+        ]);
+
+        $response = $this->getJson('/api/deso/0114A0010/schools');
+
+        $response->assertOk();
+        $response->assertJsonCount(2);
     }
 }

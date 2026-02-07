@@ -13,6 +13,24 @@ class SkolverketApiService
 
     private const PLANNED_EDU_ACCEPT = 'application/vnd.skolverket.plannededucations.api.v3.hal+json';
 
+    /**
+     * School form code to Swedish display name mapping.
+     *
+     * @var array<string, string>
+     */
+    public const SCHOOL_FORM_NAMES = [
+        'FKLASS' => 'Förskoleklass',
+        'FTH' => 'Fritidshem',
+        'OPPFTH' => 'Öppen fritidsverksamhet',
+        'GR' => 'Grundskola',
+        'GRAN' => 'Anpassad grundskola',
+        'SP' => 'Specialskola',
+        'SAM' => 'Sameskola',
+        'GY' => 'Gymnasieskola',
+        'GYAN' => 'Anpassad gymnasieskola',
+        'VUX' => 'Komvux',
+    ];
+
     private int $delayMs;
 
     public function __construct(int $delayMs = 100)
@@ -21,84 +39,110 @@ class SkolverketApiService
     }
 
     /**
-     * Fetch all schools from the Planned Educations v3 paginated list.
+     * Fetch ALL school units from Registry v2 list endpoint.
+     * Returns minimal data: schoolUnitCode, name, status.
      *
-     * @return array<int, array{code: string, name: string, municipality_code: string, type_of_schooling: string|null, principal_organizer_type: string|null}>
+     * @param  array<string>|null  $statuses  Filter by status (e.g., ['AKTIV', 'VILANDE'])
+     * @return array<int, array{code: string, name: string, status: string}>
      */
-    public function fetchAllSchools(): array
+    public function fetchAllSchoolUnits(?array $statuses = null): array
     {
+        $url = self::REGISTRY_BASE_URL.'/school-units';
+
+        if ($statuses) {
+            $queryParts = array_map(fn (string $s) => 'status='.urlencode($s), $statuses);
+            $url .= '?'.implode('&', $queryParts);
+        }
+
+        $response = Http::timeout(120)
+            ->acceptJson()
+            ->get($url);
+
+        if (! $response->successful()) {
+            Log::error('Failed to fetch school unit list from Registry v2', [
+                'status' => $response->status(),
+                'body' => substr($response->body(), 0, 500),
+            ]);
+
+            return [];
+        }
+
+        $data = $response->json();
+        $units = $data['data']['attributes'] ?? [];
+
         $schools = [];
-        $page = 0;
-        $size = 100;
-        $totalPages = 1;
-
-        while ($page < $totalPages) {
-            $response = Http::timeout(60)
-                ->withHeaders(['Accept' => self::PLANNED_EDU_ACCEPT])
-                ->get(self::PLANNED_EDU_BASE_URL.'/school-units', [
-                    'page' => $page,
-                    'size' => $size,
-                ]);
-
-            if (! $response->successful()) {
-                Log::warning("Planned Educations list failed on page {$page}: {$response->status()}", [
-                    'body' => substr($response->body(), 0, 500),
-                ]);
-
-                break;
-            }
-
-            $data = $response->json();
-            $body = $data['body'] ?? [];
-            $listed = $body['_embedded']['listedSchoolUnits'] ?? [];
-            $pageInfo = $body['page'] ?? [];
-
-            $totalPages = $pageInfo['totalPages'] ?? 1;
-
-            foreach ($listed as $school) {
-                $types = collect($school['typeOfSchooling'] ?? [])
-                    ->pluck('displayName')
-                    ->join(', ');
-
-                $schools[] = [
-                    'code' => $school['code'],
-                    'name' => $school['name'],
-                    'municipality_code' => $school['geographicalAreaCode'] ?? null,
-                    'type_of_schooling' => $types ?: null,
-                    'principal_organizer_type' => $school['principalOrganizerType'] ?? null,
-                    'has_grundskola' => collect($school['typeOfSchooling'] ?? [])
-                        ->contains(fn ($t) => strtolower($t['code'] ?? '') === 'gr'),
-                ];
-            }
-
-            $page++;
-
-            if ($page < $totalPages) {
-                usleep($this->delayMs * 1000);
-            }
+        foreach ($units as $unit) {
+            $schools[] = [
+                'code' => $unit['schoolUnitCode'],
+                'name' => $unit['name'],
+                'status' => $unit['status'],
+            ];
         }
 
         return $schools;
     }
 
     /**
-     * Fetch a single school's details (including coordinates) from the registry v2.
+     * Fetch a single school unit's full details from Registry v2.
      *
-     * @return array{lat: float|null, lng: float|null, address: string|null, postal_code: string|null, city: string|null, operator_name: string|null, operator_type: string|null, status: string}|null
+     * @return array{
+     *     name: string,
+     *     status: string,
+     *     municipality_code: string|null,
+     *     school_types: array<string>,
+     *     type_of_schooling: string|null,
+     *     school_forms: array<string>,
+     *     operator_name: string|null,
+     *     operator_type: string|null,
+     *     lat: float|null,
+     *     lng: float|null,
+     *     address: string|null,
+     *     postal_code: string|null,
+     *     city: string|null,
+     * }|null
      */
     public function fetchSchoolDetails(string $schoolUnitCode): ?array
     {
         $response = Http::timeout(30)
+            ->acceptJson()
             ->get(self::REGISTRY_BASE_URL.'/school-units/'.$schoolUnitCode);
 
         if (! $response->successful()) {
             return null;
         }
 
-        $data = $response->json();
+        return $this->parseSchoolDetails($response->json());
+    }
+
+    /**
+     * Parse a v2 school unit detail response.
+     *
+     * @return array{
+     *     name: string,
+     *     status: string,
+     *     municipality_code: string|null,
+     *     school_types: array<string>,
+     *     type_of_schooling: string|null,
+     *     school_forms: array<string>,
+     *     operator_name: string|null,
+     *     operator_type: string|null,
+     *     lat: float|null,
+     *     lng: float|null,
+     *     address: string|null,
+     *     postal_code: string|null,
+     *     city: string|null,
+     * }|null
+     */
+    public function parseSchoolDetails(array $data): ?array
+    {
         $attrs = $data['data']['attributes'] ?? [];
         $included = $data['included'] ?? [];
 
+        if (empty($attrs)) {
+            return null;
+        }
+
+        // Extract coordinates and address from BESOKSADRESS
         $lat = null;
         $lng = null;
         $address = null;
@@ -118,13 +162,16 @@ class SkolverketApiService
             }
         }
 
+        // Map status to our internal values
         $status = match ($attrs['status'] ?? 'AKTIV') {
             'AKTIV' => 'active',
-            'VILANDE' => 'inactive',
-            'UPPHORT' => 'inactive',
+            'VILANDE' => 'dormant',
+            'UPPHORT' => 'ceased',
+            'PLANERAD' => 'planned',
             default => 'active',
         };
 
+        // Map organizer type
         $organizerType = match ($included['attributes']['organizerType'] ?? null) {
             'KOMMUN' => 'Kommunal',
             'ENSKILD' => 'Fristående',
@@ -133,20 +180,32 @@ class SkolverketApiService
             default => $included['attributes']['organizerType'] ?? null,
         };
 
+        // School types are code arrays like ["GR", "FKLASS"]
+        $schoolTypeCodes = $attrs['schoolTypes'] ?? [];
+        $schoolFormNames = array_map(
+            fn (string $code) => self::SCHOOL_FORM_NAMES[$code] ?? $code,
+            $schoolTypeCodes
+        );
+
         return [
+            'name' => $attrs['displayName'] ?? $attrs['schoolName'] ?? '',
+            'status' => $status,
+            'municipality_code' => $attrs['municipalityCode'] ?? null,
+            'school_types' => $schoolTypeCodes,
+            'type_of_schooling' => implode(', ', $schoolFormNames) ?: null,
+            'school_forms' => $schoolFormNames,
+            'operator_name' => $included['attributes']['displayName'] ?? null,
+            'operator_type' => $organizerType,
             'lat' => $lat,
             'lng' => $lng,
             'address' => $address,
             'postal_code' => $postalCode,
             'city' => $city,
-            'operator_name' => $included['attributes']['displayName'] ?? null,
-            'operator_type' => $organizerType,
-            'status' => $status,
         ];
     }
 
     /**
-     * Fetch grundskola statistics for a school.
+     * Fetch grundskola statistics for a school from Planned Educations v3.
      *
      * @return array{merit_value_17: float|null, goal_achievement_pct: float|null, eligibility_pct: float|null, teacher_certification_pct: float|null, student_count: int|null, academic_year: string|null}|null
      */
@@ -209,7 +268,6 @@ class SkolverketApiService
      */
     private function getLatestValue(array $entries): ?float
     {
-        // Entries are time-series, get the latest with a valid value
         $latest = null;
         foreach ($entries as $entry) {
             if (($entry['valueType'] ?? '') !== 'EXISTS') {
@@ -223,7 +281,7 @@ class SkolverketApiService
 
             // Swedish decimal: comma -> dot
             $parsed = (float) str_replace(',', '.', $value);
-            $latest = $parsed; // Last valid entry is the latest
+            $latest = $parsed;
         }
 
         return $latest;

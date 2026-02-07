@@ -103,6 +103,7 @@ class DesoController extends Controller
                 'school_unit_code' => $school->school_unit_code,
                 'name' => $school->name,
                 'type' => $school->type_of_schooling,
+                'school_forms' => $school->school_forms ?? [],
                 'operator_type' => $school->operator_type,
                 'lat' => $school->lat ? (float) $school->lat : null,
                 'lng' => $school->lng ? (float) $school->lng : null,

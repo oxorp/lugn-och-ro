@@ -147,7 +147,11 @@
             "merit_value": "Meritv\u00e4rde",
             "goal_achievement": "M\u00e5luppfyllelse",
             "teachers": "L\u00e4rare",
-            "students_count": "{{count}} elever"
+            "students_count": "{{count}} elever",
+            "filter_all": "Alla",
+            "filter_grundskola": "Grundskola",
+            "filter_gymnasie": "Gymnasie",
+            "filter_other": "\u00d6vriga"
         }
     },
     "common": {

@@ -40,8 +40,8 @@ class IngestSkolverketStats extends Command
             $query = School::query()
                 ->where('status', 'active')
                 ->where(function ($q) {
-                    $q->where('type_of_schooling', 'like', '%Grundskolan%')
-                        ->orWhere('type_of_schooling', 'like', '%Grundskola%');
+                    $q->whereJsonContains('school_forms', 'Grundskola')
+                        ->orWhere('type_of_schooling', 'like', '%Grundskol%');
                 });
 
             if ($limit > 0) {

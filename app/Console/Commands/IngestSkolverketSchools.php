@@ -12,10 +12,12 @@ class IngestSkolverketSchools extends Command
 {
     protected $signature = 'ingest:skolverket-schools
         {--delay=100 : Delay between batch requests in milliseconds}
+        {--batch-size=10 : Number of concurrent detail requests per batch}
+        {--force : Re-fetch and overwrite all school data from the API}
         {--skip-details : Skip fetching individual school details (coordinates)}
-        {--batch-size=10 : Number of concurrent requests per batch}';
+        {--include-ceased : Include ceased (upphörda) school units}';
 
-    protected $description = 'Ingest school locations and metadata from Skolverket APIs';
+    protected $description = 'Ingest all school units from Skolverket Registry API v2';
 
     private const REGISTRY_BASE_URL = 'https://api.skolverket.se/skolenhetsregistret/v2';
 
@@ -33,23 +35,45 @@ class IngestSkolverketSchools extends Command
         ]);
 
         try {
-            // Step 1: Fetch all schools from Planned Educations v3 (paginated list)
-            $this->info('Fetching school list from Planned Educations API...');
-            $schools = $service->fetchAllSchools();
-            $this->info('Retrieved '.count($schools).' schools from API.');
+            // Step 1: Fetch all school units from Registry v2
+            $statuses = $this->option('include-ceased')
+                ? null
+                : ['AKTIV', 'VILANDE', 'PLANERAD'];
 
-            // Step 2: Upsert basic school data
-            $this->info('Upserting school data...');
+            $statusLabel = $this->option('include-ceased') ? 'all statuses' : 'active/dormant/planned';
+            $this->info("Fetching school unit list from Registry v2 ({$statusLabel})...");
+
+            $schools = $service->fetchAllSchoolUnits($statuses);
+
+            if (empty($schools)) {
+                $this->error('No school units returned from API. Aborting.');
+                $log->update([
+                    'status' => 'failed',
+                    'error_message' => 'Empty response from Registry v2 list endpoint',
+                    'completed_at' => now(),
+                ]);
+
+                return self::FAILURE;
+            }
+
+            $this->info('Retrieved '.count($schools).' school units from Registry v2.');
+
+            // Step 2: Upsert minimal data from list (code, name, status)
             $now = now()->toDateTimeString();
             $rows = [];
-
             foreach ($schools as $school) {
+                $status = match ($school['status']) {
+                    'AKTIV' => 'active',
+                    'VILANDE' => 'dormant',
+                    'UPPHORT' => 'ceased',
+                    'PLANERAD' => 'planned',
+                    default => 'active',
+                };
+
                 $rows[] = [
                     'school_unit_code' => $school['code'],
                     'name' => $school['name'],
-                    'municipality_code' => $school['municipality_code'],
-                    'type_of_schooling' => $school['type_of_schooling'],
-                    'operator_type' => $school['principal_organizer_type'],
+                    'status' => $status,
                     'created_at' => $now,
                     'updated_at' => $now,
                 ];
@@ -59,13 +83,13 @@ class IngestSkolverketSchools extends Command
                 DB::table('schools')->upsert(
                     $chunk,
                     ['school_unit_code'],
-                    ['name', 'municipality_code', 'type_of_schooling', 'operator_type', 'updated_at']
+                    ['name', 'status', 'updated_at']
                 );
             }
 
-            $this->info('Upserted '.count($rows).' schools.');
+            $this->info('Upserted '.count($rows).' school units.');
 
-            // Step 3: Fetch individual school details for coordinates (batched/concurrent)
+            // Step 3: Fetch individual school details for all data
             if (! $this->option('skip-details')) {
                 $this->info("Fetching school details in batches of {$batchSize}...");
                 $this->fetchSchoolDetailsBatched($schools, $batchSize, $delay);
@@ -75,24 +99,8 @@ class IngestSkolverketSchools extends Command
             $this->info('Assigning DeSO codes via spatial join...');
             $this->assignDesoCodes();
 
-            $totalSchools = DB::table('schools')->count();
-            $withCoords = DB::table('schools')->whereNotNull('lat')->count();
-            $withDeso = DB::table('schools')->whereNotNull('deso_code')->count();
-
-            $log->update([
-                'status' => 'completed',
-                'records_processed' => count($schools),
-                'records_created' => $totalSchools,
-                'completed_at' => now(),
-                'metadata' => [
-                    'total_schools' => $totalSchools,
-                    'with_coordinates' => $withCoords,
-                    'with_deso_code' => $withDeso,
-                ],
-            ]);
-
-            $this->newLine();
-            $this->info("Import complete: {$totalSchools} total schools, {$withCoords} with coordinates, {$withDeso} with DeSO assignment.");
+            // Log comprehensive stats
+            $this->logStats($log, count($schools));
 
             return self::SUCCESS;
         } catch (\Exception $e) {
@@ -108,6 +116,9 @@ class IngestSkolverketSchools extends Command
         }
     }
 
+    /**
+     * @param  array<int, array{code: string, name: string, status: string}>  $schools
+     */
     private function fetchSchoolDetailsBatched(array $schools, int $batchSize, int $delay): void
     {
         $bar = $this->output->createProgressBar(count($schools));
@@ -116,6 +127,7 @@ class IngestSkolverketSchools extends Command
         $updated = 0;
         $failed = 0;
         $now = now()->toDateTimeString();
+        $service = new SkolverketApiService;
 
         $batches = array_chunk($schools, $batchSize);
 
@@ -124,9 +136,12 @@ class IngestSkolverketSchools extends Command
                 foreach ($batch as $school) {
                     $pool->as($school['code'])
                         ->timeout(15)
+                        ->acceptJson()
                         ->get(self::REGISTRY_BASE_URL.'/school-units/'.$school['code']);
                 }
             });
+
+            $bulkUpdates = [];
 
             foreach ($batch as $school) {
                 $code = $school['code'];
@@ -135,35 +150,13 @@ class IngestSkolverketSchools extends Command
                     $response = $responses[$code] ?? null;
 
                     if ($response instanceof \Illuminate\Http\Client\Response && $response->successful()) {
-                        $details = $this->parseSchoolDetails($response->json());
+                        $details = $service->parseSchoolDetails($response->json());
 
                         if ($details) {
-                            $updateData = [
-                                'lat' => $details['lat'],
-                                'lng' => $details['lng'],
-                                'address' => $details['address'],
-                                'postal_code' => $details['postal_code'],
-                                'city' => $details['city'],
-                                'operator_name' => $details['operator_name'],
-                                'status' => $details['status'],
-                                'updated_at' => $now,
+                            $bulkUpdates[] = [
+                                'code' => $code,
+                                'details' => $details,
                             ];
-
-                            if ($details['operator_type']) {
-                                $updateData['operator_type'] = $details['operator_type'];
-                            }
-
-                            DB::table('schools')
-                                ->where('school_unit_code', $code)
-                                ->update($updateData);
-
-                            if ($details['lat'] !== null && $details['lng'] !== null) {
-                                DB::statement(
-                                    'UPDATE schools SET geom = ST_SetSRID(ST_MakePoint(?, ?), 4326) WHERE school_unit_code = ?',
-                                    [$details['lng'], $details['lat'], $code]
-                                );
-                            }
-
                             $updated++;
                         } else {
                             $failed++;
@@ -178,70 +171,41 @@ class IngestSkolverketSchools extends Command
                 $bar->advance();
             }
 
+            // Batch update all schools in this chunk
+            foreach ($bulkUpdates as $item) {
+                $d = $item['details'];
+                DB::table('schools')
+                    ->where('school_unit_code', $item['code'])
+                    ->update([
+                        'name' => $d['name'],
+                        'municipality_code' => $d['municipality_code'],
+                        'type_of_schooling' => $d['type_of_schooling'],
+                        'school_forms' => json_encode($d['school_forms']),
+                        'operator_name' => $d['operator_name'],
+                        'operator_type' => $d['operator_type'],
+                        'status' => $d['status'],
+                        'lat' => $d['lat'],
+                        'lng' => $d['lng'],
+                        'address' => $d['address'],
+                        'postal_code' => $d['postal_code'],
+                        'city' => $d['city'],
+                        'updated_at' => $now,
+                    ]);
+
+                if ($d['lat'] !== null && $d['lng'] !== null) {
+                    DB::statement(
+                        'UPDATE schools SET geom = ST_SetSRID(ST_MakePoint(?, ?), 4326) WHERE school_unit_code = ?',
+                        [$d['lng'], $d['lat'], $item['code']]
+                    );
+                }
+            }
+
             usleep($delay * 1000);
         }
 
         $bar->finish();
         $this->newLine();
         $this->info("Details fetched: {$updated} updated, {$failed} failed/missing.");
-    }
-
-    /**
-     * @return array{lat: float|null, lng: float|null, address: string|null, postal_code: string|null, city: string|null, operator_name: string|null, operator_type: string|null, status: string}|null
-     */
-    private function parseSchoolDetails(array $data): ?array
-    {
-        $attrs = $data['data']['attributes'] ?? [];
-        $included = $data['included'] ?? [];
-
-        if (empty($attrs)) {
-            return null;
-        }
-
-        $lat = null;
-        $lng = null;
-        $address = null;
-        $postalCode = null;
-        $city = null;
-
-        foreach ($attrs['addresses'] ?? [] as $addr) {
-            if (($addr['type'] ?? '') === 'BESOKSADRESS') {
-                $geo = $addr['geoCoordinates'] ?? [];
-                $lat = isset($geo['latitude']) ? (float) $geo['latitude'] : null;
-                $lng = isset($geo['longitude']) ? (float) $geo['longitude'] : null;
-                $address = $addr['streetAddress'] ?? null;
-                $postalCode = $addr['postalCode'] ?? null;
-                $city = $addr['locality'] ?? null;
-
-                break;
-            }
-        }
-
-        $status = match ($attrs['status'] ?? 'AKTIV') {
-            'AKTIV' => 'active',
-            'VILANDE' => 'inactive',
-            'UPPHORT' => 'inactive',
-            default => 'active',
-        };
-
-        $organizerType = match ($included['attributes']['organizerType'] ?? null) {
-            'KOMMUN' => 'Kommunal',
-            'ENSKILD' => 'Fristående',
-            'STAT' => 'Statlig',
-            'REGION' => 'Region',
-            default => $included['attributes']['organizerType'] ?? null,
-        };
-
-        return [
-            'lat' => $lat,
-            'lng' => $lng,
-            'address' => $address,
-            'postal_code' => $postalCode,
-            'city' => $city,
-            'operator_name' => $included['attributes']['displayName'] ?? null,
-            'operator_type' => $organizerType,
-            'status' => $status,
-        ];
     }
 
     private function assignDesoCodes(): void
@@ -255,5 +219,65 @@ class IngestSkolverketSchools extends Command
         ');
 
         $this->info("Assigned DeSO codes to {$assigned} schools.");
+    }
+
+    private function logStats(IngestionLog $log, int $totalFromApi): void
+    {
+        $stats = DB::select("
+            SELECT
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE status = 'active') as active,
+                COUNT(*) FILTER (WHERE status = 'ceased') as ceased,
+                COUNT(*) FILTER (WHERE status = 'dormant') as dormant,
+                COUNT(*) FILTER (WHERE status = 'planned') as planned,
+                COUNT(*) FILTER (WHERE lat IS NOT NULL) as with_coords,
+                COUNT(*) FILTER (WHERE lat IS NULL) as without_coords,
+                COUNT(*) FILTER (WHERE deso_code IS NOT NULL) as with_deso
+            FROM schools
+        ")[0];
+
+        // School forms breakdown
+        $formBreakdown = DB::select('
+            SELECT form, COUNT(*) as cnt
+            FROM schools, json_array_elements_text(school_forms) AS form
+            WHERE school_forms IS NOT NULL
+            GROUP BY form
+            ORDER BY cnt DESC
+        ');
+
+        $log->update([
+            'status' => 'completed',
+            'records_processed' => $totalFromApi,
+            'records_created' => $stats->total,
+            'completed_at' => now(),
+            'metadata' => [
+                'total_schools' => $stats->total,
+                'active' => $stats->active,
+                'ceased' => $stats->ceased,
+                'dormant' => $stats->dormant,
+                'planned' => $stats->planned,
+                'with_coordinates' => $stats->with_coords,
+                'without_coordinates' => $stats->without_coords,
+                'with_deso_code' => $stats->with_deso,
+            ],
+        ]);
+
+        $this->newLine();
+        $this->info("Total school units in database: {$stats->total}");
+        $this->info("  - Active: {$stats->active}");
+        $this->info("  - Dormant: {$stats->dormant}");
+        $this->info("  - Ceased: {$stats->ceased}");
+        $this->info("  - Planned: {$stats->planned}");
+        $this->info("  - With coordinates: {$stats->with_coords}");
+        $this->info("  - Without coordinates: {$stats->without_coords}");
+        $this->info("  - DeSO assigned: {$stats->with_deso}");
+
+        if (! empty($formBreakdown)) {
+            $this->newLine();
+            $this->info('School forms breakdown:');
+            foreach ($formBreakdown as $form) {
+                $this->info("  - {$form->form}: {$form->cnt}");
+            }
+        }
     }
 }

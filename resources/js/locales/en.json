@@ -148,7 +148,11 @@
             "merit_value": "Meritv\u00e4rde",
             "goal_achievement": "Goal ach.",
             "teachers": "Teachers",
-            "students_count": "{{count}} students"
+            "students_count": "{{count}} students",
+            "filter_all": "All",
+            "filter_grundskola": "Grundskola",
+            "filter_gymnasie": "Gymnasie",
+            "filter_other": "Other"
         }
     },
     "methodology": {

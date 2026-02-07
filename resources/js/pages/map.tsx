@@ -55,6 +55,7 @@ export interface School {
     school_unit_code: string;
     name: string;
     type: string | null;
+    school_forms: string[];
     operator_type: string | null;
     lat: number | null;
     lng: number | null;
@@ -62,6 +63,29 @@ export interface School {
     goal_achievement: number | null;
     teacher_certification: number | null;
     student_count: number | null;
+}
+
+type SchoolFilter = 'all' | 'grundskola' | 'gymnasie' | 'other';
+
+function getSchoolFormCategory(forms: string[]): 'grundskola' | 'gymnasie' | 'other' {
+    if (forms.some((f) => f === 'Grundskola')) return 'grundskola';
+    if (forms.some((f) => f === 'Gymnasieskola')) return 'gymnasie';
+    return 'other';
+}
+
+function schoolFormBadgeColor(forms: string[]): string {
+    const cat = getSchoolFormCategory(forms);
+    if (cat === 'grundskola') return 'bg-primary/10 text-primary border-primary/20';
+    if (cat === 'gymnasie') return 'bg-blue-500/10 text-blue-600 border-blue-500/20';
+    return 'bg-muted text-muted-foreground border-border';
+}
+
+function schoolFormLabel(forms: string[]): string {
+    const priority = ['Grundskola', 'Gymnasieskola', 'Anpassad grundskola', 'Anpassad gymnasieskola', 'Specialskola', 'Sameskola', 'Förskoleklass', 'Komvux'];
+    for (const p of priority) {
+        if (forms.includes(p)) return p;
+    }
+    return forms[0] ?? '';
 }
 
 interface CrimeData {
@@ -413,9 +437,12 @@ function SchoolCard({
             <div className="mb-1 flex items-start justify-between">
                 <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-semibold text-foreground">{school.name}</div>
-                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                        {school.type && <span>{school.type}</span>}
-                        {school.type && school.operator_type && <span>&middot;</span>}
+                    <div className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+                        {school.school_forms?.length > 0 && (
+                            <Badge variant="outline" className={`px-1.5 py-0 text-[10px] ${schoolFormBadgeColor(school.school_forms)}`}>
+                                {schoolFormLabel(school.school_forms)}
+                            </Badge>
+                        )}
                         {school.operator_type && (
                             <Badge variant="outline" className="px-1 py-0 text-[10px]">
                                 {school.operator_type}
@@ -795,6 +822,7 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes, i
     const [selectedScore, setSelectedScore] = useState<DesoScore | null>(null);
     const [schools, setSchools] = useState<School[]>([]);
     const [schoolsLoading, setSchoolsLoading] = useState(false);
+    const [schoolFilter, setSchoolFilter] = useState<SchoolFilter>('all');
     const [crimeData, setCrimeData] = useState<CrimeData | null>(null);
     const [crimeLoading, setCrimeLoading] = useState(false);
     const [financialData, setFinancialData] = useState<FinancialData | null>(null);
@@ -1107,36 +1135,64 @@ export default function MapPage({ initialCenter, initialZoom, indicatorScopes, i
                             {/* Schools Section */}
                             <Separator />
                             <div>
-                                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                                    {schoolsLoading
-                                        ? t('sidebar.schools.title_loading')
-                                        : t('sidebar.schools.title_count', { count: schools.length })}
-                                </div>
-                                {schoolsLoading ? (
-                                    <div className="space-y-3">
-                                        {[1, 2].map((i) => (
-                                            <div key={i} className="h-24 animate-pulse rounded-lg bg-muted" />
-                                        ))}
-                                    </div>
-                                ) : schools.length > 0 ? (
-                                    <div className="space-y-2">
-                                        {schools.map((school) => (
-                                            <SchoolCard
-                                                key={school.school_unit_code}
-                                                school={school}
-                                                highlighted={highlightedSchool === school.school_unit_code}
-                                                onRef={(el) => {
-                                                    schoolRefs.current[school.school_unit_code] = el;
-                                                }}
-                                            />
-                                        ))}
-                                    </div>
-                                ) : (
-                                    <div className="rounded-lg border border-dashed border-border p-4 text-center text-sm text-muted-foreground">
-                                        {t('sidebar.schools.empty')}
-                                        <NoDataTooltip reason="no_schools" />
-                                    </div>
-                                )}
+                                {(() => {
+                                    const filteredSchools = schools.filter((s) => {
+                                        if (schoolFilter === 'all') return true;
+                                        const cat = getSchoolFormCategory(s.school_forms ?? []);
+                                        return cat === schoolFilter;
+                                    });
+                                    return (
+                                        <>
+                                            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                                {schoolsLoading
+                                                    ? t('sidebar.schools.title_loading')
+                                                    : t('sidebar.schools.title_count', { count: filteredSchools.length })}
+                                            </div>
+                                            {!schoolsLoading && schools.length > 0 && (
+                                                <div className="mb-2 flex gap-1">
+                                                    {(['all', 'grundskola', 'gymnasie', 'other'] as SchoolFilter[]).map((f) => (
+                                                        <button
+                                                            key={f}
+                                                            onClick={() => setSchoolFilter(f)}
+                                                            className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium transition-colors ${
+                                                                schoolFilter === f
+                                                                    ? 'bg-primary text-primary-foreground'
+                                                                    : 'bg-muted text-muted-foreground hover:bg-muted/80'
+                                                            }`}
+                                                        >
+                                                            {t(`sidebar.schools.filter_${f}`)}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            )}
+                                            {schoolsLoading ? (
+                                                <div className="space-y-3">
+                                                    {[1, 2].map((i) => (
+                                                        <div key={i} className="h-24 animate-pulse rounded-lg bg-muted" />
+                                                    ))}
+                                                </div>
+                                            ) : filteredSchools.length > 0 ? (
+                                                <div className="space-y-2">
+                                                    {filteredSchools.map((school) => (
+                                                        <SchoolCard
+                                                            key={school.school_unit_code}
+                                                            school={school}
+                                                            highlighted={highlightedSchool === school.school_unit_code}
+                                                            onRef={(el) => {
+                                                                schoolRefs.current[school.school_unit_code] = el;
+                                                            }}
+                                                        />
+                                                    ))}
+                                                </div>
+                                            ) : (
+                                                <div className="rounded-lg border border-dashed border-border p-4 text-center text-sm text-muted-foreground">
+                                                    {t('sidebar.schools.empty')}
+                                                    <NoDataTooltip reason="no_schools" />
+                                                </div>
+                                            )}
+                                        </>
+                                    );
+                                })()}
                             </div>
 
                             {/* Strengths / Weaknesses */}

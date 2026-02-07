@@ -128,11 +128,13 @@ class AggregateSchoolIndicatorsTest extends TestCase
             'deso_code' => '0114A0010',
             'status' => 'active',
             'type_of_schooling' => 'Grundskolan',
+            'school_forms' => ['Grundskola'],
         ]);
         $gym = School::factory()->create([
             'deso_code' => '0114A0010',
             'status' => 'active',
             'type_of_schooling' => 'Gymnasieskolan',
+            'school_forms' => ['Gymnasieskola'],
         ]);
 
         SchoolStatistic::factory()->create([

@@ -13,6 +13,7 @@ import OSM from 'ol/source/OSM';
 import VectorSource from 'ol/source/Vector';
 import CircleStyle from 'ol/style/Circle';
 import Fill from 'ol/style/Fill';
+import RegularShape from 'ol/style/RegularShape';
 import Stroke from 'ol/style/Stroke';
 import Style from 'ol/style/Style';
 import {
@@ -315,15 +316,37 @@ const DesoMap = forwardRef<DesoMapHandle, DesoMapProps>(function DesoMap(
                         merit_value: s.merit_value,
                         type: s.type,
                     });
-                    feature.setStyle(
-                        new Style({
-                            image: new CircleStyle({
-                                radius: 7,
-                                fill: new Fill({ color: schoolMarkerColor(s.merit_value) }),
-                                stroke: new Stroke({ color: '#fff', width: 2 }),
-                            }),
-                        }),
-                    );
+
+                    const forms = s.school_forms ?? [];
+                    const isGrundskola = forms.includes('Grundskola');
+                    const isGymnasie = forms.includes('Gymnasieskola');
+                    const fillColor = schoolMarkerColor(s.merit_value);
+                    const strokeStyle = new Stroke({ color: '#fff', width: 2 });
+
+                    let image;
+                    if (isGymnasie && !isGrundskola) {
+                        image = new RegularShape({
+                            points: 4,
+                            radius: 8,
+                            angle: Math.PI / 4,
+                            fill: new Fill({ color: fillColor }),
+                            stroke: strokeStyle,
+                        });
+                    } else if (!isGrundskola && !isGymnasie) {
+                        image = new CircleStyle({
+                            radius: 4,
+                            fill: new Fill({ color: 'rgba(148, 163, 184, 0.7)' }),
+                            stroke: new Stroke({ color: '#fff', width: 1 }),
+                        });
+                    } else {
+                        image = new CircleStyle({
+                            radius: 7,
+                            fill: new Fill({ color: fillColor }),
+                            stroke: strokeStyle,
+                        });
+                    }
+
+                    feature.setStyle(new Style({ image }));
                     return feature;
                 });
 
