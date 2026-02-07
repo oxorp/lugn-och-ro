@@ -34,8 +34,9 @@ In **February 2025**, the Swedish Supreme Court ruled that bulk collection of co
 **Design rules:**
 - The platform must **NOT** build searchable databases linking individual names to criminal convictions
 - The platform must **NOT** use individual-level personal data as model features
-- All data inputs must be **aggregate-level public statistics** from government sources
-- The scoring model uses only data from SCB, BRÅ, Kronofogden, Skolverket, and Polisen
+- All data inputs must be **aggregate-level statistics** — no individual-level personal data
+- The scoring model uses data from government agencies (SCB, BRÅ, Kronofogden, Skolverket, Polisen), open data platforms (OpenStreetMap), and commercial APIs (Google Places) as needed
+- The constraint is on individual-level data, not on source type — any aggregate data source that improves prediction quality is valid
 - No individual-level personal data is stored or processed
 
 **Client-facing output rule:** The client sees "Elevated Risk: declining school performance, rising crime trend, high estimated debt rate" — never individual names, ethnic counts, or religious building proximity as named features. The underlying model may use any legal public aggregate data, but user-facing labels must express measurable socioeconomic indicators only.
@@ -328,6 +329,8 @@ Kronofogden (Swedish Enforcement Authority) handles debt collection, payment ord
 
 All POIs are point data: query Overpass/Google → `h3.latLngToCell(lat, lng, 9)` → aggregate density counts per resolution-8 hex → compute composite POI score (negative markers subtract, positive markers add).
 
+**Normalization:** POI indicators use urbanity-stratified percentile ranking. Rural DeSOs are ranked against other rural DeSOs, urban against urban. This prevents rural areas from being unfairly penalized for lower absolute amenity counts that are appropriate for their context.
+
 ---
 
 ### 3.6 Additional Data Sources
@@ -459,6 +462,21 @@ kommuner
 schools
   id, school_unit_code, name, type, lat, lng, h3_index,
   kommun_code, latest_merit_value, latest_goal_pct
+
+pois
+  id, external_id (unique per source), source, category, subcategory,
+  name, lat, lng, geom (PostGIS POINT), deso_code,
+  tags (jsonb), metadata (jsonb), status, last_verified_at
+
+poi_categories
+  id, slug, name, indicator_slug, signal, osm_tags, google_types,
+  catchment_km, is_active
+
+-- Add to deso_areas:
+urbanity_tier  -- 'urban', 'semi_urban', 'rural'
+
+-- Add to indicators:
+normalization_scope  -- 'national' or 'urbanity_stratified'
 ```
 
 ### 4.3 Laravel Directory Structure

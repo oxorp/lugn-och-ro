@@ -124,6 +124,25 @@ Read `data_pipeline_specification.md` for full business context, data sources, a
 - `/admin/indicators/{indicator}` — Update indicator weight/direction
 - `/admin/recompute` — Re-normalize and recompute all scores
 
+## Normalization Rules
+- Socioeconomic indicators (income, employment, education, crime, debt): **national** percentile rank
+- Amenity/access indicators (POI density, transit, healthcare): **urbanity-stratified** percentile rank
+- The scoring engine doesn't care about normalization scope — it reads normalized_value identically
+- Rule of thumb: if it measures physical access → stratified. If it measures a rate or outcome → national.
+
+## POI System
+- All POI data goes in the generic `pois` table regardless of source or category
+- Adding a new POI type = new row in `poi_categories` + a scrape run
+- Always compute per-capita density, never raw counts
+- Use catchment radius (not DeSO boundary) for access metrics
+- Zero is data (store as 0.0), NULL means unmeasured
+- OSM first, Google Places for gaps
+
+## Data Source Policy
+- No restriction on source type (government, commercial, open-source all valid)
+- Restriction is on individual-level data: aggregate statistics only
+- GDPR Article 10 constraint specifically on criminal conviction data linked to individuals
+
 ===
 
 <laravel-boost-guidelines>
