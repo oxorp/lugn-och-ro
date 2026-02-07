@@ -1,4 +1,4 @@
-import { Head, Link, router } from '@inertiajs/react';
+import { Head, router } from '@inertiajs/react';
 import {
     ArrowLeft,
     CheckCircle,
@@ -9,8 +9,8 @@ import {
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
-import LocaleSync from '@/components/locale-sync';
 import { Badge } from '@/components/ui/badge';
+import AdminLayout from '@/layouts/admin-layout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -149,22 +149,8 @@ export default function PipelineSourcePage({ source, logs, indicators }: Props) 
     const health = healthConfig[source.health];
 
     return (
-        <div className="mx-auto max-w-7xl p-6">
-            <LocaleSync />
+        <AdminLayout>
             <Head title={`Pipeline - ${source.name}`} />
-
-            {/* Admin Nav */}
-            <nav className="mb-4 flex items-center gap-4 text-sm">
-                <Link href="/admin/indicators" className="text-muted-foreground hover:text-foreground">
-                    Indicators
-                </Link>
-                <Link href="/admin/pipeline" className="text-muted-foreground hover:text-foreground">
-                    Pipeline
-                </Link>
-                <Link href="/admin/data-quality" className="text-muted-foreground hover:text-foreground">
-                    Data Quality
-                </Link>
-            </nav>
 
             {/* Header */}
             <div className="mb-6">
@@ -479,6 +465,6 @@ export default function PipelineSourcePage({ source, logs, indicators }: Props) 
                     )}
                 </DialogContent>
             </Dialog>
-        </div>
+        </AdminLayout>
     );
 }
