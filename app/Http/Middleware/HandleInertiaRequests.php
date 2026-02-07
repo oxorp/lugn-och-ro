@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Services\DataTieringService;
 use Illuminate\Http\Request;
 use Inertia\Middleware;
 
@@ -52,9 +53,27 @@ class HandleInertiaRequests extends Middleware
                 'id' => $request->user()->tenant->id,
                 'uuid' => $request->user()->tenant->uuid,
             ] : null,
+            'viewingAs' => fn () => $this->resolveViewingAs($request),
             'locale' => fn () => app()->getLocale(),
             'appEnv' => config('app.env'),
             'sidebarOpen' => ! $request->hasCookie('sidebar_state') || $request->cookie('sidebar_state') === 'true',
         ];
+    }
+
+    /**
+     * Resolve the "View As" tier override for admin users.
+     *
+     * Returns the tier value if admin is simulating a lower tier, null otherwise.
+     */
+    private function resolveViewingAs(Request $request): ?int
+    {
+        $user = $request->user();
+        if (! $user?->is_admin) {
+            return null;
+        }
+
+        $override = app(DataTieringService::class)->getViewAsOverride($user);
+
+        return $override?->value;
     }
 }

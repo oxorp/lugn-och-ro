@@ -17,7 +17,7 @@ class MapController extends Controller
     public function index(): Response
     {
         $user = Auth::user();
-        $tier = $this->tiering->resolveUserTier($user);
+        $tier = $this->tiering->resolveEffectiveTier($user);
 
         $indicators = Indicator::query()
             ->where('is_active', true)

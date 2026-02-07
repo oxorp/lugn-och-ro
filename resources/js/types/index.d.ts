@@ -31,7 +31,9 @@ export interface SharedData {
     name: string;
     auth: Auth;
     tenant: Tenant | null;
+    viewingAs: number | null;
     locale: 'en' | 'sv';
+    appEnv: string;
     sidebarOpen: boolean;
     [key: string]: unknown;
 }

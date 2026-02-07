@@ -34,6 +34,38 @@ class DataTieringService
     }
 
     /**
+     * Resolve the effective tier, respecting admin "View As" session override.
+     *
+     * Admins can simulate viewing the app as a lower tier via session('viewAs').
+     * This only affects data responses — route access remains unchanged.
+     */
+    public function resolveEffectiveTier(?User $user, ?string $desoCode = null): DataTier
+    {
+        $baseTier = $this->resolveUserTier($user, $desoCode);
+
+        if ($user?->isAdmin() && session()->has('viewAs')) {
+            $override = DataTier::tryFrom((int) session('viewAs'));
+            if ($override !== null && $override->value < DataTier::Admin->value) {
+                return $override;
+            }
+        }
+
+        return $baseTier;
+    }
+
+    /**
+     * Get the current "View As" override tier, or null if none active.
+     */
+    public function getViewAsOverride(?User $user): ?DataTier
+    {
+        if (! $user?->isAdmin() || ! session()->has('viewAs')) {
+            return null;
+        }
+
+        return DataTier::tryFrom((int) session('viewAs'));
+    }
+
+    /**
      * Transform indicator data based on tier.
      *
      * @param  Collection<int, array<string, mixed>>  $indicators

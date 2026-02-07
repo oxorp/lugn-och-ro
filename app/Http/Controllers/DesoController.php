@@ -116,7 +116,7 @@ class DesoController extends Controller
     public function schools(string $desoCode, Request $request): JsonResponse
     {
         $user = $request->user();
-        $tier = $this->tiering->resolveUserTier($user, $desoCode);
+        $tier = $this->tiering->resolveEffectiveTier($user, $desoCode);
 
         // Public and free tiers: school count only (handled in indicators endpoint)
         if ($tier->value < DataTier::Unlocked->value) {
@@ -174,7 +174,7 @@ class DesoController extends Controller
     {
         $year = $request->integer('year', now()->year);
         $user = $request->user();
-        $tier = $this->tiering->resolveUserTier($user, $desoCode);
+        $tier = $this->tiering->resolveEffectiveTier($user, $desoCode);
 
         // Public tier: no crime data
         if ($tier === DataTier::Public) {
@@ -333,7 +333,7 @@ class DesoController extends Controller
     public function pois(string $desoCode, Request $request): JsonResponse
     {
         $user = $request->user();
-        $tier = $this->tiering->resolveUserTier($user, $desoCode);
+        $tier = $this->tiering->resolveEffectiveTier($user, $desoCode);
 
         // Public tier: no POI data
         if ($tier === DataTier::Public) {
@@ -397,7 +397,7 @@ class DesoController extends Controller
     {
         $year = $request->integer('year', now()->year);
         $user = $request->user();
-        $tier = $this->tiering->resolveUserTier($user, $desoCode);
+        $tier = $this->tiering->resolveEffectiveTier($user, $desoCode);
 
         $deso = DesoArea::query()
             ->where('deso_code', $desoCode)
@@ -614,7 +614,7 @@ class DesoController extends Controller
     {
         $year = $request->integer('year', now()->year);
         $user = $request->user();
-        $tier = $this->tiering->resolveUserTier($user, $desoCode);
+        $tier = $this->tiering->resolveEffectiveTier($user, $desoCode);
 
         // Public tier: no financial data
         if ($tier === DataTier::Public) {

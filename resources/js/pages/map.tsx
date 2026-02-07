@@ -100,24 +100,30 @@ function schoolFormLabel(forms: string[]): string {
 
 interface CrimeData {
     deso_code: string;
-    kommun_code: string;
-    kommun_name: string;
-    year: number;
-    estimated_rates: {
+    tier: number;
+    locked?: boolean;
+    kommun_code?: string;
+    kommun_name?: string;
+    year?: number;
+    // Free tier: band labels only
+    crime_band?: string | null;
+    safety_band?: string | null;
+    // Subscriber+ tier: full rates
+    estimated_rates?: {
         violent: { rate: number | null; percentile: number | null };
         property: { rate: number | null; percentile: number | null };
         total: { rate: number | null; percentile: number | null };
     };
-    perceived_safety: {
+    perceived_safety?: {
         percent_safe: number | null;
         percentile: number | null;
     };
-    kommun_actual_rates: {
+    kommun_actual_rates?: {
         total: number | null;
         person: number | null;
         theft: number | null;
     };
-    vulnerability: {
+    vulnerability?: {
         name: string;
         tier: string;
         tier_label: string;
@@ -129,16 +135,24 @@ interface CrimeData {
 
 interface FinancialData {
     deso_code: string;
-    year: number | null;
-    estimated_debt_rate: number | null;
-    estimated_eviction_rate: number | null;
-    kommun_actual_rate: number | null;
-    kommun_name: string | null;
-    kommun_median_debt: number | null;
-    kommun_eviction_rate: number | null;
-    national_avg_rate: number | null;
-    is_high_distress: boolean;
-    is_estimated: boolean;
+    tier: number;
+    locked?: boolean;
+    year?: number | null;
+    // Free tier: band only
+    debt_band?: string | null;
+    // Unlocked tier: approximate values
+    estimated_debt_rate_approx?: string | null;
+    estimated_eviction_rate_approx?: string | null;
+    // Subscriber+ tier: full data
+    estimated_debt_rate?: number | null;
+    estimated_eviction_rate?: number | null;
+    kommun_actual_rate?: number | null;
+    kommun_name?: string | null;
+    kommun_median_debt?: number | null;
+    kommun_eviction_rate?: number | null;
+    national_avg_rate?: number | null;
+    is_high_distress?: boolean;
+    is_estimated?: boolean;
 }
 
 interface IndicatorTrendData {
@@ -931,6 +945,21 @@ function CrimeRateBar({
     );
 }
 
+const BAND_FALLBACKS: Record<string, string> = {
+    very_high: 'Very High',
+    high: 'High',
+    average: 'Average',
+    low: 'Low',
+    very_low: 'Very Low',
+};
+
+function CrimeBandLabel({ band }: { band: string | null | undefined }) {
+    const { t } = useTranslation();
+    if (!band) return <span className="text-muted-foreground">—</span>;
+    const label = t(`band.${band}`) ?? BAND_FALLBACKS[band] ?? band;
+    return <span>{label}</span>;
+}
+
 function CrimeSection({
     crimeData,
     loading,
@@ -949,7 +978,37 @@ function CrimeSection({
         );
     }
 
-    if (!crimeData) return null;
+    if (!crimeData || crimeData.locked) return null;
+
+    // Free tier: band labels only
+    if (crimeData.tier === 1) {
+        return (
+            <div className="space-y-3">
+                {crimeData.vulnerability && (
+                    <VulnerabilityCard vulnerability={crimeData.vulnerability} />
+                )}
+                <div>
+                    <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        <Shield className="h-3.5 w-3.5" />
+                        {t('sidebar.crime.title')}
+                    </div>
+                    <div className="space-y-2">
+                        <div className="flex justify-between text-xs">
+                            <span className="text-muted-foreground">{t('sidebar.crime.violent')}</span>
+                            <CrimeBandLabel band={crimeData.crime_band} />
+                        </div>
+                        <div className="flex justify-between text-xs">
+                            <span className="text-muted-foreground">{t('sidebar.crime.perceived_safety')}</span>
+                            <CrimeBandLabel band={crimeData.safety_band} />
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // Subscriber+ tier: full data with rates
+    if (!crimeData.estimated_rates) return null;
 
     return (
         <div className="space-y-3">
@@ -973,40 +1032,42 @@ function CrimeSection({
                         rate={crimeData.estimated_rates.property.rate}
                         percentile={crimeData.estimated_rates.property.percentile}
                     />
-                    {crimeData.perceived_safety.percent_safe !== null &&
-                        crimeData.perceived_safety.percentile !== null && (
+                    {crimeData.perceived_safety?.percent_safe !== null &&
+                        crimeData.perceived_safety?.percentile !== null && (
                             <div className="space-y-0.5">
                                 <div className="flex justify-between text-xs">
                                     <span className="text-muted-foreground">
                                         {t('sidebar.crime.perceived_safety')}
                                     </span>
                                     <span className="tabular-nums font-medium">
-                                        {t('sidebar.indicators.percentile_national', { value: Math.round(crimeData.perceived_safety.percentile) })}
+                                        {t('sidebar.indicators.percentile_national', { value: Math.round(crimeData.perceived_safety!.percentile!) })}
                                     </span>
                                 </div>
                                 <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
                                     <div
                                         className="h-full rounded-full transition-all"
                                         style={{
-                                            width: `${crimeData.perceived_safety.percentile}%`,
-                                            ...scoreBgStyle(crimeData.perceived_safety.percentile),
+                                            width: `${crimeData.perceived_safety!.percentile}%`,
+                                            ...scoreBgStyle(crimeData.perceived_safety!.percentile!),
                                         }}
                                     />
                                 </div>
                                 <div className="text-[11px] text-muted-foreground">
-                                    {t('sidebar.crime.feel_safe', { value: crimeData.perceived_safety.percent_safe })}
+                                    {t('sidebar.crime.feel_safe', { value: crimeData.perceived_safety!.percent_safe })}
                                 </div>
                             </div>
                         )}
                 </div>
             </div>
 
-            <div className="rounded border border-dashed border-border px-2.5 py-2 text-[11px] text-muted-foreground">
-                {t('sidebar.crime.disclaimer', {
-                    kommun: crimeData.kommun_name,
-                    total: crimeData.kommun_actual_rates.total?.toLocaleString() ?? '',
-                })}
-            </div>
+            {crimeData.kommun_actual_rates && (
+                <div className="rounded border border-dashed border-border px-2.5 py-2 text-[11px] text-muted-foreground">
+                    {t('sidebar.crime.disclaimer', {
+                        kommun: crimeData.kommun_name ?? '',
+                        total: crimeData.kommun_actual_rates.total?.toLocaleString() ?? '',
+                    })}
+                </div>
+            )}
 
             <div className="rounded-lg border border-dashed border-border p-3 text-center">
                 <div className="text-xs font-medium text-muted-foreground">
@@ -1072,7 +1133,28 @@ function FinancialSection({
         );
     }
 
-    if (!data || data.estimated_debt_rate === null) return null;
+    if (!data || data.locked) return null;
+
+    // Free tier: band label only
+    if (data.tier === 1) {
+        return (
+            <div className="space-y-3">
+                <div>
+                    <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        <Landmark className="h-3.5 w-3.5" />
+                        {t('sidebar.financial.title')}
+                    </div>
+                    <div className="flex justify-between text-xs">
+                        <span className="text-muted-foreground">{t('sidebar.financial.debt_rate')}</span>
+                        <CrimeBandLabel band={data.debt_band} />
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // Subscriber+ tier: full data
+    if (data.estimated_debt_rate === null && data.estimated_debt_rate === undefined) return null;
 
     return (
         <div className="space-y-3">
@@ -1103,22 +1185,22 @@ function FinancialSection({
                 <div className="space-y-2.5">
                     <FinancialRateBar
                         label={t('sidebar.financial.debt_rate')}
-                        value={data.estimated_debt_rate}
+                        value={data.estimated_debt_rate ?? null}
                         suffix="%"
                         maxValue={10}
                     />
-                    {data.kommun_actual_rate !== null && (
+                    {data.kommun_actual_rate !== null && data.kommun_actual_rate !== undefined && (
                         <div className="-mt-1.5 text-[11px] text-muted-foreground">
                             {t('sidebar.financial.kommun_avg', { value: data.kommun_actual_rate })}
                         </div>
                     )}
                     <FinancialRateBar
                         label={t('sidebar.financial.evictions')}
-                        value={data.estimated_eviction_rate}
+                        value={data.estimated_eviction_rate ?? null}
                         suffix="/100k"
                         maxValue={80}
                     />
-                    {data.kommun_median_debt !== null && (
+                    {data.kommun_median_debt != null && (
                         <div className="space-y-0.5">
                             <div className="flex justify-between text-xs">
                                 <span className="text-muted-foreground">
@@ -1135,16 +1217,18 @@ function FinancialSection({
                 </div>
             </div>
 
-            <div className="rounded border border-dashed border-border px-2.5 py-2 text-[11px] text-muted-foreground">
-                {data.kommun_actual_rate !== null
-                    ? t('sidebar.financial.disclaimer', {
-                          kommun: data.kommun_name ?? '',
-                          rate: data.kommun_actual_rate,
-                      })
-                    : t('sidebar.financial.disclaimer_no_rate', {
-                          kommun: data.kommun_name ?? '',
-                      })}
-            </div>
+            {data.kommun_name && (
+                <div className="rounded border border-dashed border-border px-2.5 py-2 text-[11px] text-muted-foreground">
+                    {data.kommun_actual_rate != null
+                        ? t('sidebar.financial.disclaimer', {
+                              kommun: data.kommun_name,
+                              rate: data.kommun_actual_rate,
+                          })
+                        : t('sidebar.financial.disclaimer_no_rate', {
+                              kommun: data.kommun_name,
+                          })}
+                </div>
+            )}
         </div>
     );
 }

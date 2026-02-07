@@ -66,16 +66,22 @@ Route::prefix('en')->middleware('set-locale:en')->as('en.')->group($webRoutes);
 // Swedish routes — no prefix (default)
 Route::middleware('set-locale:sv')->group($webRoutes);
 
-// Dev-only route to toggle admin status for testing tiering UI
-if (app()->isLocal()) {
-    Route::post('/dev/toggle-admin', function () {
-        $user = request()->user();
-        if ($user) {
-            $user->update(['is_admin' => ! $user->is_admin]);
+// Admin "View As" — simulate viewing the app as a different tier
+Route::middleware(['auth', 'admin'])->group(function () {
+    Route::post('/admin/view-as', function () {
+        $tier = request()->integer('tier');
+        if ($tier >= 0 && $tier <= 4) {
+            session(['viewAs' => $tier]);
         }
 
         return back();
-    })->middleware('auth')->name('dev.toggle-admin');
-}
+    })->name('admin.view-as');
+
+    Route::delete('/admin/view-as', function () {
+        session()->forget('viewAs');
+
+        return back();
+    })->name('admin.view-as.clear');
+});
 
 require __DIR__.'/settings.php';

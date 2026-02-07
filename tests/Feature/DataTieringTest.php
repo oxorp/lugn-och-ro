@@ -759,6 +759,178 @@ class DataTieringTest extends TestCase
         $this->assertFalse($user->hasUnlocked('1280C1010'));
     }
 
+    // === View As (Admin Tier Override) ===
+
+    public function test_admin_can_set_view_as_tier(): void
+    {
+        $admin = User::factory()->create(['is_admin' => true]);
+
+        $response = $this->actingAs($admin)->post('/admin/view-as', ['tier' => 1]);
+
+        $response->assertRedirect();
+        $this->assertEquals(1, session('viewAs'));
+    }
+
+    public function test_admin_can_clear_view_as_tier(): void
+    {
+        $admin = User::factory()->create(['is_admin' => true]);
+
+        $this->actingAs($admin)->post('/admin/view-as', ['tier' => 1]);
+        $this->assertEquals(1, session('viewAs'));
+
+        $response = $this->actingAs($admin)->delete('/admin/view-as');
+
+        $response->assertRedirect();
+        $this->assertNull(session('viewAs'));
+    }
+
+    public function test_non_admin_cannot_set_view_as_tier(): void
+    {
+        $user = User::factory()->create(['is_admin' => false]);
+
+        $response = $this->actingAs($user)->post('/admin/view-as', ['tier' => 0]);
+
+        $response->assertForbidden();
+    }
+
+    public function test_guest_cannot_set_view_as_tier(): void
+    {
+        $response = $this->post('/admin/view-as', ['tier' => 0]);
+
+        $response->assertRedirect();
+    }
+
+    public function test_view_as_invalid_tier_ignored(): void
+    {
+        $admin = User::factory()->create(['is_admin' => true]);
+
+        $this->actingAs($admin)->post('/admin/view-as', ['tier' => 99]);
+        $this->assertNull(session('viewAs'));
+
+        $this->actingAs($admin)->post('/admin/view-as', ['tier' => -1]);
+        $this->assertNull(session('viewAs'));
+    }
+
+    public function test_resolve_effective_tier_respects_view_as(): void
+    {
+        $admin = User::factory()->create(['is_admin' => true]);
+
+        // Without override, admin gets Admin tier
+        $this->assertEquals(DataTier::Admin, $this->tiering->resolveEffectiveTier($admin));
+
+        // Set session override
+        session(['viewAs' => 0]);
+        $this->assertEquals(DataTier::Public, $this->tiering->resolveEffectiveTier($admin));
+
+        session(['viewAs' => 1]);
+        $this->assertEquals(DataTier::FreeAccount, $this->tiering->resolveEffectiveTier($admin));
+
+        session(['viewAs' => 3]);
+        $this->assertEquals(DataTier::Subscriber, $this->tiering->resolveEffectiveTier($admin));
+
+        // Clear override
+        session()->forget('viewAs');
+        $this->assertEquals(DataTier::Admin, $this->tiering->resolveEffectiveTier($admin));
+    }
+
+    public function test_view_as_does_not_affect_non_admin_users(): void
+    {
+        $user = User::factory()->create(['is_admin' => false]);
+
+        session(['viewAs' => 3]);
+        $this->assertEquals(DataTier::FreeAccount, $this->tiering->resolveEffectiveTier($user));
+    }
+
+    public function test_map_page_respects_view_as_override(): void
+    {
+        $admin = User::factory()->create(['is_admin' => true]);
+
+        // Set view-as to Free Account
+        $this->actingAs($admin)->post('/admin/view-as', ['tier' => 1]);
+
+        $response = $this->actingAs($admin)->get('/');
+
+        $response->assertOk();
+        $response->assertInertia(fn ($page) => $page
+            ->where('userTier', 1)
+            ->where('isAuthenticated', true)
+        );
+    }
+
+    public function test_admin_can_still_access_admin_routes_while_viewing_as_lower_tier(): void
+    {
+        $this->seed(\Database\Seeders\IndicatorSeeder::class);
+        $admin = User::factory()->create(['is_admin' => true]);
+
+        // Set view-as to Public
+        $this->actingAs($admin)->post('/admin/view-as', ['tier' => 0]);
+
+        // Should still be able to access admin routes
+        $response = $this->actingAs($admin)->get(route('admin.indicators'));
+        $response->assertOk();
+    }
+
+    public function test_api_endpoints_respect_view_as_override(): void
+    {
+        $this->seed(\Database\Seeders\IndicatorSeeder::class);
+        $this->createDeso();
+        $admin = User::factory()->create(['is_admin' => true]);
+
+        // Without override — admin tier
+        $response = $this->actingAs($admin)->getJson('/api/deso/0114C1010/indicators?year=2024');
+        $response->assertOk();
+        $response->assertJsonPath('tier', 99);
+
+        // Set view-as to Public
+        $this->actingAs($admin)->post('/admin/view-as', ['tier' => 0]);
+
+        // Now should return public tier data
+        $response = $this->actingAs($admin)->getJson('/api/deso/0114C1010/indicators?year=2024');
+        $response->assertOk();
+        $response->assertJsonPath('tier', 0);
+        $indicators = $response->json('indicators');
+        foreach ($indicators as $ind) {
+            $this->assertTrue($ind['locked']);
+        }
+    }
+
+    public function test_view_as_shared_via_inertia(): void
+    {
+        $admin = User::factory()->create(['is_admin' => true]);
+
+        // No override — viewingAs should be null
+        $response = $this->actingAs($admin)->get('/');
+        $response->assertInertia(fn ($page) => $page
+            ->where('viewingAs', null)
+        );
+
+        // Set override
+        $this->actingAs($admin)->post('/admin/view-as', ['tier' => 1]);
+
+        $response = $this->actingAs($admin)->get('/');
+        $response->assertInertia(fn ($page) => $page
+            ->where('viewingAs', 1)
+        );
+    }
+
+    // === Login Redirect ===
+
+    public function test_login_page_stores_redirect_param_as_intended_url(): void
+    {
+        $response = $this->get('/login?redirect=/admin/pipeline');
+
+        $response->assertOk();
+        $this->assertEquals('/admin/pipeline', session('url.intended'));
+    }
+
+    public function test_login_page_without_redirect_does_not_set_intended(): void
+    {
+        $response = $this->get('/login');
+
+        $response->assertOk();
+        $this->assertNull(session('url.intended'));
+    }
+
     // === Map Page Tier Propagation ===
 
     public function test_map_page_passes_user_tier_for_guest(): void
