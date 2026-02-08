@@ -520,6 +520,19 @@ const HeatmapMap = forwardRef<HeatmapMapHandle, HeatmapMapProps>(function Heatma
 
         mapInstance.current = map;
 
+        // Fit to appropriate initial extent based on container size
+        const containerH = mapDivRef.current?.clientHeight ?? 600;
+        const isMobileMap = containerH < 500;
+        const swedenExtent: [number, number, number, number] = isMobileMap
+            ? [10.5, 55.0, 21, 63] // Southern Sweden for compact map
+            : [10.5, 55.0, 24.5, 69.5]; // Full Sweden for desktop
+        map.getView().fit(
+            transformExtent(swedenExtent, 'EPSG:4326', 'EPSG:3857'),
+            {
+                padding: isMobileMap ? [10, 10, 10, 10] : [40, 40, 40, 40],
+            },
+        );
+
         // Load Sweden boundary for mask
         fetch('/data/sweden-boundary.geojson')
             .then((r) => r.json())

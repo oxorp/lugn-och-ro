@@ -6,9 +6,8 @@ import {
     GraduationCap,
     Loader2,
     MapPin,
-    Search,
-    ShoppingCart,
     ShieldAlert,
+    ShoppingCart,
     Sparkles,
     TreePine,
     X,
@@ -28,10 +27,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { useTranslation } from '@/hooks/use-translation';
 import MapLayout from '@/layouts/map-layout';
-import {
-    type SearchResult,
-    getZoomForType,
-} from '@/services/geocoding';
+import { type SearchResult, getZoomForType } from '@/services/geocoding';
 
 interface MapPageProps {
     initialCenter: [number, number];
@@ -139,11 +135,10 @@ function IndicatorBar({
 }) {
     const { t } = useTranslation();
     const rawPct = Math.round(indicator.normalized_value * 100);
-    const effectivePct = indicator.direction === 'negative' ? 100 - rawPct : rawPct;
+    const effectivePct =
+        indicator.direction === 'negative' ? 100 - rawPct : rawPct;
     const isStratified = scope === 'urbanity_stratified' && urbanityTier;
-    const tierLabel = urbanityTier
-        ? t(`sidebar.urbanity.${urbanityTier}`)
-        : '';
+    const tierLabel = urbanityTier ? t(`sidebar.urbanity.${urbanityTier}`) : '';
 
     return (
         <div className="space-y-1">
@@ -152,16 +147,24 @@ function IndicatorBar({
                     {indicator.name}
                     {meta && <InfoTooltip indicator={meta} />}
                 </span>
-                <span className="tabular-nums font-semibold text-foreground">
+                <span className="font-semibold text-foreground tabular-nums">
                     {isStratified
-                        ? t('sidebar.indicators.percentile_stratified', { value: effectivePct, tier: tierLabel })
-                        : t('sidebar.indicators.percentile_national', { value: effectivePct })}
+                        ? t('sidebar.indicators.percentile_stratified', {
+                              value: effectivePct,
+                              tier: tierLabel,
+                          })
+                        : t('sidebar.indicators.percentile_national', {
+                              value: effectivePct,
+                          })}
                 </span>
             </div>
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
                 <div
                     className="h-full rounded-full transition-all"
-                    style={{ width: `${effectivePct}%`, ...scoreBgStyle(effectivePct) }}
+                    style={{
+                        width: `${effectivePct}%`,
+                        ...scoreBgStyle(effectivePct),
+                    }}
                 />
             </div>
             <div className="text-[11px] text-muted-foreground">
@@ -171,18 +174,57 @@ function IndicatorBar({
     );
 }
 
-const PROXIMITY_FACTOR_CONFIG: Record<string, {
-    icon: typeof GraduationCap;
-    nameKey: string;
-    detailKey: 'nearest_school' | 'nearest_park' | 'nearest_stop' | 'nearest_store' | 'nearest' | 'count';
-    distanceKey: string;
-}> = {
-    prox_school: { icon: GraduationCap, nameKey: 'sidebar.proximity.school', detailKey: 'nearest_school', distanceKey: 'nearest_distance_m' },
-    prox_green_space: { icon: TreePine, nameKey: 'sidebar.proximity.green_space', detailKey: 'nearest_park', distanceKey: 'distance_m' },
-    prox_transit: { icon: Bus, nameKey: 'sidebar.proximity.transit', detailKey: 'nearest_stop', distanceKey: 'nearest_distance_m' },
-    prox_grocery: { icon: ShoppingCart, nameKey: 'sidebar.proximity.grocery', detailKey: 'nearest_store', distanceKey: 'distance_m' },
-    prox_negative_poi: { icon: ShieldAlert, nameKey: 'sidebar.proximity.negative_poi', detailKey: 'count', distanceKey: 'nearest_distance_m' },
-    prox_positive_poi: { icon: Sparkles, nameKey: 'sidebar.proximity.positive_poi', detailKey: 'count', distanceKey: '' },
+const PROXIMITY_FACTOR_CONFIG: Record<
+    string,
+    {
+        icon: typeof GraduationCap;
+        nameKey: string;
+        detailKey:
+            | 'nearest_school'
+            | 'nearest_park'
+            | 'nearest_stop'
+            | 'nearest_store'
+            | 'nearest'
+            | 'count';
+        distanceKey: string;
+    }
+> = {
+    prox_school: {
+        icon: GraduationCap,
+        nameKey: 'sidebar.proximity.school',
+        detailKey: 'nearest_school',
+        distanceKey: 'nearest_distance_m',
+    },
+    prox_green_space: {
+        icon: TreePine,
+        nameKey: 'sidebar.proximity.green_space',
+        detailKey: 'nearest_park',
+        distanceKey: 'distance_m',
+    },
+    prox_transit: {
+        icon: Bus,
+        nameKey: 'sidebar.proximity.transit',
+        detailKey: 'nearest_stop',
+        distanceKey: 'nearest_distance_m',
+    },
+    prox_grocery: {
+        icon: ShoppingCart,
+        nameKey: 'sidebar.proximity.grocery',
+        detailKey: 'nearest_store',
+        distanceKey: 'distance_m',
+    },
+    prox_negative_poi: {
+        icon: ShieldAlert,
+        nameKey: 'sidebar.proximity.negative_poi',
+        detailKey: 'count',
+        distanceKey: 'nearest_distance_m',
+    },
+    prox_positive_poi: {
+        icon: Sparkles,
+        nameKey: 'sidebar.proximity.positive_poi',
+        detailKey: 'count',
+        distanceKey: '',
+    },
 };
 
 function ProximityFactorRow({ factor }: { factor: ProximityFactor }) {
@@ -196,22 +238,28 @@ function ProximityFactorRow({ factor }: { factor: ProximityFactor }) {
 
     // For negative POI, 100 = good (no negatives nearby)
     const isNegativeType = factor.slug === 'prox_negative_poi';
-    const displayName = details.nearest_school
-        ?? details.nearest_park
-        ?? details.nearest_stop
-        ?? details.nearest_store
-        ?? details.nearest
-        ?? null;
-    const distanceM = config.distanceKey ? (details[config.distanceKey] as number | undefined) : undefined;
-    const effectiveDistanceM = details.effective_distance_m as number | undefined;
+    const displayName =
+        details.nearest_school ??
+        details.nearest_park ??
+        details.nearest_stop ??
+        details.nearest_store ??
+        details.nearest ??
+        null;
+    const distanceM = config.distanceKey
+        ? (details[config.distanceKey] as number | undefined)
+        : undefined;
+    const effectiveDistanceM = details.effective_distance_m as
+        | number
+        | undefined;
 
     // Special label for negative/positive POI counts
     let subtitle: string | null = null;
     if (factor.slug === 'prox_negative_poi') {
         const count = (details.count as number) ?? 0;
-        subtitle = count === 0
-            ? t('sidebar.proximity.no_negative')
-            : `${count} ${t('sidebar.proximity.negative_count')}`;
+        subtitle =
+            count === 0
+                ? t('sidebar.proximity.no_negative')
+                : `${count} ${t('sidebar.proximity.negative_count')}`;
     } else if (factor.slug === 'prox_positive_poi') {
         const count = (details.count as number) ?? 0;
         subtitle = `${count} ${t('sidebar.proximity.positive_count')}`;
@@ -226,7 +274,9 @@ function ProximityFactorRow({ factor }: { factor: ProximityFactor }) {
                     <Icon className="h-3.5 w-3.5 text-muted-foreground" />
                     {t(config.nameKey)}
                 </span>
-                <span className="tabular-nums font-semibold text-foreground">{score}</span>
+                <span className="font-semibold text-foreground tabular-nums">
+                    {score}
+                </span>
             </div>
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
                 <div
@@ -243,11 +293,22 @@ function ProximityFactorRow({ factor }: { factor: ProximityFactor }) {
                     {distanceM !== undefined && distanceM > 0 && (
                         <span className="ml-2 shrink-0 tabular-nums">
                             {formatDistance(distanceM)}
-                            {effectiveDistanceM !== undefined && effectiveDistanceM > distanceM + 10 && (
-                                <span className="ml-1 text-orange-600">
-                                    ({t('sidebar.proximity.effective_distance', { distance: formatDistance(effectiveDistanceM) })})
-                                </span>
-                            )}
+                            {effectiveDistanceM !== undefined &&
+                                effectiveDistanceM > distanceM + 10 && (
+                                    <span className="ml-1 text-orange-600">
+                                        (
+                                        {t(
+                                            'sidebar.proximity.effective_distance',
+                                            {
+                                                distance:
+                                                    formatDistance(
+                                                        effectiveDistanceM,
+                                                    ),
+                                            },
+                                        )}
+                                        )
+                                    </span>
+                                )}
                         </span>
                     )}
                 </div>
@@ -256,17 +317,17 @@ function ProximityFactorRow({ factor }: { factor: ProximityFactor }) {
     );
 }
 
-function DefaultSidebar({ onTrySearch }: { onTrySearch: (query: string) => void }) {
+function DefaultSidebar({
+    onTrySearch,
+}: {
+    onTrySearch: (query: string) => void;
+}) {
     const { t } = useTranslation();
 
-    const suggestions = [
-        'Sveavägen, Stockholm',
-        'Kungsbacka',
-        'Lomma',
-    ];
+    const suggestions = ['Sveavägen, Stockholm', 'Kungsbacka', 'Lomma'];
 
     return (
-        <div className="flex flex-col items-center justify-center px-6 py-12 text-center">
+        <div className="flex h-full flex-col items-center justify-center overflow-y-auto px-6 py-6 text-center md:py-12">
             <MapPin className="mb-3 h-8 w-8 text-muted-foreground" />
             <h3 className="mb-1 text-sm font-semibold text-foreground">
                 {t('sidebar.default.title')}
@@ -318,7 +379,16 @@ function ActiveSidebar({
         );
     }
 
-    const { location, score, proximity, indicators, schools, pois, poi_categories, tier } = data;
+    const {
+        location,
+        score,
+        proximity,
+        indicators,
+        schools,
+        pois,
+        poi_categories,
+        tier,
+    } = data;
     const isPublicTier = tier === 0;
 
     return (
@@ -350,20 +420,21 @@ function ActiveSidebar({
                                 className="flex h-14 w-14 flex-col items-center justify-center rounded-lg text-white"
                                 style={scoreBgStyle(score.value)}
                             >
-                                <span className="text-lg font-bold leading-tight">
+                                <span className="text-lg leading-tight font-bold">
                                     {score.value}
                                 </span>
-                                {score.trend_1y !== null && score.trend_1y !== 0 && (
-                                    <span className="flex items-center text-[10px] leading-none opacity-90">
-                                        {score.trend_1y > 0 ? (
-                                            <ArrowUp className="mr-0.5 h-2.5 w-2.5" />
-                                        ) : (
-                                            <ArrowDown className="mr-0.5 h-2.5 w-2.5" />
-                                        )}
-                                        {score.trend_1y > 0 ? '+' : ''}
-                                        {score.trend_1y.toFixed(1)}
-                                    </span>
-                                )}
+                                {score.trend_1y !== null &&
+                                    score.trend_1y !== 0 && (
+                                        <span className="flex items-center text-[10px] leading-none opacity-90">
+                                            {score.trend_1y > 0 ? (
+                                                <ArrowUp className="mr-0.5 h-2.5 w-2.5" />
+                                            ) : (
+                                                <ArrowDown className="mr-0.5 h-2.5 w-2.5" />
+                                            )}
+                                            {score.trend_1y > 0 ? '+' : ''}
+                                            {score.trend_1y.toFixed(1)}
+                                        </span>
+                                    )}
                             </div>
                             <div className="min-w-0 flex-1">
                                 <div className="text-sm font-semibold text-foreground">
@@ -371,41 +442,28 @@ function ActiveSidebar({
                                 </div>
                                 {location.urbanity_tier && (
                                     <div className="text-[11px] text-muted-foreground capitalize">
-                                        {t(`sidebar.urbanity.${location.urbanity_tier}`)}
+                                        {t(
+                                            `sidebar.urbanity.${location.urbanity_tier}`,
+                                        )}
                                     </div>
                                 )}
                                 {/* Area vs Proximity breakdown */}
                                 {score.area_score !== null && (
-                                    <div className="mt-1 flex gap-3 text-[11px] tabular-nums text-muted-foreground">
+                                    <div className="mt-1 flex gap-3 text-[11px] text-muted-foreground tabular-nums">
                                         <span>
-                                            {t('sidebar.proximity.area_label')}: {score.area_score}
+                                            {t('sidebar.proximity.area_label')}:{' '}
+                                            {score.area_score}
                                         </span>
                                         <span>
-                                            {t('sidebar.proximity.location_label')}: {score.proximity_score}
+                                            {t(
+                                                'sidebar.proximity.location_label',
+                                            )}
+                                            : {score.proximity_score}
                                         </span>
                                     </div>
                                 )}
                             </div>
                         </div>
-                    </div>
-                )}
-
-                {/* Public CTA - show when no detail data */}
-                {isPublicTier && (
-                    <div className="rounded-lg border border-primary/20 bg-primary/5 p-4 text-center">
-                        <Search className="mx-auto mb-2 h-5 w-5 text-primary" />
-                        <p className="mb-1 text-sm font-semibold text-foreground">
-                            {t('sidebar.cta.title')}
-                        </p>
-                        <p className="mb-3 text-xs text-muted-foreground">
-                            {t('sidebar.cta.subtitle')}
-                        </p>
-                        <a
-                            href="/login"
-                            className="inline-block rounded-md bg-primary px-4 py-2 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-                        >
-                            {t('sidebar.cta.button')}
-                        </a>
                     </div>
                 )}
 
@@ -429,29 +487,41 @@ function ActiveSidebar({
                     <>
                         <Separator className="my-3" />
                         <div className="mb-3 flex items-center justify-between">
-                            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            <h3 className="text-xs font-semibold tracking-wider text-muted-foreground uppercase">
                                 {t('sidebar.proximity.title')}
                             </h3>
                             {proximity.safety_zone && (
-                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                                    proximity.safety_zone.level === 'high'
-                                        ? 'bg-green-100 text-green-800'
-                                        : proximity.safety_zone.level === 'medium'
-                                          ? 'bg-yellow-100 text-yellow-800'
-                                          : 'bg-red-100 text-red-800'
-                                }`}>
-                                    {t('sidebar.proximity.safety_zone')}: {t(`sidebar.proximity.safety_${proximity.safety_zone.level}`)}
+                                <span
+                                    className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                                        proximity.safety_zone.level === 'high'
+                                            ? 'bg-green-100 text-green-800'
+                                            : proximity.safety_zone.level ===
+                                                'medium'
+                                              ? 'bg-yellow-100 text-yellow-800'
+                                              : 'bg-red-100 text-red-800'
+                                    }`}
+                                >
+                                    {t('sidebar.proximity.safety_zone')}:{' '}
+                                    {t(
+                                        `sidebar.proximity.safety_${proximity.safety_zone.level}`,
+                                    )}
                                 </span>
                             )}
                         </div>
-                        {proximity.safety_zone && proximity.safety_zone.level !== 'high' && (
-                            <p className="mb-2 text-[11px] text-orange-600">
-                                {t(`sidebar.proximity.safety_note_${proximity.safety_zone.level}`)}
-                            </p>
-                        )}
+                        {proximity.safety_zone &&
+                            proximity.safety_zone.level !== 'high' && (
+                                <p className="mb-2 text-[11px] text-orange-600">
+                                    {t(
+                                        `sidebar.proximity.safety_note_${proximity.safety_zone.level}`,
+                                    )}
+                                </p>
+                            )}
                         <div className="space-y-3">
                             {proximity.factors.map((factor) => (
-                                <ProximityFactorRow key={factor.slug} factor={factor} />
+                                <ProximityFactorRow
+                                    key={factor.slug}
+                                    factor={factor}
+                                />
                             ))}
                         </div>
                     </>
@@ -461,7 +531,7 @@ function ActiveSidebar({
                 {!isPublicTier && indicators.length > 0 && (
                     <>
                         <Separator className="my-3" />
-                        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        <h3 className="mb-3 text-xs font-semibold tracking-wider text-muted-foreground uppercase">
                             {t('sidebar.indicators.title')}
                         </h3>
                         <div className="space-y-3">
@@ -469,7 +539,9 @@ function ActiveSidebar({
                                 <IndicatorBar
                                     key={ind.slug}
                                     indicator={ind}
-                                    scope={indicatorScopes[ind.slug] ?? 'national'}
+                                    scope={
+                                        indicatorScopes[ind.slug] ?? 'national'
+                                    }
                                     urbanityTier={location.urbanity_tier}
                                     meta={indicatorMeta[ind.slug]}
                                 />
@@ -482,14 +554,17 @@ function ActiveSidebar({
                 {!isPublicTier && schools.length > 0 && (
                     <>
                         <Separator className="my-3" />
-                        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        <h3 className="mb-3 text-xs font-semibold tracking-wider text-muted-foreground uppercase">
                             <GraduationCap className="mr-1 inline h-3.5 w-3.5" />
                             {t('sidebar.schools.title')} ({schools.length}{' '}
                             {t('sidebar.schools.within')})
                         </h3>
                         <div className="space-y-2.5">
                             {schools.map((school, i) => (
-                                <div key={i} className="rounded-md border border-border p-2.5">
+                                <div
+                                    key={i}
+                                    className="rounded-md border border-border p-2.5"
+                                >
                                     <div className="flex items-start justify-between">
                                         <div className="min-w-0 flex-1">
                                             <div className="text-sm font-medium text-foreground">
@@ -498,11 +573,18 @@ function ActiveSidebar({
                                             <div className="text-[11px] text-muted-foreground">
                                                 {school.type ?? 'Grundskola'}
                                                 {school.operator_type && (
-                                                    <> &middot; {school.operator_type === 'KOMMUN' ? 'Kommunal' : 'Fristående'}</>
+                                                    <>
+                                                        {' '}
+                                                        &middot;{' '}
+                                                        {school.operator_type ===
+                                                        'KOMMUN'
+                                                            ? 'Kommunal'
+                                                            : 'Fristående'}
+                                                    </>
                                                 )}
                                             </div>
                                         </div>
-                                        <span className="ml-2 shrink-0 text-xs tabular-nums text-muted-foreground">
+                                        <span className="ml-2 shrink-0 text-xs text-muted-foreground tabular-nums">
                                             {school.distance_m < 1000
                                                 ? `${school.distance_m}m`
                                                 : `${(school.distance_m / 1000).toFixed(1)}km`}
@@ -510,7 +592,8 @@ function ActiveSidebar({
                                     </div>
                                     {school.merit_value !== null && (
                                         <div className="mt-1 text-[11px] text-muted-foreground">
-                                            {t('sidebar.schools.merit')}: {school.merit_value}
+                                            {t('sidebar.schools.merit')}:{' '}
+                                            {school.merit_value}
                                         </div>
                                     )}
                                 </div>
@@ -523,27 +606,41 @@ function ActiveSidebar({
                 {!isPublicTier && pois.length > 0 && (
                     <>
                         <Separator className="my-3" />
-                        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        <h3 className="mb-3 text-xs font-semibold tracking-wider text-muted-foreground uppercase">
                             {t('sidebar.pois.title')}
                         </h3>
                         <div className="space-y-1.5">
                             {Object.entries(
-                                pois.reduce<Record<string, number>>((acc, p) => {
-                                    acc[p.category] = (acc[p.category] || 0) + 1;
-                                    return acc;
-                                }, {}),
+                                pois.reduce<Record<string, number>>(
+                                    (acc, p) => {
+                                        acc[p.category] =
+                                            (acc[p.category] || 0) + 1;
+                                        return acc;
+                                    },
+                                    {},
+                                ),
                             ).map(([category, count]) => (
-                                <div key={category} className="flex items-center justify-between text-xs">
+                                <div
+                                    key={category}
+                                    className="flex items-center justify-between text-xs"
+                                >
                                     <span className="flex items-center gap-1.5">
                                         <span
                                             className="inline-block h-2.5 w-2.5 rounded-full"
-                                            style={{ backgroundColor: poi_categories[category]?.color ?? '#94a3b8' }}
+                                            style={{
+                                                backgroundColor:
+                                                    poi_categories[category]
+                                                        ?.color ?? '#94a3b8',
+                                            }}
                                         />
                                         <span className="text-foreground">
-                                            {poi_categories[category]?.name ?? category}
+                                            {poi_categories[category]?.name ??
+                                                category}
                                         </span>
                                     </span>
-                                    <span className="tabular-nums text-muted-foreground">{count}</span>
+                                    <span className="text-muted-foreground tabular-nums">
+                                        {count}
+                                    </span>
                                 </div>
                             ))}
                         </div>
@@ -596,9 +693,12 @@ export default function MapPage({
         setPinActive(true);
 
         try {
-            const response = await fetch(`/api/location/${lat.toFixed(6)},${lng.toFixed(6)}`, {
-                signal: controller.signal,
-            });
+            const response = await fetch(
+                `/api/location/${lat.toFixed(6)},${lng.toFixed(6)}`,
+                {
+                    signal: controller.signal,
+                },
+            );
 
             if (!response.ok) {
                 if (response.status === 404) {
@@ -628,7 +728,8 @@ export default function MapPage({
             // Reverse geocode for location name
             reverseGeocode(lat, lng);
         } catch (err) {
-            if (err instanceof DOMException && err.name === 'AbortError') return;
+            if (err instanceof DOMException && err.name === 'AbortError')
+                return;
             console.error('Failed to fetch location data:', err);
         } finally {
             setLoading(false);
@@ -675,11 +776,18 @@ export default function MapPage({
         }
     }, []);
 
-    const handlePinDrop = useCallback((lat: number, lng: number) => {
-        // Update URL
-        window.history.pushState(null, '', `/explore/${lat.toFixed(4)},${lng.toFixed(4)}`);
-        fetchLocationData(lat, lng);
-    }, [fetchLocationData]);
+    const handlePinDrop = useCallback(
+        (lat: number, lng: number) => {
+            // Update URL
+            window.history.pushState(
+                null,
+                '',
+                `/explore/${lat.toFixed(4)},${lng.toFixed(4)}`,
+            );
+            fetchLocationData(lat, lng);
+        },
+        [fetchLocationData],
+    );
 
     const handlePinClear = useCallback(() => {
         setPinActive(false);
@@ -690,22 +798,29 @@ export default function MapPage({
         window.history.pushState(null, '', '/');
     }, []);
 
-    const handleSearchResult = useCallback((result: SearchResult) => {
-        mapRef.current?.dropPin(result.lat, result.lng);
+    const handleSearchResult = useCallback(
+        (result: SearchResult) => {
+            mapRef.current?.dropPin(result.lat, result.lng);
 
-        if (result.extent) {
-            mapRef.current?.zoomToExtent(
-                result.extent[0],
-                result.extent[3],
-                result.extent[2],
-                result.extent[1],
-            );
-        } else {
-            mapRef.current?.zoomToPoint(result.lat, result.lng, getZoomForType(result.type));
-        }
+            if (result.extent) {
+                mapRef.current?.zoomToExtent(
+                    result.extent[0],
+                    result.extent[3],
+                    result.extent[2],
+                    result.extent[1],
+                );
+            } else {
+                mapRef.current?.zoomToPoint(
+                    result.lat,
+                    result.lng,
+                    getZoomForType(result.type),
+                );
+            }
 
-        handlePinDrop(result.lat, result.lng);
-    }, [handlePinDrop]);
+            handlePinDrop(result.lat, result.lng);
+        },
+        [handlePinDrop],
+    );
 
     const handleSearchClear = useCallback(() => {
         handlePinClear();
@@ -714,12 +829,14 @@ export default function MapPage({
 
     const handleTrySearch = useCallback((query: string) => {
         // Focus the search input and set query
-        const input = document.querySelector<HTMLInputElement>('input[type="text"]');
+        const input =
+            document.querySelector<HTMLInputElement>('input[type="text"]');
         if (input) {
             input.focus();
             // Trigger the search by dispatching an input event
             const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-                window.HTMLInputElement.prototype, 'value',
+                window.HTMLInputElement.prototype,
+                'value',
             )?.set;
             nativeInputValueSetter?.call(input, query);
             input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -729,9 +846,9 @@ export default function MapPage({
     return (
         <MapLayout>
             <Head title={t('map.title')} />
-            <div className="absolute inset-0 flex">
+            <>
                 {/* Map */}
-                <div className="relative flex-1">
+                <div className="relative h-2/5 flex-none md:h-auto md:flex-1">
                     <MapSearch
                         onResultSelect={handleSearchResult}
                         onClear={handleSearchClear}
@@ -746,7 +863,7 @@ export default function MapPage({
                 </div>
 
                 {/* Sidebar */}
-                <div className="hidden w-[360px] shrink-0 border-l border-border bg-background md:block">
+                <div className="min-h-0 flex-1 overflow-hidden border-t border-border bg-background md:w-[420px] md:flex-none md:border-t-0 md:border-l">
                     {pinActive && locationData ? (
                         <ActiveSidebar
                             data={locationData}
@@ -765,62 +882,7 @@ export default function MapPage({
                     )}
                 </div>
 
-                {/* Mobile bottom sheet (simplified) */}
-                {pinActive && locationData && (
-                    <div className="fixed inset-x-0 bottom-0 z-50 md:hidden">
-                        <div className="rounded-t-xl border-t border-border bg-background p-4 shadow-lg">
-                            <div className="mb-2 flex items-center justify-between">
-                                <div>
-                                    <h2 className="text-sm font-semibold">
-                                        {locationName || locationData.location.kommun}
-                                    </h2>
-                                    <p className="text-xs text-muted-foreground">
-                                        {locationData.location.kommun}
-                                    </p>
-                                </div>
-                                <button
-                                    onClick={() => {
-                                        handlePinClear();
-                                        mapRef.current?.clearPin();
-                                    }}
-                                    className="rounded-md p-1 text-muted-foreground"
-                                >
-                                    <X className="h-4 w-4" />
-                                </button>
-                            </div>
-                            {locationData.score && (
-                                <>
-                                    <div className="flex items-center gap-2">
-                                        <div
-                                            className="flex h-10 w-10 items-center justify-center rounded-md text-sm font-bold text-white"
-                                            style={scoreBgStyle(locationData.score.value)}
-                                        >
-                                            {locationData.score.value}
-                                        </div>
-                                        <div className="flex-1">
-                                            <span className="text-sm text-foreground">
-                                                {locationData.score.label}
-                                            </span>
-                                            {locationData.score.area_score !== null && (
-                                                <div className="flex gap-2 text-[10px] tabular-nums text-muted-foreground">
-                                                    <span>{t('sidebar.proximity.area_label')}: {locationData.score.area_score}</span>
-                                                    <span>{t('sidebar.proximity.location_label')}: {locationData.score.proximity_score}</span>
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                    <a
-                                        href={`/purchase/${locationData.location.lat},${locationData.location.lng}`}
-                                        className="mt-3 block w-full rounded-md bg-primary px-4 py-2 text-center text-sm font-medium text-primary-foreground"
-                                    >
-                                        Lås upp rapport — 79 kr
-                                    </a>
-                                </>
-                            )}
-                        </div>
-                    </div>
-                )}
-            </div>
+            </>
         </MapLayout>
     );
 }
