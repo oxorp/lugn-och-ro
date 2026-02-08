@@ -44,7 +44,7 @@ class ProximityScoreServiceTest extends TestCase
         $school = School::factory()->create([
             'name' => 'Vasaskolan',
             'type_of_schooling' => 'Grundskola',
-            'status' => 'AKTIV',
+            'status' => 'active',
             'lat' => 59.335,
             'lng' => 18.061,
         ]);
@@ -76,7 +76,7 @@ class ProximityScoreServiceTest extends TestCase
         $school = School::factory()->create([
             'name' => 'Distant School',
             'type_of_schooling' => 'Grundskola',
-            'status' => 'AKTIV',
+            'status' => 'active',
             'lat' => 59.348,
             'lng' => 18.060,
         ]);
@@ -97,7 +97,7 @@ class ProximityScoreServiceTest extends TestCase
         School::factory()->create([
             'name' => 'No Stats School',
             'type_of_schooling' => 'Grundskola',
-            'status' => 'AKTIV',
+            'status' => 'active',
             'lat' => 59.336,
             'lng' => 18.061,
         ]);

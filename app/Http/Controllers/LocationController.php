@@ -118,7 +118,7 @@ class LocationController extends Controller
                     SELECT MAX(academic_year) FROM school_statistics
                     WHERE school_unit_code = s.school_unit_code
                 )
-            WHERE s.status = \'AKTIV\'
+            WHERE s.status = \'active\'
               AND s.geom IS NOT NULL
               AND ST_DWithin(
                   s.geom::geography,

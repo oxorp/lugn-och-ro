@@ -125,7 +125,7 @@ class LocationControllerTest extends TestCase
             'name' => 'Vasaskolan',
             'type_of_schooling' => 'Grundskola',
             'operator_type' => 'KOMMUN',
-            'status' => 'AKTIV',
+            'status' => 'active',
             'lat' => 59.335,
             'lng' => 18.061,
             'deso_code' => '0180C1090',
