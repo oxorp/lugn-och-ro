@@ -105,6 +105,7 @@ export function ActiveSidebar({
                         lat={location.lat}
                         lng={location.lng}
                         ctaRef={firstCtaRef}
+                        indicatorMeta={indicatorMeta}
                     />
                 )}
 

@@ -1,3 +1,6 @@
+import { type IndicatorMeta, InfoTooltip } from '@/components/info-tooltip';
+import { PercentileBadge } from '@/components/percentile-badge';
+import { PercentileBar } from '@/components/percentile-bar';
 import { Button } from '@/components/ui/button';
 import { useTranslation } from '@/hooks/use-translation';
 import { Database, GraduationCap, Lock } from 'lucide-react';
@@ -9,6 +12,7 @@ import type {
     PreviewData,
     PreviewFreeIndicator,
 } from '../types';
+import { formatIndicatorValue } from '../utils';
 
 const SOURCE_LABELS: Record<string, string> = {
     scb: 'SCB',
@@ -19,34 +23,6 @@ const SOURCE_LABELS: Record<string, string> = {
     kronofogden: 'Kronofogden',
     kolada: 'Kolada',
 };
-
-/** Swedish ordinal: 1:a, 2:a, then :e for everything else */
-function ordinal(n: number): string {
-    if (n === 1 || n === 2) return `${n}:a`;
-    return `${n}:e`;
-}
-
-function formatIndicatorValue(value: number, unit: string | null): string {
-    switch (unit) {
-        case 'SEK':
-            return `${Math.round(value).toLocaleString('sv-SE')} kr`;
-        case 'percent':
-        case '%':
-            return `${value.toFixed(1)}%`;
-        case 'per_1000':
-        case '/1000':
-            return `${value.toFixed(1)}/1000`;
-        case 'per_100k':
-        case '/100k':
-            return `${value.toFixed(1)}/100k`;
-        case 'points':
-            return `${Math.round(value)}`;
-        case 'index':
-            return value.toFixed(1);
-        default:
-            return value.toFixed(1);
-    }
-}
 
 export function DataSummary({
     dataPointCount,
@@ -88,40 +64,40 @@ export function SourceBadges({ sources }: { sources: string[] }) {
 
 function FreeIndicatorRow({
     indicator,
+    meta,
 }: {
     indicator: PreviewFreeIndicator;
+    meta?: IndicatorMeta;
 }) {
     const percentile = indicator.percentile ?? 0;
-
-    const isGood =
-        indicator.direction === 'positive'
-            ? percentile >= 50
-            : percentile < 50;
-
-    const barColor = isGood ? 'bg-emerald-500' : 'bg-amber-500';
-    const textColor = isGood ? 'text-emerald-700' : 'text-amber-700';
+    const effectivePct =
+        indicator.direction === 'negative' ? 100 - percentile : percentile;
 
     return (
-        <div
-            className="flex items-center gap-3 py-1.5"
-            title={`${indicator.name}: ${formatIndicatorValue(indicator.raw_value, indicator.unit)}`}
-        >
-            <span className="min-w-0 flex-1 truncate text-sm">
-                {indicator.name}
-            </span>
-            <div className="h-2 w-20 shrink-0 overflow-hidden rounded-full bg-muted">
-                <div
-                    className={`h-full rounded-full ${barColor}`}
-                    style={{ width: `${percentile}%` }}
-                />
+        <div className="space-y-1 py-1.5">
+            <div className="flex items-center justify-between text-sm">
+                <span className="flex min-w-0 flex-1 items-center truncate">
+                    {indicator.name}
+                    {meta && <InfoTooltip indicator={meta} />}
+                </span>
+                {indicator.percentile !== null ? (
+                    <PercentileBadge
+                        percentile={percentile}
+                        direction={indicator.direction}
+                        rawValue={indicator.raw_value}
+                        unit={indicator.unit}
+                        name={indicator.name}
+                    />
+                ) : (
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                        &mdash;
+                    </span>
+                )}
             </div>
-            <span
-                className={`w-10 shrink-0 text-right text-xs font-medium ${textColor}`}
-            >
-                {indicator.percentile !== null
-                    ? ordinal(indicator.percentile)
-                    : '\u2014'}
-            </span>
+            <PercentileBar effectivePct={effectivePct} className="h-1.5" />
+            <div className="text-[11px] text-muted-foreground">
+                ({formatIndicatorValue(indicator.raw_value, indicator.unit)})
+            </div>
         </div>
     );
 }
@@ -158,7 +134,13 @@ function LockedCountLabel({ count }: { count: number }) {
     );
 }
 
-function CategorySection({ category }: { category: PreviewCategory }) {
+function CategorySection({
+    category,
+    indicatorMeta,
+}: {
+    category: PreviewCategory;
+    indicatorMeta?: Record<string, IndicatorMeta>;
+}) {
     return (
         <div className="pt-5 first:pt-0">
             {/* Category header */}
@@ -175,6 +157,7 @@ function CategorySection({ category }: { category: PreviewCategory }) {
                     <FreeIndicatorRow
                         key={indicator.slug}
                         indicator={indicator}
+                        meta={indicatorMeta?.[indicator.slug]}
                     />
                 ))
             ) : (
@@ -237,7 +220,7 @@ function CTASummary({
 
     return (
         <div className="mt-6 border-t pt-5">
-            <div className="rounded-xl bg-gradient-to-br from-primary/5 to-primary/10 p-5 text-center">
+            <div className="rounded-xl bg-linear-to-br from-primary/5 to-primary/10 p-5 text-center">
                 <Lock className="mx-auto mb-3 h-5 w-5 text-primary" />
                 <h3 className="mb-3 text-base font-semibold">
                     {t('sidebar.preview.unlock_title')}
@@ -308,11 +291,13 @@ export function LockedPreviewContent({
     lat,
     lng,
     ctaRef,
+    indicatorMeta,
 }: {
     preview: PreviewData;
     lat: number;
     lng: number;
     ctaRef: React.RefObject<HTMLDivElement | null>;
+    indicatorMeta?: Record<string, IndicatorMeta>;
 }) {
     const { t } = useTranslation();
 
@@ -349,6 +334,7 @@ export function LockedPreviewContent({
                         <CategorySection
                             key={category.slug}
                             category={category}
+                            indicatorMeta={indicatorMeta}
                         />
                     ))}
             </div>

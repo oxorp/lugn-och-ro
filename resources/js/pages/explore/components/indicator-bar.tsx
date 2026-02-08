@@ -1,8 +1,9 @@
 import { type IndicatorMeta, InfoTooltip } from '@/components/info-tooltip';
-import { useTranslation } from '@/hooks/use-translation';
+import { PercentileBadge } from '@/components/percentile-badge';
+import { PercentileBar } from '@/components/percentile-bar';
 
 import type { LocationData } from '../types';
-import { formatIndicatorValue, scoreBgStyle } from '../utils';
+import { formatIndicatorValue } from '../utils';
 
 export function IndicatorBar({
     indicator,
@@ -15,12 +16,9 @@ export function IndicatorBar({
     urbanityTier: string | null;
     meta?: IndicatorMeta;
 }) {
-    const { t } = useTranslation();
     const rawPct = Math.round(indicator.normalized_value * 100);
     const effectivePct =
         indicator.direction === 'negative' ? 100 - rawPct : rawPct;
-    const isStratified = scope === 'urbanity_stratified' && urbanityTier;
-    const tierLabel = urbanityTier ? t(`sidebar.urbanity.${urbanityTier}`) : '';
 
     return (
         <div className="space-y-1">
@@ -29,26 +27,17 @@ export function IndicatorBar({
                     {indicator.name}
                     {meta && <InfoTooltip indicator={meta} />}
                 </span>
-                <span className="font-semibold text-foreground tabular-nums">
-                    {isStratified
-                        ? t('sidebar.indicators.percentile_stratified', {
-                              value: effectivePct,
-                              tier: tierLabel,
-                          })
-                        : t('sidebar.indicators.percentile_national', {
-                              value: effectivePct,
-                          })}
-                </span>
-            </div>
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                <div
-                    className="h-full rounded-full transition-all"
-                    style={{
-                        width: `${effectivePct}%`,
-                        ...scoreBgStyle(effectivePct),
-                    }}
+                <PercentileBadge
+                    percentile={rawPct}
+                    direction={indicator.direction}
+                    rawValue={indicator.raw_value}
+                    unit={indicator.unit}
+                    name={indicator.name}
+                    scope={scope}
+                    urbanityTier={urbanityTier}
                 />
             </div>
+            <PercentileBar effectivePct={effectivePct} />
             <div className="text-[11px] text-muted-foreground">
                 ({formatIndicatorValue(indicator.raw_value, indicator.unit)})
             </div>
