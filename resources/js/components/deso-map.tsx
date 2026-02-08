@@ -12,6 +12,7 @@ import VectorSource from 'ol/source/Vector';
 import XYZ from 'ol/source/XYZ';
 import CircleStyle from 'ol/style/Circle';
 import Fill from 'ol/style/Fill';
+import Icon from 'ol/style/Icon';
 import RegularShape from 'ol/style/RegularShape';
 import Stroke from 'ol/style/Stroke';
 import Style from 'ol/style/Style';
@@ -25,6 +26,7 @@ import {
 } from 'react';
 
 import { useTranslation } from '@/hooks/use-translation';
+import { getPoiMarkerDataUrl, hasIcon } from '@/lib/poi-icons';
 
 import 'ol/ol.css';
 
@@ -103,6 +105,7 @@ export interface HeatmapMapHandle {
     clearPoiMarkers: () => void;
     zoomToPoint: (lat: number, lng: number, zoom: number) => void;
     zoomToExtent: (west: number, south: number, east: number, north: number) => void;
+    getMap: () => Map | null;
 }
 
 type BasemapType = 'clean' | 'detailed' | 'satellite';
@@ -313,6 +316,9 @@ const HeatmapMap = forwardRef<HeatmapMapHandle, HeatmapMapProps>(function Heatma
             if (!source) return;
             source.clear();
 
+            const zoom = mapInstance.current?.getView().getZoom() ?? 14;
+            const iconSize = zoom >= 15 ? 28 : zoom >= 14 ? 24 : 20;
+
             const features = pois
                 .filter((p) => p.lat && p.lng)
                 .map((p) => {
@@ -322,14 +328,39 @@ const HeatmapMap = forwardRef<HeatmapMapHandle, HeatmapMapProps>(function Heatma
                         category: p.category,
                     });
 
-                    const color = categories[p.category]?.color ?? '#94a3b8';
+                    const meta = categories[p.category];
+                    const color = meta?.color ?? '#94a3b8';
+                    const iconName = meta?.icon;
 
+                    // Use Lucide SVG icon marker if available, otherwise colored dot
+                    if (iconName && hasIcon(iconName)) {
+                        const dataUrl = getPoiMarkerDataUrl(iconName, color, iconSize);
+                        if (dataUrl) {
+                            const stemRatio = 0.22;
+                            const totalH = iconSize + Math.round(iconSize * stemRatio);
+                            feature.setStyle(
+                                new Style({
+                                    image: new Icon({
+                                        src: dataUrl,
+                                        anchor: [0.5, 1],
+                                        anchorXUnits: 'fraction',
+                                        anchorYUnits: 'fraction',
+                                        scale: 1,
+                                        size: [iconSize, totalH],
+                                    }),
+                                }),
+                            );
+                            return feature;
+                        }
+                    }
+
+                    // Fallback: colored circle
                     feature.setStyle(
                         new Style({
                             image: new CircleStyle({
-                                radius: 4,
+                                radius: 5,
                                 fill: new Fill({ color }),
-                                stroke: new Stroke({ color: '#fff', width: 1 }),
+                                stroke: new Stroke({ color: '#fff', width: 1.5 }),
                             }),
                         }),
                     );
@@ -363,6 +394,9 @@ const HeatmapMap = forwardRef<HeatmapMapHandle, HeatmapMapProps>(function Heatma
                 duration: 800,
                 maxZoom: 18,
             });
+        },
+        getMap() {
+            return mapInstance.current;
         },
     }));
 
@@ -575,18 +609,46 @@ const HeatmapMap = forwardRef<HeatmapMapHandle, HeatmapMapProps>(function Heatma
                         overlay.setPosition(event.coordinate);
                         found = true;
                     }
-                } else if (layer === poiLayer) {
-                    const name = feature.get('name') as string | undefined;
-                    const category = feature.get('category') as string | undefined;
-                    if (name) {
-                        let html = `<strong>${name}</strong>`;
-                        if (category) {
-                            html += `<br><span style="opacity:0.8">${category.replace(/_/g, ' ')}</span>`;
+                } else {
+                    // Check for POI features (from pin-based layer or viewport-based usePoiLayer)
+                    // The usePoiLayer hook uses clustering, so features may be wrapped
+                    const clustered = feature.get('features') as Feature[] | undefined;
+                    const poiFeatures = clustered ?? [feature];
+                    const isPoi = layer === poiLayer || poiFeatures[0]?.get('is_poi') || feature.get('category');
+
+                    if (isPoi) {
+                        if (poiFeatures.length === 1) {
+                            const poi = poiFeatures[0];
+                            const name = poi.get('name') as string | undefined;
+                            const category = poi.get('category') as string | undefined;
+                            const categoryLabel = category?.replace(/_/g, ' ') ?? 'POI';
+                            const label = name || categoryLabel;
+                            let html = `<strong>${label}</strong>`;
+                            if (name && category) {
+                                html += `<br><span style="opacity:0.8">${categoryLabel}</span>`;
+                            }
+                            el.innerHTML = html;
+                            el.style.display = 'block';
+                            overlay.setPosition(event.coordinate);
+                            found = true;
+                        } else if (poiFeatures.length > 1) {
+                            // Cluster tooltip
+                            let pos = 0, neg = 0, other = 0;
+                            for (const f of poiFeatures) {
+                                const s = f.get('sentiment');
+                                if (s === 'positive') pos++;
+                                else if (s === 'negative') neg++;
+                                else other++;
+                            }
+                            const parts: string[] = [];
+                            if (neg > 0) parts.push(`${neg} nuisance${neg > 1 ? 's' : ''}`);
+                            if (pos > 0) parts.push(`${pos} amenit${pos > 1 ? 'ies' : 'y'}`);
+                            if (other > 0) parts.push(`${other} other`);
+                            el.innerHTML = `<strong>${poiFeatures.length} POIs</strong><br><span style="opacity:0.8">${parts.join(' · ')}</span>`;
+                            el.style.display = 'block';
+                            overlay.setPosition(event.coordinate);
+                            found = true;
                         }
-                        el.innerHTML = html;
-                        el.style.display = 'block';
-                        overlay.setPosition(event.coordinate);
-                        found = true;
                     }
                 }
             });

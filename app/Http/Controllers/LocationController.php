@@ -147,11 +147,8 @@ class LocationController extends Controller
             ORDER BY p.category, distance_m
         ', [$lng, $lat, $lng, $lat]);
 
-        // 8. Get POI category metadata for rendering
-        $poiCategories = PoiCategory::query()
-            ->where('is_active', true)
-            ->where('show_on_map', true)
-            ->get()
+        // 8. Get POI category metadata for rendering (all categories for icon/color mapping)
+        $poiCategories = PoiCategory::all()
             ->mapWithKeys(fn ($cat) => [
                 $cat->slug => [
                     'name' => $cat->name,

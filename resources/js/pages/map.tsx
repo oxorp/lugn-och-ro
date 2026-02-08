@@ -571,7 +571,7 @@ export default function MapPage({
             // Set school markers on map
             mapRef.current?.setSchoolMarkers(data.schools);
 
-            // Set POI markers (only present for paid tiers)
+            // Set POI markers within 3km radius (with icons)
             if (data.pois?.length > 0) {
                 mapRef.current?.setPoiMarkers(data.pois, data.poi_categories);
             }
