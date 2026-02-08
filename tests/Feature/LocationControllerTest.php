@@ -91,7 +91,7 @@ class LocationControllerTest extends TestCase
                 'pois',
                 'poi_categories',
             ])
-            ->assertJsonPath('display_radius', (int) config('proximity.display_radius'))
+            ->assertJsonPath('display_radius', 1500) // urban tier
             ->assertJsonFragment([
                 'kommun' => 'Stockholm',
                 'deso_code' => '0180C1090',

@@ -15,6 +15,7 @@ class ProximityResult
         public ProximityFactor $negativePoi,
         public ProximityFactor $positivePoi,
         public float $safetyScore = 0.5,
+        public string $urbanityTier = 'semi_urban',
     ) {}
 
     public function compositeScore(): float
@@ -44,6 +45,7 @@ class ProximityResult
             'composite' => round($this->compositeScore(), 1),
             'safety_score' => round($this->safetyScore, 3),
             'safety_zone' => $this->safetyZone(),
+            'urbanity_tier' => $this->urbanityTier,
             'factors' => [
                 $this->school->toArray(),
                 $this->greenSpace->toArray(),

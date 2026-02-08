@@ -364,16 +364,123 @@ class ProximityScoreServiceTest extends TestCase
         $this->assertEquals($expected, $blended);
     }
 
+    // ─── Urbanity-Aware Radii ─────────────────────────────
+
+    public function test_urbanity_tier_returned_in_proximity_result(): void
+    {
+        $this->createDesoWithGeom('0180C1090', 'Stockholm', 'urban');
+
+        $result = $this->service->score(59.335, 18.06);
+        $array = $result->toArray();
+
+        $this->assertEquals('urban', $result->urbanityTier);
+        $this->assertEquals('urban', $array['urbanity_tier']);
+    }
+
+    public function test_rural_tier_uses_wider_school_radius(): void
+    {
+        // Create a rural DeSO and place a school at ~1.8km
+        // Urban radius = 1500m (out of range), rural = 3500m (in range)
+        $this->createDesoWithGeom('2584C1010', 'Kiruna', 'rural');
+
+        $school = School::factory()->create([
+            'name' => 'Rural School',
+            'type_of_schooling' => 'Grundskola',
+            'status' => 'active',
+            'lat' => 59.351,  // ~1.8km from 59.335
+            'lng' => 18.060,
+        ]);
+        $this->setGeom('schools', 59.351, 18.060);
+
+        SchoolStatistic::factory()->create([
+            'school_unit_code' => $school->school_unit_code,
+            'merit_value_17' => 240.0,
+        ]);
+
+        $result = $this->service->score(59.335, 18.06);
+
+        $this->assertEquals('rural', $result->urbanityTier);
+        $this->assertGreaterThan(0, $result->school->score, 'Rural should find school within 3.5km');
+    }
+
+    public function test_urban_tier_uses_tighter_school_radius(): void
+    {
+        // School at ~1.8km — beyond urban 1500m radius
+        $this->createDesoWithGeom('0180C1090', 'Stockholm', 'urban');
+
+        $school = School::factory()->create([
+            'name' => 'Far School',
+            'type_of_schooling' => 'Grundskola',
+            'status' => 'active',
+            'lat' => 59.351,  // ~1.8km from 59.335
+            'lng' => 18.060,
+        ]);
+        $this->setGeom('schools', 59.351, 18.060);
+
+        SchoolStatistic::factory()->create([
+            'school_unit_code' => $school->school_unit_code,
+            'merit_value_17' => 240.0,
+        ]);
+
+        $result = $this->service->score(59.335, 18.06);
+
+        $this->assertEquals('urban', $result->urbanityTier);
+        $this->assertEquals(0, $result->school->score, 'Urban should not find school beyond 1.5km');
+    }
+
+    public function test_fallback_to_semi_urban_when_no_deso(): void
+    {
+        // No DeSO created — pin in the ocean
+        $result = $this->service->score(65.0, 18.0);
+        $this->assertEquals('semi_urban', $result->urbanityTier);
+    }
+
+    public function test_location_api_returns_urbanity_aware_display_radius(): void
+    {
+        $this->createDesoWithGeom('0180C1090', 'Stockholm', 'urban');
+
+        CompositeScore::create([
+            'deso_code' => '0180C1090',
+            'year' => 2024,
+            'score' => 72.5,
+            'computed_at' => now(),
+        ]);
+
+        $user = User::factory()->create(['is_admin' => true]);
+        $response = $this->actingAs($user)->getJson('/api/location/59.335,18.06');
+
+        $response->assertOk();
+        $this->assertEquals(1500, $response->json('display_radius'));
+    }
+
+    public function test_location_api_returns_wider_radius_for_rural(): void
+    {
+        $this->createDesoWithGeom('2584C1010', 'Kiruna', 'rural');
+
+        CompositeScore::create([
+            'deso_code' => '2584C1010',
+            'year' => 2024,
+            'score' => 55.0,
+            'computed_at' => now(),
+        ]);
+
+        $user = User::factory()->create(['is_admin' => true]);
+        $response = $this->actingAs($user)->getJson('/api/location/59.335,18.06');
+
+        $response->assertOk();
+        $this->assertEquals(3500, $response->json('display_radius'));
+    }
+
     // ─── Helpers ──────────────────────────────────────────
 
-    private function createDesoWithGeom(string $desoCode, string $kommunName): void
+    private function createDesoWithGeom(string $desoCode, string $kommunName, string $urbanityTier = 'urban'): void
     {
         DB::table('deso_areas')->insert([
             'deso_code' => $desoCode,
             'kommun_code' => '0180',
             'kommun_name' => $kommunName,
             'lan_code' => '01',
-            'urbanity_tier' => 'urban',
+            'urbanity_tier' => $urbanityTier,
             'area_km2' => 0.5,
             'geom' => DB::raw("ST_SetSRID(ST_GeomFromText('POLYGON((18.05 59.33, 18.07 59.33, 18.07 59.34, 18.05 59.34, 18.05 59.33))'), 4326)"),
             'created_at' => now(),

@@ -73,7 +73,8 @@ class LocationController extends Controller
             'factor_scores' => null,
         ];
 
-        $displayRadius = (int) config('proximity.display_radius', 2000);
+        $urbanityTier = $deso->urbanity_tier ?? 'semi_urban';
+        $displayRadius = $this->getQueryRadius('display_radius', $urbanityTier);
 
         // Public tier: location + score only, no detail data
         if ($tier === DataTier::Public) {
@@ -107,7 +108,7 @@ class LocationController extends Controller
             ->unique('indicator_id');
 
         // 6. Get nearby schools
-        $schoolRadius = (int) config('proximity.school_query_radius', 2000);
+        $schoolRadius = $this->getQueryRadius('school_query_radius', $urbanityTier);
         $schools = DB::select('
             SELECT s.name, s.type_of_schooling, s.operator_type, s.lat, s.lng,
                    ss.merit_value_17, ss.goal_achievement_pct,
@@ -134,7 +135,7 @@ class LocationController extends Controller
         ', [$lng, $lat, $lng, $lat, $schoolRadius]);
 
         // 7. Get POIs within radius
-        $poiRadius = (int) config('proximity.poi_query_radius', 1500);
+        $poiRadius = $this->getQueryRadius('poi_query_radius', $urbanityTier);
         $pois = DB::select('
             SELECT p.name, p.category, p.lat, p.lng, p.subcategory,
                    ST_Distance(
@@ -218,6 +219,17 @@ class LocationController extends Controller
         }
 
         return round($areaScore * self::AREA_WEIGHT + $proximityScore * self::PROXIMITY_WEIGHT, 1);
+    }
+
+    private function getQueryRadius(string $key, string $urbanityTier): int
+    {
+        $config = config("proximity.{$key}");
+
+        if (is_array($config)) {
+            return (int) ($config[$urbanityTier] ?? $config['semi_urban'] ?? 2000);
+        }
+
+        return (int) $config;
     }
 
     private function scoreLabel(float $score): string

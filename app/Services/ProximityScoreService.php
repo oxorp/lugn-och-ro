@@ -23,13 +23,14 @@ class ProximityScoreService
      */
     public function score(float $lat, float $lng): ProximityResult
     {
-        // Resolve DeSO for the pin to get safety context
+        // Resolve DeSO for the pin to get safety context and urbanity tier
         $deso = DB::selectOne('
-            SELECT deso_code FROM deso_areas
+            SELECT deso_code, urbanity_tier FROM deso_areas
             WHERE ST_Contains(geom, ST_SetSRID(ST_MakePoint(?, ?), 4326))
             LIMIT 1
         ', [$lng, $lat]);
 
+        $urbanityTier = $deso->urbanity_tier ?? 'semi_urban';
         $safetyScore = $deso
             ? $this->safety->forDeso($deso->deso_code, now()->year - 1)
             : 0.5;
@@ -37,14 +38,30 @@ class ProximityScoreService
         $settings = $this->getCategorySettings();
 
         return new ProximityResult(
-            school: $this->scoreSchool($lat, $lng, $safetyScore, $settings),
-            greenSpace: $this->scoreGreenSpace($lat, $lng, $safetyScore, $settings),
-            transit: $this->scoreTransit($lat, $lng, $safetyScore, $settings),
-            grocery: $this->scoreGrocery($lat, $lng, $safetyScore, $settings),
-            negativePoi: $this->scoreNegativePois($lat, $lng),
-            positivePoi: $this->scorePositivePois($lat, $lng, $safetyScore, $settings),
+            school: $this->scoreSchool($lat, $lng, $urbanityTier, $safetyScore, $settings),
+            greenSpace: $this->scoreGreenSpace($lat, $lng, $urbanityTier, $safetyScore, $settings),
+            transit: $this->scoreTransit($lat, $lng, $urbanityTier, $safetyScore, $settings),
+            grocery: $this->scoreGrocery($lat, $lng, $urbanityTier, $safetyScore, $settings),
+            negativePoi: $this->scoreNegativePois($lat, $lng, $urbanityTier),
+            positivePoi: $this->scorePositivePois($lat, $lng, $urbanityTier, $safetyScore, $settings),
             safetyScore: $safetyScore,
+            urbanityTier: $urbanityTier,
         );
+    }
+
+    /**
+     * Resolve the scoring radius for a category based on urbanity tier.
+     * Supports both tiered (array) and flat (legacy) config values.
+     */
+    private function getRadius(string $category, string $urbanityTier): float
+    {
+        $radii = config("proximity.scoring_radii.{$category}");
+
+        if (is_array($radii)) {
+            return (float) ($radii[$urbanityTier] ?? $radii['semi_urban'] ?? 1000);
+        }
+
+        return (float) $radii;
     }
 
     /**
@@ -79,9 +96,9 @@ class ProximityScoreService
         return $physicalDistanceM * (1.0 + $riskPenalty);
     }
 
-    private function scoreSchool(float $lat, float $lng, float $safetyScore, Collection $settings): ProximityFactor
+    private function scoreSchool(float $lat, float $lng, string $urbanityTier, float $safetyScore, Collection $settings): ProximityFactor
     {
-        $maxDistance = (int) config('proximity.scoring_radii.school', 2000);
+        $maxDistance = $this->getRadius('school', $urbanityTier);
         $sensitivity = (float) ($settings->get('school_grundskola')?->safety_sensitivity ?? 0.80);
 
         $schools = DB::select("
@@ -113,7 +130,7 @@ class ProximityScoreService
             return new ProximityFactor(
                 slug: 'prox_school',
                 score: 0,
-                details: ['message' => 'No grundskola within 2km'],
+                details: ['message' => "No grundskola within {$this->formatDistance($maxDistance)}"],
             );
         }
 
@@ -150,7 +167,7 @@ class ProximityScoreService
                     'nearest_school' => $nearest->name,
                     'nearest_distance_m' => (int) round($nearest->distance_m),
                     'effective_distance_m' => (int) round($this->effectiveDistance($nearest->distance_m, $safetyScore, $sensitivity)),
-                    'schools_within_2km' => count($schools),
+                    'schools_found' => count($schools),
                     'merit_data' => $schoolsWithMerit > 0,
                 ],
             );
@@ -164,14 +181,14 @@ class ProximityScoreService
                 'nearest_merit' => (float) $bestSchool->merit_value_17,
                 'nearest_distance_m' => (int) round($bestSchool->distance_m),
                 'effective_distance_m' => (int) round($this->effectiveDistance($bestSchool->distance_m, $safetyScore, $sensitivity)),
-                'schools_within_2km' => count($schools),
+                'schools_found' => count($schools),
             ],
         );
     }
 
-    private function scoreGreenSpace(float $lat, float $lng, float $safetyScore, Collection $settings): ProximityFactor
+    private function scoreGreenSpace(float $lat, float $lng, string $urbanityTier, float $safetyScore, Collection $settings): ProximityFactor
     {
-        $maxDistance = (int) config('proximity.scoring_radii.green_space', 1500);
+        $maxDistance = $this->getRadius('green_space', $urbanityTier);
         $sensitivity = (float) ($settings->get('park')?->safety_sensitivity ?? 1.00);
 
         $nearest = DB::selectOne("
@@ -190,7 +207,7 @@ class ProximityScoreService
             return new ProximityFactor(
                 slug: 'prox_green_space',
                 score: 0,
-                details: ['message' => 'No park within 1.5km'],
+                details: ['message' => "No park within {$this->formatDistance($maxDistance)}"],
             );
         }
 
@@ -207,9 +224,9 @@ class ProximityScoreService
         );
     }
 
-    private function scoreTransit(float $lat, float $lng, float $safetyScore, Collection $settings): ProximityFactor
+    private function scoreTransit(float $lat, float $lng, string $urbanityTier, float $safetyScore, Collection $settings): ProximityFactor
     {
-        $maxDistance = (int) config('proximity.scoring_radii.transit', 1000);
+        $maxDistance = $this->getRadius('transit', $urbanityTier);
         $sensitivity = (float) ($settings->get('public_transport_stop')?->safety_sensitivity ?? 0.50);
 
         $stops = DB::select("
@@ -228,7 +245,7 @@ class ProximityScoreService
             return new ProximityFactor(
                 slug: 'prox_transit',
                 score: 0,
-                details: ['message' => 'No transit within 1km'],
+                details: ['message' => "No transit within {$this->formatDistance($maxDistance)}"],
             );
         }
 
@@ -257,14 +274,14 @@ class ProximityScoreService
                 'nearest_type' => $stops[0]->subcategory,
                 'nearest_distance_m' => (int) round($stops[0]->distance_m),
                 'effective_distance_m' => (int) round($this->effectiveDistance($stops[0]->distance_m, $safetyScore, $sensitivity)),
-                'stops_within_1km' => count($stops),
+                'stops_found' => count($stops),
             ],
         );
     }
 
-    private function scoreGrocery(float $lat, float $lng, float $safetyScore, Collection $settings): ProximityFactor
+    private function scoreGrocery(float $lat, float $lng, string $urbanityTier, float $safetyScore, Collection $settings): ProximityFactor
     {
-        $maxDistance = (int) config('proximity.scoring_radii.grocery', 1000);
+        $maxDistance = $this->getRadius('grocery', $urbanityTier);
         $sensitivity = (float) ($settings->get('grocery')?->safety_sensitivity ?? 0.30);
 
         $nearest = DB::selectOne("
@@ -283,7 +300,7 @@ class ProximityScoreService
             return new ProximityFactor(
                 slug: 'prox_grocery',
                 score: 0,
-                details: ['message' => 'No grocery within 1km'],
+                details: ['message' => "No grocery within {$this->formatDistance($maxDistance)}"],
             );
         }
 
@@ -300,9 +317,9 @@ class ProximityScoreService
         );
     }
 
-    private function scoreNegativePois(float $lat, float $lng): ProximityFactor
+    private function scoreNegativePois(float $lat, float $lng, string $urbanityTier): ProximityFactor
     {
-        $maxDistance = (int) config('proximity.scoring_radii.negative_poi', 500);
+        $maxDistance = $this->getRadius('negative_poi', $urbanityTier);
 
         $pois = DB::select("
             SELECT p.name, p.category, p.subcategory,
@@ -343,9 +360,9 @@ class ProximityScoreService
         );
     }
 
-    private function scorePositivePois(float $lat, float $lng, float $safetyScore, Collection $settings): ProximityFactor
+    private function scorePositivePois(float $lat, float $lng, string $urbanityTier, float $safetyScore, Collection $settings): ProximityFactor
     {
-        $maxDistance = (int) config('proximity.scoring_radii.positive_poi', 1000);
+        $maxDistance = $this->getRadius('positive_poi', $urbanityTier);
 
         $excludeCategories = "'grocery', 'public_transport_stop', 'park', 'nature_reserve'";
 
@@ -389,6 +406,13 @@ class ProximityScoreService
                 'types' => array_values(array_unique(array_column($pois, 'category'))),
             ],
         );
+    }
+
+    private function formatDistance(float $meters): string
+    {
+        return $meters >= 1000
+            ? round($meters / 1000, 1).'km'
+            : (int) $meters.'m';
     }
 
     /**
