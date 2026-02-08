@@ -31,8 +31,8 @@ Shown after a pin drop or search result selection. Fetches data from `GET /api/l
 3. **Score breakdown** — Area score vs proximity score as sub-values
 4. **Proximity Analysis** — Safety zone badge + per-factor bars with icons (paid tiers only)
 5. **Indicator Breakdown** — All area-level indicators with percentile bars (paid tiers only)
-6. **Schools** — Nearby schools within 1.5 km with merit values and distance (paid tiers only)
-7. **POIs** — Nearby POI counts by category with color dots (paid tiers only)
+6. **Schools** — Nearby schools within urbanity-tiered radius (1.5–3.5 km) with merit values and distance (paid tiers only)
+7. **POIs** — Nearby POI counts by category with color dots, urbanity-tiered radius (1–2.5 km) (paid tiers only)
 
 ### Score Card
 

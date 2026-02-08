@@ -26,7 +26,7 @@ Example: `GET /api/location/59.3293,18.0686`
 2. **Area score** — Load latest `composite_scores` for the DeSO
 3. **Proximity score** — `ProximityScoreService` computes 6 distance-based factors in real-time
 4. **Blend** — `area_score × 0.70 + proximity_score × 0.30`
-5. **Nearby data** — Schools within 1.5 km, POIs within 3 km (PostGIS `ST_DWithin`)
+5. **Nearby data** — Schools and POIs within urbanity-tiered radii (PostGIS `ST_DWithin`)
 6. **Tier gating** — Public tier gets score only; paid tiers get full breakdown
 
 ## Response Format
@@ -57,6 +57,7 @@ Returns location and score only, no detailed breakdowns:
     "factor_scores": { "income": 0.82, "crime": 0.45 }
   },
   "tier": 0,
+  "display_radius": 1500,
   "proximity": null,
   "indicators": [],
   "schools": [],
@@ -74,10 +75,12 @@ Full response with proximity breakdown, indicators, schools, and POIs:
   "location": { ... },
   "score": { ... },
   "tier": 3,
+  "display_radius": 1500,
   "proximity": {
     "composite": 66.1,
     "safety_score": 0.82,
     "safety_zone": { "level": "high", "label": "Hög" },
+    "urbanity_tier": "urban",
     "factors": [
       {
         "slug": "prox_school",
@@ -166,22 +169,28 @@ In unsafe areas, effective distances are larger than physical distances, reducin
 
 ## Proximity Factors
 
-| Factor | Radius | Key Data |
-|---|---|---|
-| `prox_school` | 2 km | School name, merit value, distance, effective distance, count |
-| `prox_green_space` | 1 km | Park name, distance, effective distance |
-| `prox_transit` | 1 km | Stop name, type (bus/tram/rail), distance, effective distance, count |
-| `prox_grocery` | 1 km | Store name, distance, effective distance |
-| `prox_negative_poi` | 500 m | Count of negative POIs, nearest name and distance |
-| `prox_positive_poi` | 1 km | Count and category types |
+All scoring radii adapt to the DeSO's urbanity tier (urban / semi-urban / rural):
 
-## Search Radii
+| Factor | Urban | Semi-Urban | Rural | Key Data |
+|---|---|---|---|---|
+| `prox_school` | 1,500 m | 2,000 m | 3,500 m | School name, merit value, distance, effective distance, count |
+| `prox_green_space` | 1,000 m | 1,500 m | 2,500 m | Park name, distance, effective distance |
+| `prox_transit` | 800 m | 1,200 m | 2,500 m | Stop name, type, distance, effective distance, count |
+| `prox_grocery` | 800 m | 1,200 m | 2,000 m | Store name, distance, effective distance |
+| `prox_negative_poi` | 400 m | 500 m | 500 m | Count of negative POIs, nearest name and distance |
+| `prox_positive_poi` | 800 m | 1,000 m | 1,500 m | Count and category types |
 
-| Data Type | Radius |
-|---|---|
-| Schools | 1.5 km |
-| POIs | 3 km |
-| Proximity scoring | Factor-specific (500 m – 2 km) |
+## Search & Display Radii
+
+The API also uses urbanity-tiered radii for nearby data queries and the map circle:
+
+| Data | Urban | Semi-Urban | Rural |
+|---|---|---|---|
+| Schools query | 1,500 m | 2,000 m | 3,500 m |
+| POIs query | 1,000 m | 1,500 m | 2,500 m |
+| Display radius (map circle) | 1,500 m | 2,000 m | 3,500 m |
+
+The `display_radius` field in the response provides the appropriate radius in meters for drawing the map circle.
 
 ## Error Responses
 

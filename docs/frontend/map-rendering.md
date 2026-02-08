@@ -16,7 +16,7 @@ A `forwardRef` component exposing an imperative handle (`HeatmapMapHandle`) for 
 | Country Mask | `VectorLayer` | 1 | Dims areas outside Sweden (semi-transparent white) |
 | Sweden Border | `VectorLayer` | 2 | Dashed border stroke around Sweden |
 | Heatmap Tiles | `TileLayer` (XYZ) | 3 | Pre-rendered score heatmap from `/tiles/{year}/{z}/{x}/{y}.png` |
-| Radius Circle | `VectorLayer` | 4 | 3 km dashed circle around dropped pin |
+| Radius Circle | `VectorLayer` | 4 | Urbanity-tiered dashed circle around dropped pin |
 | POI Markers | `VectorLayer` | 8 | Category-colored POI icons (from pin lookup) |
 | School Markers | `VectorLayer` | 10 | Merit-colored school markers (from pin lookup) |
 | Pin Marker | `VectorLayer` | 50 | White circle with dark border at clicked location |
@@ -72,7 +72,7 @@ Three basemap types are available via the `BasemapControl` widget (top-right):
 Any click on the map within Sweden's bounds drops a pin and triggers a location lookup:
 
 1. Pin placed as white circle with dark border
-2. 3 km radius circle drawn (dashed, semi-transparent)
+2. Radius circle drawn (dashed, semi-transparent) — size from API `display_radius` field (1.5 km urban / 2 km semi-urban / 3.5 km rural)
 3. `onPinDrop(lat, lng)` callback fires → parent fetches `/api/location/{lat},{lng}`
 4. School markers and POI markers appear from the API response
 5. Map zooms to level 14 centered on the pin
