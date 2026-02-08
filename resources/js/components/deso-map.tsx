@@ -13,7 +13,6 @@ import XYZ from 'ol/source/XYZ';
 import CircleStyle from 'ol/style/Circle';
 import Fill from 'ol/style/Fill';
 import Icon from 'ol/style/Icon';
-import RegularShape from 'ol/style/RegularShape';
 import Stroke from 'ol/style/Stroke';
 import Style from 'ol/style/Style';
 import {
@@ -136,10 +135,10 @@ function createBasemapSource(type: BasemapType): OSM | XYZ {
 }
 
 function schoolMarkerColor(merit: number | null): string {
-    if (merit === null) return 'rgba(148, 163, 184, 0.9)';
-    if (merit > 230) return 'rgba(34, 197, 94, 0.9)';
-    if (merit >= 200) return 'rgba(234, 179, 8, 0.9)';
-    return 'rgba(249, 115, 22, 0.9)';
+    if (merit === null) return '#94a3b8';
+    if (merit > 230) return '#22c55e';
+    if (merit >= 200) return '#eab308';
+    return '#f97316';
 }
 
 function ScoreLegend() {
@@ -263,6 +262,9 @@ const HeatmapMap = forwardRef<HeatmapMapHandle, HeatmapMapProps>(function Heatma
             if (!source) return;
             source.clear();
 
+            const zoom = mapInstance.current?.getView().getZoom() ?? 14;
+            const iconSize = zoom >= 15 ? 28 : zoom >= 14 ? 24 : 20;
+
             const features = schools
                 .filter((s) => s.lat && s.lng)
                 .map((s) => {
@@ -273,26 +275,35 @@ const HeatmapMap = forwardRef<HeatmapMapHandle, HeatmapMapProps>(function Heatma
                     });
 
                     const fillColor = schoolMarkerColor(s.merit_value);
-                    const isGymnasie = s.type?.includes('Gymnasie') ?? false;
 
-                    let image;
-                    if (isGymnasie) {
-                        image = new RegularShape({
-                            points: 4,
-                            radius: 7,
-                            angle: Math.PI / 4,
-                            fill: new Fill({ color: fillColor }),
-                            stroke: new Stroke({ color: '#fff', width: 2 }),
-                        });
+                    const dataUrl = getPoiMarkerDataUrl('graduation-cap', fillColor, iconSize);
+                    if (dataUrl) {
+                        const stemRatio = 0.22;
+                        const totalH = iconSize + Math.round(iconSize * stemRatio);
+                        feature.setStyle(
+                            new Style({
+                                image: new Icon({
+                                    src: dataUrl,
+                                    anchor: [0.5, 1],
+                                    anchorXUnits: 'fraction',
+                                    anchorYUnits: 'fraction',
+                                    scale: 1,
+                                    size: [iconSize, totalH],
+                                }),
+                            }),
+                        );
                     } else {
-                        image = new CircleStyle({
-                            radius: 6,
-                            fill: new Fill({ color: fillColor }),
-                            stroke: new Stroke({ color: '#fff', width: 2 }),
-                        });
+                        feature.setStyle(
+                            new Style({
+                                image: new CircleStyle({
+                                    radius: 6,
+                                    fill: new Fill({ color: fillColor }),
+                                    stroke: new Stroke({ color: '#fff', width: 2 }),
+                                }),
+                            }),
+                        );
                     }
 
-                    feature.setStyle(new Style({ image }));
                     return feature;
                 });
 
