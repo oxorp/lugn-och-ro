@@ -630,9 +630,29 @@ export default function MapPage({
             if (feature) {
                 const props = feature.properties;
                 const parts: string[] = [];
-                if (props.name) parts.push(props.name);
-                else if (props.street) parts.push(props.street);
-                if (props.city && !parts.includes(props.city)) parts.push(props.city);
+
+                // Build street address: "Street Housenumber" or just "Street"
+                if (props.street) {
+                    const street = props.housenumber
+                        ? `${props.street} ${props.housenumber}`
+                        : props.street;
+                    parts.push(street);
+                } else if (props.name) {
+                    parts.push(props.name);
+                }
+
+                // Add locality/district for context if different from street
+                if (props.locality && !parts.includes(props.locality)) {
+                    parts.push(props.locality);
+                } else if (props.district && !parts.includes(props.district)) {
+                    parts.push(props.district);
+                }
+
+                // Add city if different from what we already have
+                if (props.city && !parts.includes(props.city)) {
+                    parts.push(props.city);
+                }
+
                 setLocationName(parts.join(', ') || null);
             }
         } catch {
