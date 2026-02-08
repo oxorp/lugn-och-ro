@@ -30,6 +30,24 @@ Update POI category settings (active, show_on_map, display_tier, signal).
 
 **Controller**: `AdminIndicatorController@updatePoiCategory`
 
+### `GET /admin/poi-categories`
+
+Inertia page for POI category management with safety sensitivity controls.
+
+**Controller**: `AdminPoiCategoryController@index`
+
+Includes example computations comparing safe (0.90) vs unsafe (0.15) areas at 500m.
+
+### `PUT /admin/poi-categories/{id}/safety`
+
+Update safety sensitivity and signal for a POI category.
+
+**Controller**: `AdminPoiCategoryController@update`
+
+Clears `poi_category_settings`, `poi-categories-display`, and `poi-visible-category-slugs` caches.
+
+**Controller**: `AdminIndicatorController@updatePoiCategory`
+
 ## Score Management
 
 ### `POST /admin/recompute-scores`

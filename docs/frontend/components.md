@@ -77,6 +77,7 @@ Located in `components/ui/`. Standard shadcn/ui components used throughout:
 | `dashboard.tsx` | `/dashboard` | User dashboard |
 | `methodology.tsx` | `/methodology` | Public methodology explanation |
 | `admin/indicators.tsx` | `/admin/indicators` | Indicator management |
+| `admin/poi-categories.tsx` | `/admin/poi-categories` | POI category & safety sensitivity management |
 | `admin/data-quality.tsx` | `/admin/data-quality` | Data quality dashboard |
 | `admin/pipeline.tsx` | `/admin/pipeline` | Pipeline overview |
 | `admin/pipeline-source.tsx` | `/admin/pipeline/{source}` | Source detail |

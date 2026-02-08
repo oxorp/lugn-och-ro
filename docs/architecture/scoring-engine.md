@@ -106,6 +106,16 @@ Each factor computes a 0–100 sub-score using PostGIS `ST_DWithin` for candidat
 ST_DWithin(geom::geography, ST_SetSRID(ST_MakePoint(lng, lat), 4326)::geography, radius_meters)
 ```
 
+### Safety-Modulated Distance Decay
+
+Proximity scores are adjusted by area safety. The `SafetyScoreService` computes a 0.0–1.0 safety score per DeSO from crime indicators (75%) and socioeconomic proxies (25%). Each POI category has a `safety_sensitivity` value (0.0–1.5) that controls how much safety context affects its proximity score.
+
+```
+effective_distance = physical_distance × (1.0 + (1.0 - safety_score) × sensitivity)
+```
+
+This means a park 500m away in an unsafe area (safety 0.15) feels much further than the same park in a safe area (safety 0.90). Necessities like grocery (sensitivity 0.3) are barely affected; nightlife (sensitivity 1.5) is strongly affected.
+
 ### Weight Source
 
 Proximity weights are read from the `indicators` table (category = `proximity`) and cached for 5 minutes. The `ProximityResult` DTO uses defaults if no DB weights exist.

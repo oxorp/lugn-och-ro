@@ -8,7 +8,7 @@
 
 All admin pages share a common layout with:
 - **Header**: Back-to-map link and "Admin" breadcrumb
-- **Tab navigation**: Indicators, Pipeline, Data Quality (with active state highlighting)
+- **Tab navigation**: Indicators, POI Categories, Pipeline, Data Quality (with active state highlighting)
 - **Max width**: 3000px for wide-screen indicator tables
 
 ## Indicator Management
@@ -62,21 +62,42 @@ Pencil icon opens a dialog to edit:
 
 Top-right button triggers `POST /admin/recompute-scores` to re-normalize and recompute all scores.
 
-## POI Categories Table
+## POI Categories Dashboard
 
-Below the indicator table. Each POI category row shows:
+**Page**: `resources/js/pages/admin/poi-categories.tsx`
+**Route**: `/admin/poi-categories`
+**Controller**: `AdminPoiCategoryController`
 
-| Column | Description |
-|---|---|
-| Name | Category name with color dot |
-| Slug | Technical identifier |
-| Signal | positive / negative / neutral |
-| Group | Category group |
-| Tier | Display zoom tier (1-5, where 1 = zoom 8+, 5 = zoom 16+) |
-| POIs | Count of ingested POIs |
-| Indicator | Linked indicator slug (if any) |
-| Scoring | Toggle: include in score computation |
-| Map | Toggle: show on map |
+A dedicated admin page for managing POI categories and their safety sensitivity settings.
+
+### Category Table
+
+Each POI category row shows:
+
+| Column | Type | Description |
+|---|---|---|
+| Name | Text + color dot | Category name |
+| Slug | Code | Technical identifier |
+| Signal | Badge | positive (green) / negative (red) / neutral (gray) |
+| Safety Sensitivity | Number input | 0.0–1.5 modulation strength |
+| Catchment | Text | Radius in km |
+| POIs | Count | Active POI count for this category |
+| Active | Toggle | Enable/disable category |
+
+Changes save via `PUT /admin/poi-categories/{id}/safety`.
+
+### Safety Modulation Preview
+
+Two example panels show the effect of safety sensitivity at 500m physical distance:
+
+1. **Safe area** (safety = 0.90) — Shows effective distances (close to physical)
+2. **Unsafe area** (safety = 0.15) — Shows inflated effective distances
+
+This helps admins understand the impact of sensitivity values before saving.
+
+### POI Categories on Indicators Page
+
+The indicators admin page also shows a simplified POI category table below the indicator table with: name, slug, signal, group, tier, POI count, linked indicator, scoring toggle, map toggle.
 
 ## Data Quality Dashboard
 

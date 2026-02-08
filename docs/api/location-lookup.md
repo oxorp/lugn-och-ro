@@ -76,6 +76,8 @@ Full response with proximity breakdown, indicators, schools, and POIs:
   "tier": 3,
   "proximity": {
     "composite": 66.1,
+    "safety_score": 0.82,
+    "safety_zone": { "level": "high", "label": "Hög" },
     "factors": [
       {
         "slug": "prox_school",
@@ -84,6 +86,7 @@ Full response with proximity breakdown, indicators, schools, and POIs:
           "nearest_school": "Stockholms grundskola",
           "nearest_merit": 245.0,
           "nearest_distance_m": 320,
+          "effective_distance_m": 378,
           "schools_within_2km": 4
         }
       },
@@ -92,7 +95,8 @@ Full response with proximity breakdown, indicators, schools, and POIs:
         "score": 92,
         "details": {
           "nearest_park": "Humlegården",
-          "distance_m": 80
+          "distance_m": 80,
+          "effective_distance_m": 94
         }
       }
     ]
@@ -150,14 +154,24 @@ $blendedScore = $areaScore * 0.70 + $proximityScore * 0.30;
 
 If no area score exists (rare), a default of 50 is used.
 
+## Safety Modulation
+
+The proximity response includes safety context:
+
+- `safety_score` — 0.0 (worst) to 1.0 (safest), from `SafetyScoreService`
+- `safety_zone` — `{ level: "high"|"medium"|"low", label: "Hög"|"Medel"|"Låg" }`
+- Factor details include `effective_distance_m` — physical distance inflated by safety risk
+
+In unsafe areas, effective distances are larger than physical distances, reducing proximity scores for safety-sensitive categories (parks, restaurants, nightlife). Necessities (grocery, healthcare) are less affected.
+
 ## Proximity Factors
 
 | Factor | Radius | Key Data |
 |---|---|---|
-| `prox_school` | 2 km | School name, merit value, distance, count |
-| `prox_green_space` | 1 km | Park name, distance |
-| `prox_transit` | 1 km | Stop name, type (bus/tram/rail), distance, count |
-| `prox_grocery` | 1 km | Store name, distance |
+| `prox_school` | 2 km | School name, merit value, distance, effective distance, count |
+| `prox_green_space` | 1 km | Park name, distance, effective distance |
+| `prox_transit` | 1 km | Stop name, type (bus/tram/rail), distance, effective distance, count |
+| `prox_grocery` | 1 km | Store name, distance, effective distance |
 | `prox_negative_poi` | 500 m | Count of negative POIs, nearest name and distance |
 | `prox_positive_poi` | 1 km | Count and category types |
 
