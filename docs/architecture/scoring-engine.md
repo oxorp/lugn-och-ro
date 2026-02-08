@@ -146,13 +146,29 @@ This rebalancing is handled by `ProximityIndicatorSeeder`.
 
 ## Score Interpretation
 
-| Score Range | Swedish Label | English Label |
+Labels and colors are defined in `config/score_colors.php` and read by both backend (`LocationController::scoreLabel()`) and frontend (`score-colors.ts`).
+
+| Score Range | Swedish Label | English Label | Color |
+|---|---|---|---|
+| 80–100 | Starkt tillväxtområde | Strong Growth Area | `#1a7a2e` |
+| 60–79 | Stabil / positiv utsikt | Stable / Positive Outlook | `#27ae60` |
+| 40–59 | Blandade signaler | Mixed Signals | `#f1c40f` |
+| 20–39 | Förhöjd risk | Elevated Risk | `#e74c3c` |
+| 0–19 | Hög risk / vikande | High Risk / Declining | `#c0392b` |
+
+### Color Scale
+
+Red-to-green gradient with 7 stops, used across heatmap tiles, sidebar score badges, indicator bars, school markers, and the map legend:
+
+| Score | Color | Hex |
 |---|---|---|
-| 80–100 | Starkt tillväxtområde | Strong Growth Area |
-| 60–79 | Stabilt / Positivt | Stable / Positive |
-| 40–59 | Blandat | Mixed Signals |
-| 20–39 | Förhöjd risk | Elevated Risk |
-| 0–19 | Hög risk | High Risk |
+| 0 | Deep red | `#c0392b` |
+| 25 | Red | `#e74c3c` |
+| 40 | Amber | `#f39c12` |
+| 50 | Yellow | `#f1c40f` |
+| 60 | Yellow | `#f1c40f` |
+| 75 | Green | `#27ae60` |
+| 100 | Deep green | `#1a7a2e` |
 
 ## Multi-Tenancy
 

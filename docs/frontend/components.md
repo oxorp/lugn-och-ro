@@ -21,16 +21,46 @@ Defined within `deso-map.tsx`:
 | `ScoreLegend` | Bottom-left gradient bar (red to green) |
 | `BasemapControl` | Top-right basemap switcher (Clean / Detailed / Satellite) |
 
-## Sidebar Sub-Components
+## Explore Module (`pages/explore/`)
 
-Defined within `map.tsx`:
+The main map page was refactored from a monolithic `map.tsx` into a modular directory:
 
-| Component | Purpose |
+### Components
+
+| Component | File | Purpose |
+|---|---|---|
+| `MapPage` | `explore/map-page.tsx` | Root page — map + sidebar layout, pin state management |
+| `ActiveSidebar` | `explore/components/active-sidebar.tsx` | Full location detail (score, proximity, indicators, schools, POIs) |
+| `DefaultSidebar` | `explore/components/default-sidebar.tsx` | Welcome state with search prompt |
+| `ScoreCard` | `explore/components/score-card.tsx` | Large composite score badge with trend and breakdown |
+| `IndicatorBar` | `explore/components/indicator-bar.tsx` | Individual indicator percentile bar with raw value |
+| `ProximityFactorRow` | `explore/components/proximity-factor-row.tsx` | Individual proximity factor bar with icon and details |
+| `LockedPreviewContent` | `explore/components/locked-preview.tsx` | Free tier teaser with sample indicators and CTA |
+| `CTASummary` | `explore/components/locked-preview.tsx` | Data point count summary + unlock button |
+| `StickyUnlockBar` | `explore/components/locked-preview.tsx` | Sticky bottom bar that appears on scroll |
+
+### Hooks
+
+| Hook | File | Purpose |
+|---|---|---|
+| `useLocationData` | `explore/hooks/use-location-data.ts` | Pin state, API fetch, reverse geocoding, map sync |
+| `useScoreLabel` | `explore/hooks/use-score-label.ts` | Map score → Swedish label |
+| `useUrlPin` | `explore/hooks/use-url-pin.ts` | Restore pin from `/explore/{lat},{lng}` URL on mount |
+
+### Supporting Files
+
+| File | Purpose |
 |---|---|
-| `DefaultSidebar` | Empty state with search suggestions |
-| `ActiveSidebar` | Full location detail (score, proximity, indicators, schools, POIs) |
-| `ProximityFactorRow` | Individual proximity factor bar with icon and details |
-| `IndicatorBar` | Individual indicator percentile bar with raw value |
+| `explore/types.ts` | TypeScript interfaces: LocationData, PreviewData, ProximityData |
+| `explore/constants.ts` | Proximity factor config (icons, i18n keys, detail field names) |
+| `explore/utils.ts` | formatIndicatorValue, formatDistance, scoreBgStyle |
+
+## Shared Scoring Components
+
+| Component | File | Purpose |
+|---|---|---|
+| `PercentileBadge` | `components/percentile-badge.tsx` | Colored score badge with direction-aware tooltip |
+| `PercentileBar` | `components/percentile-bar.tsx` | Horizontal bar with score-colored fill |
 
 ## Layout Components
 
@@ -60,28 +90,38 @@ Located in `components/ui/`. Standard shadcn/ui components used throughout:
 |---|---|---|
 | `useTranslation` | `hooks/use-translation.ts` | i18n with Swedish/English support |
 | `usePoiLayer` | `hooks/use-poi-layer.ts` | POI data fetching and map layer management |
+| `useScoreColors` | `hooks/use-score-colors.ts` | Access to score color utilities |
+| `useLocationData` | `pages/explore/hooks/use-location-data.ts` | Pin state, API fetch, reverse geocoding |
+| `useScoreLabel` | `pages/explore/hooks/use-score-label.ts` | Map score → Swedish label |
+| `useUrlPin` | `pages/explore/hooks/use-url-pin.ts` | Restore pin from URL on mount |
 
 ## Utilities
 
 | File | Purpose |
 |---|---|
-| `lib/poi-icons.ts` | Generates SVG data URLs for POI marker pins with Lucide icons |
+| `lib/score-colors.ts` | Score → color interpolation, merit colors, indicator bar colors, CSS gradients |
+| `lib/poi-icons.ts` | Generates SVG data URLs for POI marker pins |
+| `icons.ts` | Centralized icon imports and mapping |
 | `services/geocoding.ts` | Address search client with zoom-level mapping per result type |
 
 ## Pages
 
 | Page | Route | Purpose |
 |---|---|---|
-| `map.tsx` | `/` | Main map interface with pin-drop scoring |
-| `map.tsx` | `/explore/{lat},{lng}` | Deep-link to scored location |
-| `dashboard.tsx` | `/dashboard` | User dashboard |
+| `explore/map-page.tsx` | `/`, `/explore/{lat},{lng}` | Main map interface with pin-drop scoring |
+| `purchase/flow.tsx` | `/purchase/{lat},{lng}` | Stripe checkout flow for report purchase |
+| `purchase/processing.tsx` | `/purchase/success` | Payment processing/polling page |
+| `reports/show.tsx` | `/reports/{uuid}` | View completed report |
+| `reports/my-reports.tsx` | `/my-reports` | List of purchased reports |
+| `reports/request-access.tsx` | `/my-reports` (no auth) | Email access request for guest reports |
+| `auth/register.tsx` | `/register` | Registration page |
+| `auth/login.tsx` | `/login` | Login page |
 | `methodology.tsx` | `/methodology` | Public methodology explanation |
 | `admin/indicators.tsx` | `/admin/indicators` | Indicator management |
 | `admin/poi-categories.tsx` | `/admin/poi-categories` | POI category & safety sensitivity management |
 | `admin/data-quality.tsx` | `/admin/data-quality` | Data quality dashboard |
 | `admin/pipeline.tsx` | `/admin/pipeline` | Pipeline overview |
 | `admin/pipeline-source.tsx` | `/admin/pipeline/{source}` | Source detail |
-| `auth/login.tsx` | `/login` | Login page |
 | `settings/profile.tsx` | `/settings/profile` | Profile settings |
 | `settings/password.tsx` | `/settings/password` | Password change |
 | `settings/appearance.tsx` | `/settings/appearance` | Theme settings |

@@ -36,6 +36,27 @@ API endpoints are defined in `routes/web.php` (not `routes/api.php`). They use J
 | GET | `/api/deso/{code}/pois` | POIs near a DeSO | Yes |
 | GET | `/api/deso/{code}/indicators` | All indicator values for a DeSO | Yes |
 
+### Purchase & Reports
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/purchase/{lat},{lng}` | Purchase flow page |
+| POST | `/purchase/checkout` | Create Stripe Checkout session |
+| GET | `/purchase/success?session_id=...` | Post-payment processing page |
+| GET | `/purchase/cancel?session_id=...` | Cancelled payment redirect |
+| GET | `/purchase/status/{sessionId}` | Poll payment status (JSON) |
+| POST | `/stripe/webhook` | Stripe webhook (CSRF excluded) |
+| GET | `/reports/{uuid}` | View completed report |
+| GET | `/my-reports` | List purchased reports |
+| POST | `/my-reports/request-access` | Request guest report access link |
+
+### Authentication
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/auth/google` | Google OAuth redirect |
+| GET | `/auth/google/callback` | Google OAuth callback |
+
 ### Admin Endpoints (requires auth + admin role)
 
 | Method | Path | Description |
@@ -56,10 +77,10 @@ All tiered endpoints use the `DataTieringService` to control data granularity:
 
 | Tier | Value | Access |
 |---|---|---|
-| Public | 0 | Score only, no details |
-| FreeAccount | 1 | Band-level data (high/medium/low) |
-| Unlocked | 2 | Approximate values |
-| Subscriber | 3 | Exact values + historical data |
+| Public | 0 | Composite score + 8 free preview indicators + category stats |
+| FreeAccount | 1 | Same as Public + report purchase enabled |
+| Unlocked | 2 | Full breakdown (purchased report) |
+| Subscriber | 3 | Exact values + historical data for all locations |
 | Enterprise | 4 | Full data + API access |
 | Admin | 99 | Everything + debug info |
 

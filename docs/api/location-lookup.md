@@ -33,7 +33,7 @@ Example: `GET /api/location/59.3293,18.0686`
 
 ### Public Tier (tier = 0)
 
-Returns location and score only, no detailed breakdowns:
+Returns location, score, and a `preview` object with free indicators grouped by category:
 
 ```json
 {
@@ -51,13 +51,35 @@ Returns location and score only, no detailed breakdowns:
     "area_score": 75.0,
     "proximity_score": 66.1,
     "trend_1y": 1.2,
-    "label": "Stabilt / Positivt",
+    "label": "Stabil / positiv utsikt",
     "top_positive": ["median_income", "school_merit_value_avg"],
     "top_negative": ["crime_violent_rate"],
     "factor_scores": { "income": 0.82, "crime": 0.45 }
   },
   "tier": 0,
   "display_radius": 1500,
+  "preview": {
+    "data_point_count": 142,
+    "source_count": 5,
+    "sources": ["scb", "skolverket", "bra", "kolada", "osm"],
+    "categories": [
+      {
+        "slug": "safety",
+        "label": "Trygghet & brottslighet",
+        "icon": "shield-halved",
+        "stat_line": "Vi analyserade 65 utsatta områden...",
+        "indicator_count": 6,
+        "locked_count": 4,
+        "free_indicators": [
+          { "slug": "perceived_safety", "name": "Upplevd trygghet", "raw_value": 72.3, "percentile": 68, "unit": "%", "direction": "positive" },
+          { "slug": "crime_violent_rate", "name": "Våldsbrott", "raw_value": 8.2, "percentile": 35, "unit": "per_100k", "direction": "negative" }
+        ],
+        "has_data": true
+      }
+    ],
+    "nearby_school_count": 4,
+    "cta_summary": { "indicator_count": 27, "insight_count": 8, "poi_count": 23 }
+  },
   "proximity": null,
   "indicators": [],
   "schools": [],

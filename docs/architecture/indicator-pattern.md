@@ -20,7 +20,8 @@ An indicator has these properties:
 | `normalization` | How to normalize | `rank_percentile` |
 | `normalization_scope` | Rank against which peers | `national`, `urbanity_stratified` |
 | `unit` | Measurement unit | `SEK`, `%`, `per_100k` |
-| `category` | Grouping for display | `income`, `crime`, `education` |
+| `category` | Grouping for display | `safety`, `economy`, `education` |
+| `is_free_preview` | Shown to free tier users | `true` (8 indicators) |
 
 ## How It Works
 
@@ -82,19 +83,39 @@ No changes needed to the normalization or scoring services — they read indicat
 
 ## Indicator Categories
 
-There are two classes of indicators:
+Indicators are organized into 6 display categories defined in `config/indicator_categories.php`. Each category has a weight budget, icon, and list of member indicators.
+
+### Display Categories
+
+| Category | Label | Weight Budget | Score Layer | Indicators |
+|---|---|---|---|---|
+| `safety` | Trygghet & brottslighet | 25% | Area | 8 (crime rates, vulnerability, perceived safety, negative POI densities) |
+| `economy` | Ekonomi & arbetsmarknad | 20% | Area | 6 (income, employment, debt, economic standard) |
+| `education` | Utbildning & skolor | 15% | Area | 5 (education levels, school quality metrics) |
+| `environment` | Miljö & service | 10% | Area | 5 (grocery, healthcare, restaurant, fitness, transit density) |
+| `proximity` | Platsanalys | 30% | Proximity | 6 (pin-level distance factors) |
+| `contextual` | — | 0% | — | 3 (internal only, not displayed) |
 
 ### Area-Level Indicators
 
-Stored in `indicator_values` per DeSO, normalized via percentile rank, and used in the batch-computed area score (70% of blended score).
-
-Categories: `income`, `employment`, `education`, `demographics`, `housing`, `crime`, `safety`, `financial_distress`, `amenities`, `transport`.
+Stored in `indicator_values` per DeSO, normalized via percentile rank, and used in the batch-computed area score (70% of blended score). Categories: `safety`, `economy`, `education`, `environment`.
 
 ### Proximity Indicators
 
 **Not** stored in `indicator_values`. Computed in real-time per coordinate by `ProximityScoreService`. Category = `proximity`, normalization = `none`.
 
 These are registered in the `indicators` table primarily so their weights can be managed through the admin UI. The `ProximityResult` DTO reads weights from the DB (cached 5 min).
+
+### Free Preview Indicators
+
+8 indicators are marked with `is_free_preview = true` (2 per display category) and shown to unauthenticated users with actual values:
+
+| Category | Free Indicators |
+|---|---|
+| Safety | `perceived_safety`, `crime_violent_rate` |
+| Economy | `median_income`, `employment_rate` |
+| Education | `school_merit_value_avg`, `school_teacher_certification_avg` |
+| Environment | `grocery_density`, `transit_stop_density` |
 
 | Slug | Name | Direction | Weight |
 |---|---|---|---|

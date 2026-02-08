@@ -101,7 +101,7 @@ Red-to-green gradient defined in `config/score_colors.php`, consistent across he
 
 ## Imperative Handle
 
-The parent `map.tsx` page controls the map via ref:
+The parent `explore/map-page.tsx` controls the map via ref:
 
 | Method | Purpose |
 |---|---|

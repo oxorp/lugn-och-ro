@@ -72,7 +72,8 @@ Master table defining all scoring indicators.
 | `normalization_scope` | varchar | `national` or `urbanity_stratified` |
 | `is_active` | boolean | Whether included in scoring |
 | `display_order` | integer | UI display ordering |
-| `category` | varchar | Grouping category |
+| `category` | varchar | Display category (`safety`, `economy`, `education`, `environment`, `proximity`, `contextual`) |
+| `is_free_preview` | boolean | Shown to free tier users (8 indicators) |
 | `description_short` | text | Brief explanation for users |
 | `description_long` | text | Detailed explanation (tier 2+) |
 | `methodology_note` | text | How the value is computed |
@@ -279,6 +280,31 @@ Category definitions for POI types.
 | `category_group` | varchar | Grouping for UI |
 | `is_active` | boolean | Whether active |
 | `show_on_map` | boolean | Whether shown on map layer |
+
+## Reports & Purchases
+
+### `reports`
+
+Paid neighborhood report purchases, linked to a specific coordinate.
+
+| Column | Type | Description |
+|---|---|---|
+| `uuid` | uuid, unique | Public identifier for URLs |
+| `user_id` | bigint (FK, nullable) | References users (null for guest) |
+| `guest_email` | varchar, nullable | Email for guest purchases |
+| `lat` / `lng` | decimal(10,7) | Report coordinates |
+| `address` | varchar, nullable | Reverse-geocoded address |
+| `kommun_name` | varchar, nullable | Municipality name |
+| `lan_name` | varchar, nullable | County name |
+| `deso_code` | varchar, nullable | DeSO area code |
+| `score` | decimal(5,2), nullable | Composite score at time of purchase |
+| `score_label` | varchar, nullable | Human-readable score label |
+| `stripe_session_id` | varchar, nullable | Stripe Checkout session ID |
+| `stripe_payment_intent_id` | varchar, nullable | Stripe PaymentIntent ID |
+| `amount_ore` | integer | Price in Swedish öre (7900 = 79 SEK) |
+| `currency` | varchar | Currency code (`sek`) |
+| `status` | varchar | `pending`, `completed`, `expired` |
+| `view_count` | integer | Number of times report was viewed |
 
 ## Multi-Tenancy Tables
 

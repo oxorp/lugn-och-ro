@@ -16,6 +16,17 @@ Proximity indicators are fundamentally different from area-level indicators:
 
 Two addresses in the same DeSO can have different proximity scores based on what's walkable from each location.
 
+### POI Dual Roles
+
+POIs serve two distinct roles in the scoring system — no double counting:
+
+| Role | Layer | Computed | Example |
+|---|---|---|---|
+| **Role A — Area Density** | Area score (70%) | Batch per DeSO | "This DeSO has 15.1 restaurants per km²" |
+| **Role B — Pin Proximity** | Proximity score (30%) | Real-time per coordinate | "The nearest grocery is 340m from your pin" |
+
+Area density measures neighborhood character; pin proximity measures personal convenience. They contribute to separate score layers with independent weight budgets.
+
 ## Services
 
 **`ProximityScoreService`** (`app/Services/ProximityScoreService.php`) — Computes 6 proximity factors for any `(lat, lng)` coordinate using PostGIS spatial queries, with safety-modulated distance decay.
@@ -125,7 +136,7 @@ The visual circle drawn on the map around the pin:
 **Weight**: 0.10 | **Direction**: positive
 **Radius**: 1,500 m (urban) / 2,000 m (semi-urban) / 3,500 m (rural)
 
-Finds up to 5 grundskolor within the tier-appropriate radius and scores the best school by quality × safety-modulated distance decay.
+Finds up to 10 grundskolor within the tier-appropriate radius and scores the best school by quality × safety-modulated distance decay. Returns a rich per-school detail array for report generation.
 
 **Scoring**:
 ```
@@ -137,8 +148,9 @@ score = quality × decay × 100                                     # 0-100
 - If no schools have merit data, half credit (50 × decay) is given for proximity alone
 - Only grundskolor are considered (ILIKE `'%grundskola%'`)
 - Safety sensitivity: 0.80 (from `school_grundskola` category)
+- **Fallback**: If no schools within radius, a secondary query finds the absolute nearest grundskola regardless of distance and returns it with score 0
 
-**Details returned**: nearest school name, merit value, distance, effective distance, schools found
+**Details returned**: nearest school name, merit value, distance, effective distance, schools found, plus a `schools` array with per-school data (name, type, operator, distance, merit_value, goal_achievement, teacher_certification, student_count)
 
 ### `prox_green_space` — Green Space Access
 

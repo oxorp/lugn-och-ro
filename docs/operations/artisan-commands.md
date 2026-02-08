@@ -426,6 +426,18 @@ php artisan generate:heatmap-tiles --year=2025 --zoom-min=5 --zoom-max=12
 
 Wraps the Python script `scripts/generate_heatmap_tiles.py`. Reads H3 scores from database, renders colored hexagons with Gaussian blur, and saves as XYZ tiles to `storage/app/public/tiles/{year}/`. Requires Python 3 with `h3`, `numpy`, `Pillow`, and `psycopg2` packages. Timeout: 30 minutes.
 
+## Maintenance
+
+### `purchase:cleanup`
+
+Expire abandoned checkout sessions.
+
+```bash
+php artisan purchase:cleanup
+```
+
+Updates `reports` with `status = 'pending'` and `created_at > 2 hours ago` to `expired`. Typically scheduled daily via `routes/console.php`.
+
 ## Related
 
 - [Data Refresh](/operations/data-refresh)

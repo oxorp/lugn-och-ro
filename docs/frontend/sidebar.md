@@ -4,35 +4,48 @@
 
 ## Overview
 
-**File**: `resources/js/pages/map.tsx`
+**Directory**: `resources/js/pages/explore/`
 
 The sidebar is a 360px right panel on the map page. It has two states:
 
-1. **Default state** — Prompt to search or click the map, with suggested addresses
-2. **Active state** — Full location detail after a pin drop
+1. **Default state** (`DefaultSidebar`) — Prompt to search or click the map
+2. **Active state** (`ActiveSidebar`) — Full location detail after a pin drop, with tier-based content
 
 ## Default Sidebar
 
+**File**: `explore/components/default-sidebar.tsx`
+
 Shown when no pin is active. Contains:
 
-- MapPin icon and title ("Explore any address")
-- Subtitle explaining pin-drop or search
-- Three suggestion buttons (e.g., "Try: Sveavägen, Stockholm") that pre-fill the search bar
-- Legend hint text
+- Location icon and welcome message
+- Embedded `MapSearch` component for geocoding
+- Instruction to search or click the map
 
 ## Active Sidebar
 
-Shown after a pin drop or search result selection. Fetches data from `GET /api/location/{lat},{lng}`.
+**File**: `explore/components/active-sidebar.tsx`
 
-### Sections (top to bottom)
+Shown after a pin drop or search result selection. Fetches data via `useLocationData` hook from `GET /api/location/{lat},{lng}`.
 
-1. **Location header** — Reverse-geocoded address name (via Photon/Komoot), kommun, close button
-2. **Blended score card** — Large colored score badge (0–100), trend arrow, score label
-3. **Score breakdown** — Area score vs proximity score as sub-values
-4. **Proximity Analysis** — Safety zone badge + per-factor bars with icons (paid tiers only)
-5. **Indicator Breakdown** — All area-level indicators with percentile bars (paid tiers only)
-6. **Schools** — Nearby schools within urbanity-tiered radius (1.5–3.5 km) with merit values and distance (paid tiers only)
-7. **POIs** — Nearby POI counts by category with color dots, urbanity-tiered radius (1–2.5 km) (paid tiers only)
+### Sections — Free Tier (tier = 0)
+
+1. **Location header** — Reverse-geocoded address (via Photon/Komoot), kommun, close button
+2. **Score card** (`ScoreCard`) — Large colored badge, trend arrow, score label, area/proximity breakdown
+3. **Locked preview** (`LockedPreviewContent`) — Category sections with free sample indicators:
+   - Each category shows icon, label, stat line, and 2 free indicators with actual percentile values
+   - Remaining indicators shown as locked count ("+ N indikatorer i rapporten")
+   - School skeleton cards (blurred placeholders)
+   - CTA summary with data point count + "Lås upp fullständig rapport" (79 kr) button → `/purchase/{lat},{lng}`
+4. **Sticky unlock bar** (`StickyUnlockBar`) — Appears when CTA scrolls out of view
+
+### Sections — Paid Tiers (tier >= 1)
+
+1. **Location header** — Same as above
+2. **Score card** — Same as above
+3. **Proximity Analysis** — Safety zone badge + per-factor bars with icons (`ProximityFactorRow`)
+4. **Indicator Breakdown** — All area-level indicators with percentile bars (`IndicatorBar` + `PercentileBadge`)
+5. **Schools** — Nearby schools within urbanity-tiered radius (1.5–3.5 km) with merit values and distance
+6. **POIs** — Nearby POI counts by category with color dots, urbanity-tiered radius (1–2.5 km)
 
 ### Score Card
 
@@ -53,13 +66,15 @@ The main score card shows:
 
 ### Score Labels
 
+Defined in `config/score_colors.php`:
+
 | Score Range | Swedish | English |
 |---|---|---|
 | 80–100 | Starkt tillväxtområde | Strong Growth Area |
-| 60–79 | Stabilt / Positivt | Stable / Positive |
-| 40–59 | Blandat | Mixed Signals |
+| 60–79 | Stabil / positiv utsikt | Stable / Positive Outlook |
+| 40–59 | Blandade signaler | Mixed Signals |
 | 20–39 | Förhöjd risk | Elevated Risk |
-| 0–19 | Hög risk | High Risk |
+| 0–19 | Hög risk / vikande | High Risk / Declining |
 
 ### Proximity Factors
 
@@ -101,12 +116,12 @@ Each indicator shows:
 
 ### Tier Gating
 
-| Tier | Score | Proximity | Indicators | Schools | POIs |
-|---|---|---|---|---|---|
-| Public (0) | Blended only | Hidden | Hidden | Hidden | Hidden |
-| Paid (1+) | Full breakdown | Shown | Shown | Shown | Shown |
+| Tier | Score | Preview | Proximity | Indicators | Schools | POIs |
+|---|---|---|---|---|---|---|
+| Free (0) | Full score | Category previews + CTA | Hidden | 8 free samples | Skeleton | Hidden |
+| Paid (1+) | Full breakdown | — | Shown | All shown | Shown | Shown |
 
-Public tier shows a CTA card with login/upgrade prompt instead of detail sections.
+Free tier shows `LockedPreviewContent` with real indicator values for 8 free-preview indicators grouped by category, plus locked counts and a purchase CTA (79 SEK one-time).
 
 ## Explore URL
 
