@@ -95,34 +95,25 @@ interface ExplanationForm {
 }
 
 const CATEGORY_ORDER = [
-    'income', 'employment', 'education', 'demographics', 'housing',
-    'crime', 'safety', 'financial_distress', 'amenities', 'transport',
+    'safety', 'economy', 'education', 'environment', 'proximity', 'contextual',
 ];
 
 const CATEGORY_COLORS: Record<string, string> = {
-    income: 'bg-emerald-100 text-emerald-800',
-    employment: 'bg-blue-100 text-blue-800',
+    safety: 'bg-red-100 text-red-800',
+    economy: 'bg-emerald-100 text-emerald-800',
     education: 'bg-purple-100 text-purple-800',
-    demographics: 'bg-amber-100 text-amber-800',
-    housing: 'bg-rose-100 text-rose-800',
-    crime: 'bg-red-100 text-red-800',
-    safety: 'bg-teal-100 text-teal-800',
-    financial_distress: 'bg-orange-100 text-orange-800',
-    amenities: 'bg-cyan-100 text-cyan-800',
-    transport: 'bg-indigo-100 text-indigo-800',
+    environment: 'bg-cyan-100 text-cyan-800',
+    proximity: 'bg-blue-100 text-blue-800',
+    contextual: 'bg-gray-100 text-gray-800',
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
-    income: 'Income',
-    employment: 'Employment',
-    education: 'Education',
-    demographics: 'Demographics',
-    housing: 'Housing',
-    crime: 'Crime',
-    safety: 'Safety',
-    financial_distress: 'Financial Distress',
-    amenities: 'Amenities',
-    transport: 'Transport',
+    safety: 'Trygghet & brottslighet',
+    economy: 'Ekonomi & arbetsmarknad',
+    education: 'Utbildning & skolor',
+    environment: 'Milj\u00f6 & service',
+    proximity: 'Platsanalys',
+    contextual: 'Kontextuell (ej visad)',
 };
 
 const TIER_LABELS: Record<number, string> = {

@@ -405,10 +405,10 @@ class LocationControllerTest extends TestCase
 
         // Verify categories structure
         $categories = $response->json('preview.categories');
-        $this->assertCount(4, $categories);
+        $this->assertCount(5, $categories);
 
         $categorySlugs = array_column($categories, 'slug');
-        $this->assertEquals(['safety', 'economy', 'education', 'proximity'], $categorySlugs);
+        $this->assertEquals(['safety', 'economy', 'education', 'environment', 'proximity'], $categorySlugs);
 
         // Each category must have required fields
         foreach ($categories as $cat) {

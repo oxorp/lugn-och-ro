@@ -3,7 +3,7 @@ import { PercentileBadge } from '@/components/percentile-badge';
 import { PercentileBar } from '@/components/percentile-bar';
 import { Button } from '@/components/ui/button';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faChartColumn, faGraduationCap, faLocationDot, faLock, faShieldHalved } from '@/icons';
+import { faChartColumn, faGraduationCap, faLocationDot, faLock, faShieldHalved, faTree } from '@/icons';
 import { useTranslation } from '@/hooks/use-translation';
 
 import type {
@@ -67,6 +67,7 @@ const CATEGORY_ICONS: Record<string, import('@fortawesome/fontawesome-svg-core')
     'shield-halved': faShieldHalved,
     'chart-column': faChartColumn,
     'graduation-cap': faGraduationCap,
+    'tree': faTree,
     'location-dot': faLocationDot,
 };
 

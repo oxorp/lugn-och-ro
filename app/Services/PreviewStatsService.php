@@ -20,6 +20,7 @@ class PreviewStatsService
                 'safety' => $this->safetyStats(),
                 'economy' => $this->economyStats(),
                 'education' => $this->educationStats(),
+                'environment' => $this->environmentStats(),
             ];
         });
     }
@@ -98,6 +99,23 @@ class PreviewStatsService
 
         return [
             'stat_line' => 'Skolanalys baserad på '.number_format($schoolCount, 0, ',', "\u{00A0}").' skolor med meritvärden, måluppfyllelse och lärarbehörighet.',
+            'indicator_count' => $indicatorCount,
+        ];
+    }
+
+    /**
+     * @return array{stat_line: string, indicator_count: int}
+     */
+    private function environmentStats(): array
+    {
+        $poiCount = (int) DB::table('pois')
+            ->where('status', 'active')
+            ->count();
+
+        $indicatorCount = $this->countActiveIndicators('environment');
+
+        return [
+            'stat_line' => 'Baserat på '.number_format($poiCount, 0, ',', "\u{00A0}").' kartlagda servicepunkter.',
             'indicator_count' => $indicatorCount,
         ];
     }

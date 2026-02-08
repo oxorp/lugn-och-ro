@@ -9,6 +9,26 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * Pin-level proximity scoring (Role B).
+ *
+ * POIs serve two distinct roles in the scoring system:
+ *
+ * Role A — Area Density Indicators (DeSO-level):
+ *   "This DeSO has 15.1 restaurants per km²" → stored as indicator_values
+ *   (e.g. grocery_density, transit_stop_density). Pre-computed per DeSO via
+ *   aggregate:poi-indicators. Same value for all pins in a DeSO. Feeds the
+ *   Area Score (70% of composite).
+ *
+ * Role B — Proximity Scores (Pin-level, THIS service):
+ *   "The nearest grocery store is 340m from your pin" → computed on-the-fly
+ *   per coordinate via PostGIS distance queries. Different for every address,
+ *   even within the same DeSO. Feeds the Proximity Score (30% of composite).
+ *
+ * No double counting: area density and pin proximity measure different things
+ * (neighborhood character vs. personal convenience) and contribute to separate
+ * score layers with independent weight budgets.
+ */
 class ProximityScoreService
 {
     public function __construct(
@@ -102,8 +122,9 @@ class ProximityScoreService
         $sensitivity = (float) ($settings->get('school_grundskola')?->safety_sensitivity ?? 0.80);
 
         $schools = DB::select("
-            SELECT s.name, s.school_unit_code,
-                   ss.merit_value_17,
+            SELECT s.name, s.school_unit_code, s.type_of_schooling, s.operator_type,
+                   ss.merit_value_17, ss.goal_achievement_pct,
+                   ss.teacher_certification_pct, ss.student_count,
                    ST_Distance(
                        s.geom::geography,
                        ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography
@@ -123,14 +144,43 @@ class ProximityScoreService
                   ?
               )
             ORDER BY distance_m
-            LIMIT 5
+            LIMIT 10
         ", [$lng, $lat, $lng, $lat, $maxDistance]);
 
+        // Build per-school detail array for reports (includes schools from neighboring DeSOs)
+        $schoolDetails = collect($schools)->map(fn ($s) => [
+            'name' => $s->name,
+            'type' => $s->type_of_schooling,
+            'operator' => $s->operator_type,
+            'distance_m' => (int) round($s->distance_m),
+            'merit_value' => $s->merit_value_17 !== null ? (float) $s->merit_value_17 : null,
+            'goal_achievement' => $s->goal_achievement_pct !== null ? (float) $s->goal_achievement_pct : null,
+            'teacher_certification' => $s->teacher_certification_pct !== null ? (float) $s->teacher_certification_pct : null,
+            'student_count' => $s->student_count,
+        ])->values()->all();
+
         if (empty($schools)) {
+            // No schools within radius — find the nearest one regardless
+            $nearest = DB::selectOne("
+                SELECT s.name,
+                       ST_Distance(s.geom::geography, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography) as distance_m
+                FROM schools s
+                WHERE s.status = 'active'
+                  AND s.type_of_schooling ILIKE '%grundskola%'
+                  AND s.geom IS NOT NULL
+                ORDER BY s.geom::geography <-> ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography
+                LIMIT 1
+            ", [$lng, $lat, $lng, $lat]);
+
             return new ProximityFactor(
                 slug: 'prox_school',
                 score: 0,
-                details: ['message' => "No grundskola within {$this->formatDistance($maxDistance)}"],
+                details: [
+                    'message' => "No grundskola within {$this->formatDistance($maxDistance)}",
+                    'nearest_school' => $nearest?->name,
+                    'nearest_distance_m' => $nearest ? (int) round($nearest->distance_m) : null,
+                    'schools' => [],
+                ],
             );
         }
 
@@ -169,6 +219,7 @@ class ProximityScoreService
                     'effective_distance_m' => (int) round($this->effectiveDistance($nearest->distance_m, $safetyScore, $sensitivity)),
                     'schools_found' => count($schools),
                     'merit_data' => $schoolsWithMerit > 0,
+                    'schools' => $schoolDetails,
                 ],
             );
         }
@@ -182,6 +233,7 @@ class ProximityScoreService
                 'nearest_distance_m' => (int) round($bestSchool->distance_m),
                 'effective_distance_m' => (int) round($this->effectiveDistance($bestSchool->distance_m, $safetyScore, $sensitivity)),
                 'schools_found' => count($schools),
+                'schools' => $schoolDetails,
             ],
         );
     }

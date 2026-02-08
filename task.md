@@ -1,515 +1,626 @@
-# TASK: Sidebar Teaser v3 — Free Preview Indicators with Real Values
+# TASK: Indicator Architecture Cleanup — Categories, POI Roles & Per-School Data
 
-## Context
+## The Problems
 
-Follow-up to sidebar teaser v2. The current version shows category headers + anonymous gray bars + data scale stats. It communicates depth but feels sterile — there's nothing to grab onto. The user sees "Trygghet & brottslighet" with three gray lines and thinks "ok" instead of "wait, what?"
+### Problem 1: Category Chaos
 
-The fix: show **two real indicator names with real values** per category, free. Then the remaining indicators stay as gray bars. The free values create tension — partial information that raises questions only the full report answers.
+We have **11 backend categories** (income, employment, education, demographics, housing, crime, safety, financial_distress, amenities, transport, proximity) trying to collapse into **4 display groups** in the sidebar. The math doesn't add up — the sidebar shows "14 indicators" but some categories are orphaned or invisible. Users see a disjointed experience: the admin has 11 groups, the sidebar has 4, and neither tells a clean story.
 
-Example:
-```
-🛡️ TRYGGHET & BROTTSLIGHET
+### Problem 2: POI Double Counting
 
-Upplevd trygghet (NTU)     ▓▓▓▓▓▓▓▓░░  42:a
-Våldsbrott                 ▓▓░░░░░░░░  18:e
-░░░░░░░░░░░░░░░░░░░
-░░░░░░░░░░░░░░
+POIs currently serve two different purposes with no clear boundary:
 
-Trygghetsbetyg baserat på brottsstatistik
-från 290 kommuner och 65 utsatta områden.
-```
+**Role A — Area-level density indicators:** "This DeSO has 15.1 restaurants per km²" → stored as `restaurant_density` in `indicator_values`, feeds the composite area score. Computed per DeSO. 7 indicators (grocery, healthcare, restaurant, fitness, gambling, pawn_shop, fast_food).
 
-"42nd percentile for perceived safety and 18th for violent crime... that's bad. What about property crime? What about the police vulnerability classification? I need to see the rest."
+**Role B — Pin-level proximity scores:** "The nearest grocery store is 340m from your pin" → computed on-the-fly per address. 6 proximity indicators (school, green_space, transit, grocery, negative_poi, positive_poi).
 
-That's the conversion moment. Not a locked door — a cracked-open door.
+The problem: `grocery_density` (Role A) and `prox_grocery` (Role B) both measure "grocery access" but at different scales, with different data, contributing to different scores. When a user buys a report for Sveavägen 42, which one matters? Both? How do they interact? Right now, this is undefined.
 
-## Depends On
+### Problem 3: School Data is DeSO-Aggregated
 
-- Sidebar teaser v2 (completed — category sections with gray bars and stat lines)
-- Indicator values in the database (indicator_values table populated)
+The current school indicators (`school_merit_value_avg`, `school_goal_achievement_avg`, `school_teacher_certification_avg`) average all grundskola statistics within a DeSO. For an address-based report, this is wrong:
+
+- A pin at the edge of a DeSO might be 200m from an excellent school in the NEXT DeSO
+- A large DeSO might contain both a great school and a terrible one — the average hides both
+- "Average merit value in this DeSO: 221" is useless compared to "Årstaskolan (450m): 241, Eriksdalsskolan (1.2km): 198"
+
+Reports need per-school data within a radius, not DeSO averages.
+
+### Problem 4: Proximity Indicators Have Zero Coverage
+
+The admin shows 6 proximity indicators (prox_school, prox_green_space, etc.) all with "0 / 6160" coverage. They're defined but never computed. They were designed for a pin-based system that hasn't landed yet. Meanwhile they show up in indicator counts ("33 indicators") inflating the number without delivering value.
 
 ---
 
-## Step 1: Backend — `is_free_preview` Flag
+## The Solution: Five Clean Categories
 
-### 1.1 Migration
+### New Category Structure
 
-Add a flag to the indicators table:
+Collapse everything into **5 user-facing categories** that match how people think about neighborhoods:
 
-```php
-Schema::table('indicators', function (Blueprint $table) {
-    $table->boolean('is_free_preview')->default(false)->after('is_active');
-});
+| # | Display Category | Swedish | What It Covers | Sources |
+|---|---|---|---|---|
+| 1 | **Safety & Crime** | Trygghet & brottslighet | Crime rates, perceived safety, police vulnerability, negative POI density | BRÅ, Polisen, BRÅ NTU, OSM |
+| 2 | **Economy & Employment** | Ekonomi & arbetsmarknad | Income, employment, debt/financial distress, economic standard | SCB, Kronofogden |
+| 3 | **Education & Schools** | Utbildning & skolor | School quality (per-school, not DeSO average), education levels in population | Skolverket, SCB |
+| 4 | **Environment & Services** | Miljö & service | Green space, amenities, healthcare, grocery, restaurant/café density, transport, positive POI | OSM, GTFS, Trafiklab |
+| 5 | **Proximity** | Platsanalys | Pin-specific: nearest school + distance, transit access, grocery access, green space access | Computed per address |
+
+### Key Design Decisions
+
+**Categories 1-4 are area-level.** They describe the DeSO/neighborhood. They feed the Area Score (70% of composite). They're pre-computed and cached. They're the same for everyone standing anywhere in the same DeSO.
+
+**Category 5 is pin-level.** It describes THIS specific address. It feeds the Proximity Score (30% of composite). It's computed on-the-fly per pin drop. It changes every 100 meters.
+
+**This maps to the two-layer scoring model:**
+```
+Area Score (70%) = f(Safety, Economy, Education, Environment)
+Proximity Score (30%) = f(Platsanalys)
+Final Score = Area × 0.70 + Proximity × 0.30
 ```
 
-### 1.2 Seeder Update
+**The sidebar preview shows all 5 categories** — the first 4 describe "this neighborhood" and the 5th describes "this exact spot."
 
-Set `is_free_preview = true` for the two most compelling indicators per category. These are the "hook" indicators — the ones that make the user want to see more.
+---
 
-**Selection criteria for free preview indicators:**
-- Immediately understandable (no jargon)
-- Emotionally resonant (safety, money, schools)
-- Creates curiosity when paired (high income + low safety = "what's going on?")
+## Step 1: Reorganize Indicator Categories
+
+### 1.1 Migration: Update Categories
 
 ```php
-// In the indicator seeder or a dedicated migration
+// Category mapping: old → new
+$mapping = [
+    // Safety & Crime
+    'violent_crime_rate' => 'safety',
+    'property_crime_rate' => 'safety',
+    'total_crime_rate' => 'safety',
+    'vulnerability_flag' => 'safety',
+    'perceived_safety' => 'safety',
+    'gambling_density' => 'safety',      // Was: amenities. Gambling = negative signal
+    'pawn_shop_density' => 'safety',     // Was: amenities. Pawn shops = distress signal
+    'fast_food_density' => 'safety',     // Was: amenities. Late-night clusters = disorder proxy
 
-$freePreviewSlugs = [
-    // Safety — "am I safe here?"
-    'perceived_safety_ntu',    // "Upplevd trygghet" — everyone understands this
-    'violent_crime_rate',      // "Våldsbrott" — scary, visceral, drives clicks
+    // Economy & Employment
+    'median_income' => 'economy',
+    'low_economic_standard_pct' => 'economy',
+    'employment_rate' => 'economy',
+    'debt_rate_pct' => 'economy',         // Was: financial_distress
+    'eviction_rate' => 'economy',         // Was: financial_distress
+    'median_debt_sek' => 'economy',       // Was: financial_distress
 
-    // Economy — "can I afford this? is it getting better?"
-    'median_income',           // "Medianinkomst" — the number everyone wants
-    'employment_rate',         // "Sysselsättningsgrad" — stability signal
+    // Education & Schools
+    'education_post_secondary_pct' => 'education',
+    'education_below_secondary_pct' => 'education',
+    'school_merit_value_avg' => 'education',
+    'school_goal_achievement_avg' => 'education',
+    'school_teacher_certification_avg' => 'education',
 
-    // Education — "are the schools good?"
-    'school_merit_value_avg',  // "Meritvärde" — THE metric Swedish parents know
-    'school_teacher_certification_avg',  // "Lärarbehörighet" — parents care deeply
+    // Environment & Services
+    'grocery_density' => 'environment',    // Was: amenities
+    'healthcare_density' => 'environment', // Was: amenities
+    'restaurant_density' => 'environment', // Was: amenities
+    'fitness_density' => 'environment',    // Was: amenities
+    'transit_stop_density' => 'environment', // Was: transport
 
-    // Proximity — "what's nearby?"
-    'prox_transit',            // "Kollektivtrafik" — daily life essential
-    'prox_grocery',            // "Livsmedel" — daily life essential
+    // Contextual (no display category — used internally, not shown in sidebar)
+    'foreign_background_pct' => 'contextual',
+    'population' => 'contextual',
+    'rental_tenure_pct' => 'contextual',
+
+    // Proximity (pin-level, separate computation)
+    'prox_school' => 'proximity',
+    'prox_green_space' => 'proximity',
+    'prox_transit' => 'proximity',
+    'prox_grocery' => 'proximity',
+    'prox_negative_poi' => 'proximity',
+    'prox_positive_poi' => 'proximity',
 ];
 
-Indicator::whereIn('slug', $freePreviewSlugs)
-    ->update(['is_free_preview' => true]);
+foreach ($mapping as $slug => $category) {
+    Indicator::where('slug', $slug)->update(['category' => $category]);
+}
 ```
 
-### 1.3 Why These Specific Indicators
-
-| Category | Free Preview 1 | Why | Free Preview 2 | Why |
-|---|---|---|---|---|
-| Safety | Upplevd trygghet (NTU) | "Perceived safety" is personal — it's how PEOPLE feel, not just stats | Våldsbrott | Violent crime is the gut-punch. Nobody scrolls past this. |
-| Economy | Medianinkomst | Everyone knows what median income means. Immediate context. | Sysselsättningsgrad | "Are people here working?" Simple, powerful. |
-| Education | Meritvärde (skolor) | THE school metric in Sweden. Parents live and die by this number. | Lärarbehörighet | "Are the teachers even qualified?" Provocative. |
-| Proximity | Kollektivtrafik | "Can I get to work?" Most practical daily concern. | Livsmedel | "Is there a grocery store?" Basic livability. |
-
-**What's left locked (examples per category):**
-- Safety: property crime, total crime rate, police vulnerability classification
-- Economy: low economic standard, debt rate, eviction rate, debt amount
-- Education: goal achievement rate, education levels (post-secondary, below secondary)
-- Proximity: school distance, green space, positive POIs, negative POIs
-
-The locked indicators are the "and what else?" that drives conversion.
-
----
-
-## Step 2: API Response — Include Free Values
-
-### 2.1 Updated Preview Endpoint
+### 1.2 Display Category Config
 
 ```php
-// In the location preview controller/service
+// config/display_categories.php
 
-$freePreviewValues = IndicatorValue::query()
-    ->join('indicators', 'indicators.id', '=', 'indicator_values.indicator_id')
-    ->where('indicator_values.deso_code', $deso->deso_code)
-    ->where('indicators.is_active', true)
-    ->where('indicators.is_free_preview', true)
-    ->whereNotNull('indicator_values.raw_value')
-    ->orderBy('indicators.display_order')
-    ->select([
-        'indicators.slug',
-        'indicators.name',
-        'indicators.unit',
-        'indicators.direction',
-        'indicators.category',
-        'indicator_values.raw_value',
-        'indicator_values.normalized_value',
-        'indicator_values.year',
-    ])
-    ->get()
-    ->map(fn($iv) => [
-        'slug' => $iv->slug,
-        'name' => $iv->name,
-        'unit' => $iv->unit,
-        'direction' => $iv->direction,
-        'category' => $iv->category,
-        'raw_value' => round($iv->raw_value, 1),
-        'percentile' => $iv->normalized_value !== null
-            ? round($iv->normalized_value * 100)
-            : null,
-        'year' => $iv->year,
-    ]);
-```
-
-### 2.2 Updated Category Shape
-
-Each category now includes its free preview indicators:
-
-```php
-'categories' => [
-    [
-        'slug' => 'safety',
+return [
+    'safety' => [
         'label' => 'Trygghet & brottslighet',
+        'label_short' => 'Trygghet',
         'emoji' => '🛡️',
         'icon' => 'shield',
-        'stat_line' => '...',
-        'indicator_count' => 5,         // Total indicators in this category
-        'locked_count' => 3,            // How many are behind paywall
-        'free_indicators' => [          // Real values, free
-            [
-                'slug' => 'perceived_safety_ntu',
-                'name' => 'Upplevd trygghet',
-                'raw_value' => 4.2,
-                'percentile' => 42,
-                'unit' => 'index',
-                'direction' => 'positive',
-            ],
-            [
-                'slug' => 'violent_crime_rate',
-                'name' => 'Våldsbrott',
-                'raw_value' => 12.8,
-                'percentile' => 18,
-                'unit' => 'per_1000',
-                'direction' => 'negative',
-            ],
-        ],
+        'display_order' => 1,
+        'score_layer' => 'area',     // Feeds area score
+        'description' => 'Brottsstatistik, upplevd trygghet och polisens klassificering',
     ],
-    // ... other categories
-],
+    'economy' => [
+        'label' => 'Ekonomi & arbetsmarknad',
+        'label_short' => 'Ekonomi',
+        'emoji' => '📊',
+        'icon' => 'bar-chart-3',
+        'display_order' => 2,
+        'score_layer' => 'area',
+        'description' => 'Inkomst, sysselsättning, skuldsättning och ekonomisk standard',
+    ],
+    'education' => [
+        'label' => 'Utbildning & skolor',
+        'label_short' => 'Utbildning',
+        'emoji' => '🎓',
+        'icon' => 'graduation-cap',
+        'display_order' => 3,
+        'score_layer' => 'area',
+        'description' => 'Utbildningsnivå i befolkningen och skolkvalitet',
+    ],
+    'environment' => [
+        'label' => 'Miljö & service',
+        'label_short' => 'Service',
+        'emoji' => '🌳',
+        'icon' => 'trees',
+        'display_order' => 4,
+        'score_layer' => 'area',
+        'description' => 'Grönområden, kollektivtrafik, mataffärer, sjukvård och restauranger',
+    ],
+    'proximity' => [
+        'label' => 'Platsanalys',
+        'label_short' => 'Plats',
+        'emoji' => '📍',
+        'icon' => 'map-pin',
+        'display_order' => 5,
+        'score_layer' => 'proximity',  // Feeds proximity score
+        'description' => 'Avstånd till skolor, hållplatser, parker och service från din exakta adress',
+    ],
+    // 'contextual' is never displayed — internal use only
+];
+```
+
+### 1.3 What Moved Where
+
+| Indicator | Old Category | New Category | Why |
+|---|---|---|---|
+| gambling_density | amenities | safety | Gambling venues correlate with financial distress and disorder |
+| pawn_shop_density | amenities | safety | Pawn shops are a distress signal, not a service amenity |
+| fast_food_density | amenities | safety | Late-night fast food clusters proxy for disorder/nighttime issues |
+| debt_rate_pct | financial_distress | economy | Debt is an economic indicator, not a separate domain |
+| eviction_rate | financial_distress | economy | Same — economic stress |
+| median_debt_sek | financial_distress | economy | Same |
+| transit_stop_density | transport | environment | Transport is part of the service/infrastructure picture |
+| foreign_background_pct | demographics | contextual | Used internally, never user-facing (legal sensitivity) |
+| population | demographics | contextual | Contextual — not a quality indicator |
+| rental_tenure_pct | housing | contextual | Contextual — tenure type informs the model but isn't a "score" |
+
+### 1.4 Indicator Counts After Reorg
+
+| Category | Count | Weight Budget |
+|---|---|---|
+| Safety | 8 (5 crime/safety + 3 negative POI density) | ~25% |
+| Economy | 6 | ~20% |
+| Education | 5 (2 population education + 3 school quality) | ~15% |
+| Environment | 5 (4 positive amenity density + 1 transit density) | ~10% |
+| Proximity | 6 (pin-level, separate computation) | 30% (proximity score) |
+| Contextual | 3 (weight = 0, not displayed) | 0% |
+| **Total** | **33** | **100%** |
+
+The "33 datapunkter" stays accurate, but now every one of them belongs to a visible category (except the 3 contextual ones, which shouldn't be counted in the user-facing number — so really "30 indikatorer" in the CTA).
+
+---
+
+## Step 2: Clarify POI Architecture
+
+### 2.1 The Two Roles, Formally Defined
+
+**Role A: Area Density Indicators (DeSO-level)**
+
+These answer: "What kind of neighborhood is this?"
+
+POIs are counted per DeSO, normalized by area or population, stored as `indicator_values`. They feed the area score. They're the same for every address in the same DeSO.
+
+| Indicator | POI Source | Category | Signal |
+|---|---|---|---|
+| grocery_density | OSM grocery stores | environment | Positive — daily service access |
+| healthcare_density | OSM healthcare + pharmacy | environment | Positive — essential services |
+| restaurant_density | OSM restaurants/cafés | environment | Positive — livability/gentrification |
+| fitness_density | OSM gyms/sports | environment | Positive — active lifestyle |
+| transit_stop_density | OSM/GTFS transit stops | environment | Positive — connectivity |
+| gambling_density | OSM gambling venues | safety | Negative — financial distress marker |
+| pawn_shop_density | OSM pawn shops | safety | Negative — distress marker |
+| fast_food_density | OSM late-night fast food | safety | Negative — disorder proxy |
+
+**Role B: Proximity Scores (Pin-level)**
+
+These answer: "What's near THIS exact address?"
+
+Computed on-the-fly when a pin is dropped. PostGIS distance queries within configurable radii. Feed the proximity score. Different for every address, even within the same DeSO.
+
+| Factor | What It Measures | Radius |
+|---|---|---|
+| prox_school | Quality-weighted distance to nearest grundskola(s) | 2000m |
+| prox_green_space | Distance to nearest park/green space | 1500m |
+| prox_transit | Distance to nearest quality transit stop | 1000m |
+| prox_grocery | Distance to nearest grocery store | 1000m |
+| prox_negative_poi | Inverse density of nearby negative POIs | 500m |
+| prox_positive_poi | Density of nearby positive POIs | 1000m |
+
+### 2.2 No Double Counting
+
+The concern: if `grocery_density` (area score) AND `prox_grocery` (proximity score) both measure grocery access, is the score double-counting?
+
+**Answer: No, because they measure different things.**
+
+- `grocery_density` = "this DeSO has lots of grocery stores relative to its size" (area characteristic)
+- `prox_grocery` = "there's a Hemköp 340m from your front door" (personal convenience)
+
+A DeSO can have high grocery density overall but your specific corner might be 1.2km from the nearest one (far side of a large DeSO). The area score says "good neighborhood for groceries." The proximity score says "but not from YOUR spot."
+
+The weights handle this: area indicators get their weight within the 70% area budget, proximity factors get theirs within the 30% proximity budget. They're scored independently and combined at the end.
+
+### 2.3 Diagram
+
+```
+POI Table (137,170 POIs)
+    │
+    ├──→ Ingestion aggregation (per DeSO, batch job)
+    │       │
+    │       └──→ indicator_values: grocery_density = 15.1/km²
+    │            indicator_values: gambling_density = 0.3/km²
+    │            ... (8 area density indicators)
+    │            │
+    │            └──→ Area Score (70%)
+    │
+    └──→ Proximity query (per pin, on-the-fly)
+            │
+            └──→ ST_DWithin(pin, poi, radius)
+                 nearest grocery: 340m → score 0.66
+                 nearest transit: 180m → score 0.82
+                 ... (6 proximity factors)
+                 │
+                 └──→ Proximity Score (30%)
+
+Area Score × 0.70 + Proximity Score × 0.30 = Final Score
 ```
 
 ---
 
-## Step 3: Frontend — Mixed Free + Locked Rows
+## Step 3: Per-School Data for Reports
 
-### 3.1 Free Indicator Row
+### 3.1 The Problem
 
-```tsx
-function FreeIndicatorRow({ indicator }: {
-    indicator: {
-        name: string;
-        raw_value: number;
-        percentile: number | null;
-        unit: string;
-        direction: string;
-    };
-}) {
-    const percentile = indicator.percentile ?? 0;
+Current school indicators are DeSO averages:
+```
+school_merit_value_avg for DeSO 0180C1030 = 221.4
+```
 
-    // Color based on direction + percentile
-    // Positive direction: high percentile = green, low = red
-    // Negative direction: high percentile = red (high crime = bad), low = green
-    const isGood = indicator.direction === 'positive'
-        ? percentile >= 50
-        : percentile < 50;
+This is useless for an address-based report. The user needs:
+```
+Schools near Sveavägen 42:
+  Årstaskolan (grundskola, kommunal) — 450m — Meritvärde: 241
+  Eriksdalsskolan (grundskola, kommunal) — 1.2km — Meritvärde: 198
+  Södra Latin (grundskola, kommunal) — 1.8km — Meritvärde: 267
+```
 
-    const barColor = isGood ? 'bg-emerald-500' : 'bg-amber-500';
-    const textColor = isGood ? 'text-emerald-700' : 'text-amber-700';
+### 3.2 What We Already Have
 
-    return (
-        <div className="flex items-center gap-3 py-1.5">
-            <span className="text-sm flex-1 min-w-0 truncate">
-                {indicator.name}
-            </span>
-            <div className="w-20 h-2 bg-muted rounded-full overflow-hidden shrink-0">
-                <div
-                    className={`h-full rounded-full ${barColor}`}
-                    style={{ width: `${percentile}%` }}
-                />
-            </div>
-            <span className={`text-xs font-medium w-10 text-right shrink-0 ${textColor}`}>
-                {percentile !== null ? `${ordinal(percentile)}` : '—'}
-            </span>
-        </div>
-    );
-}
+The `schools` table has coordinates and DeSO assignment. The `school_statistics` table has per-school meritvärde, goal achievement, teacher certification, student count. The Skolverket API provides this data. **The data is already there** — we just aggregate it to DeSO level and throw away the per-school detail in the scoring.
 
-// Swedish ordinal: "42:a", "78:e", "1:a"
-function ordinal(n: number): string {
-    if (n === 1 || n === 2) return `${n}:a`;
-    return `${n}:e`;
+### 3.3 What Needs to Change
+
+**For the area score:** Keep the DeSO-level school indicators (`school_merit_value_avg` etc.) — they're valid as area characteristics. "The average school quality in this neighborhood" is a reasonable area-level metric.
+
+**For the proximity score:** Replace the current `prox_school` (which is undefined / 0 coverage) with a real per-school proximity computation:
+
+```php
+// ProximityScoreService — school factor
+
+public function computeSchoolProximity(float $lat, float $lng, float $radiusM = 2000): array
+{
+    // Find all grundskolor within radius, ordered by distance
+    $schools = DB::select("
+        SELECT
+            s.school_unit_code,
+            s.name,
+            s.type_of_schooling,
+            s.operator_type,
+            ST_Distance(s.geom::geography, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography) as distance_m,
+            ss.merit_value_17,
+            ss.goal_achievement_pct,
+            ss.teacher_certification_pct,
+            ss.student_count
+        FROM schools s
+        LEFT JOIN school_statistics ss ON ss.school_unit_code = s.school_unit_code
+            AND ss.academic_year = (
+                SELECT MAX(academic_year) FROM school_statistics
+                WHERE school_unit_code = s.school_unit_code
+            )
+        WHERE s.type_of_schooling LIKE '%Grundskola%'
+          AND s.status = 'active'
+          AND ST_DWithin(s.geom::geography, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)
+        ORDER BY distance_m ASC
+    ", [$lng, $lat, $lng, $lat, $radiusM]);
+
+    if (empty($schools)) {
+        // No schools within radius — find the nearest one regardless of distance
+        $nearest = DB::selectOne("
+            SELECT
+                s.name,
+                ST_Distance(s.geom::geography, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography) as distance_m,
+                ss.merit_value_17
+            FROM schools s
+            LEFT JOIN school_statistics ss ON ss.school_unit_code = s.school_unit_code
+                AND ss.academic_year = (SELECT MAX(academic_year) FROM school_statistics WHERE school_unit_code = s.school_unit_code)
+            WHERE s.type_of_schooling LIKE '%Grundskola%'
+              AND s.status = 'active'
+              AND s.geom IS NOT NULL
+            ORDER BY s.geom::geography <-> ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography
+            LIMIT 1
+        ", [$lng, $lat, $lng, $lat]);
+
+        return [
+            'score' => 0.0,
+            'schools' => [],
+            'nearest' => $nearest,
+        ];
+    }
+
+    // Score: quality-weighted distance
+    // Best nearby school matters most — use the highest-quality school within radius
+    $bestMerit = collect($schools)->max('merit_value_17');
+    $nearestDistance = $schools[0]->distance_m;
+
+    // Distance decay + quality bonus
+    $distanceScore = max(0, 1 - ($nearestDistance / $radiusM));
+    $qualityScore = $bestMerit ? min(1, $bestMerit / 280) : 0.5; // 280 = "excellent"
+
+    $score = ($distanceScore * 0.6) + ($qualityScore * 0.4);
+
+    return [
+        'score' => round($score, 3),
+        'schools' => collect($schools)->map(fn($s) => [
+            'name' => $s->name,
+            'type' => $s->type_of_schooling,
+            'operator' => $s->operator_type,
+            'distance_m' => round($s->distance_m),
+            'merit_value' => $s->merit_value_17,
+            'goal_achievement' => $s->goal_achievement_pct,
+            'teacher_certification' => $s->teacher_certification_pct,
+            'student_count' => $s->student_count,
+        ])->values()->all(),
+    ];
 }
 ```
 
-### 3.2 Locked Indicator Rows (The Remaining Ones)
+### 3.4 Skolverket Per-School Data Availability
 
-```tsx
-function LockedIndicatorRows({ count }: { count: number }) {
-    // Show `count` gray bars with varying widths
-    const barWidths = useMemo(() => {
-        return Array.from({ length: count }, (_, i) => {
-            const base = ((i * 37 + 13) % 35) + 55; // 55-90%
-            return `${base}%`;
-        });
-    }, [count]);
+**Can we query per-school statistics from the API?**
 
-    return (
-        <div className="space-y-2 mt-2 opacity-50">
-            {barWidths.map((width, i) => (
-                <div key={i} className="flex items-center gap-3 py-1">
-                    <div className="h-3 bg-muted rounded flex-1" style={{ maxWidth: '45%' }} />
-                    <div className="w-20 h-2 bg-muted rounded-full shrink-0" />
-                    <div className="w-10 h-3 bg-muted rounded shrink-0" />
-                </div>
-            ))}
-        </div>
-    );
-}
+Yes. Both Skolverket APIs support per-school lookups:
+
+- **Skolenhetsregistret v2:** `GET /v2/school-units/{schoolUnitCode}` — metadata, location, type
+- **Planned Educations v3:** `GET /v3/school-units/{schoolUnitCode}` — statistics including meritvärde
+
+The `school_statistics` table already stores per-school data from these APIs. The ingestion command (`ingest:skolverket-stats`) fetches statistics per school unit code. **The per-school data is already in our database** — we just need to query it per-address instead of averaging it per-DeSO.
+
+**What if a school has no statistics?** Many schools have `merit_value_17 = NULL` (Skolverket suppresses data for small cohorts, <15 students). The report should show "Inga publicerade meritvärden" for these schools. Don't exclude them — a school with no published data is still a school parents might use.
+
+### 3.5 Report School Section
+
+The report should show:
+
+```
+🎓 SKOLOR NÄRA DIG
+
+Årstaskolan                                     450 m
+  Grundskola · Kommunal · 342 elever
+  Meritvärde: 241 (82:a percentilen)
+  Måluppfyllelse: 94%  Lärarbehörighet: 78%
+
+Eriksdalsskolan                                1.2 km
+  Grundskola · Kommunal · 289 elever
+  Meritvärde: 198 (34:e percentilen)
+  Måluppfyllelse: 81%  Lärarbehörighet: 85%
+
+Södra Latin                                    1.8 km
+  Grundskola · Kommunal · 521 elever
+  Meritvärde: 267 (96:e percentilen)
+  Måluppfyllelse: 98%  Lärarbehörighet: 92%
+
+Genomsnittligt meritvärde inom 2 km: 235 (72:a percentilen)
+Bästa skolan: Södra Latin (267, 1.8 km)
 ```
 
-This mimics the layout of `FreeIndicatorRow` — a text placeholder, a bar placeholder, and a value placeholder — so the locked rows look like the free rows but grayed out. The structural similarity makes the paywall feel like a continuation, not a wall.
+### 3.6 Keep DeSO Averages for Area Score
 
-### 3.3 "And X More" Label
+Don't remove `school_merit_value_avg` from the area score. It serves a different purpose: "what's the general school quality level in this neighborhood?" It's valid as an area-level indicator and helps areas with many schools vs few schools compare fairly.
 
-```tsx
-function LockedCountLabel({ count }: { count: number }) {
-    return (
-        <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
-            <Lock className="h-3 w-3" />
-            + {count} indikatorer i rapporten
-        </p>
-    );
-}
-```
+The per-school data goes in the **report** and feeds the **proximity score**. The DeSO average stays in the **area score**. Different layers, different roles.
 
-### 3.4 Updated Category Section
+---
 
-```tsx
-function CategorySection({ category }: { category: CategoryData }) {
-    return (
-        <div className="pt-5 first:pt-0">
-            {/* Category header */}
-            <div className="flex items-center gap-2 mb-3">
-                <span className="text-base">{category.emoji}</span>
-                <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                    {category.label}
-                </h3>
-            </div>
+## Step 4: Sidebar Teaser Update
 
-            {/* Free preview indicators — real names, real values */}
-            {category.free_indicators.map(indicator => (
-                <FreeIndicatorRow key={indicator.slug} indicator={indicator} />
-            ))}
-
-            {/* Locked indicators — gray bars matching the layout */}
-            {category.locked_count > 0 && (
-                <>
-                    <LockedIndicatorRows count={Math.min(category.locked_count, 3)} />
-                    <LockedCountLabel count={category.locked_count} />
-                </>
-            )}
-
-            {/* Data scale stat line */}
-            <p className="text-xs text-muted-foreground leading-relaxed mt-3">
-                {category.stat_line}
-            </p>
-        </div>
-    );
-}
-```
-
-### 3.5 Visual Result
+### 4.1 Five Categories in the Teaser
 
 ```
 🛡️ TRYGGHET & BROTTSLIGHET
 
-Upplevd trygghet          ▓▓▓▓▓▓▓▓░░  42:a
-Våldsbrott                ▓▓░░░░░░░░  18:e
-████████████              ░░░░░░░░░░  ███
-██████████████████        ░░░░░░░░░░  ███
-█████████████             ░░░░░░░░░░  ███
-🔒 + 3 indikatorer i rapporten
+Upplevd trygghet           ▓▓▓▓▓▓▓▓░░  42:a
+Våldsbrott                 ▓▓░░░░░░░░  18:e
+████████                   ░░░░░░░░░░  ███
+████████████               ░░░░░░░░░░  ███
+🔒 + 6 indikatorer i rapporten
 
 Trygghetsbetyg baserat på brottsstatistik
-från 290 kommuner och 65 utsatta områden.
+och polisens klassificering av utsatta områden.
+
 
 📊 EKONOMI & ARBETSMARKNAD
 
-Medianinkomst             ▓▓▓▓▓▓▓▓▓░  78:e
-Sysselsättningsgrad       ▓▓▓▓▓▓░░░░  61:a
-████████████████          ░░░░░░░░░░  ███
-████████████              ░░░░░░░░░░  ███
-█████████████████████     ░░░░░░░░░░  ███
-██████████████            ░░░░░░░░░░  ███
+Medianinkomst              ▓▓▓▓▓▓▓▓▓░  78:e
+Sysselsättningsgrad        ▓▓▓▓▓▓░░░░  61:a
+████████████████           ░░░░░░░░░░  ███
+████████████               ░░░░░░░░░░  ███
 🔒 + 4 indikatorer i rapporten
 
-Ekonomisk analys från 6 indikatorer — inkomst,
-sysselsättning, skuldsättning och ekonomisk standard.
+Ekonomisk analys av inkomst, sysselsättning,
+skuldsättning och ekonomisk standard.
 
-🎓 UTBILDNING
 
-Meritvärde (skolor)       ▓▓▓▓▓▓▓▓▓░  91:a
-Lärarbehörighet           ▓▓▓▓▓▓▓░░░  68:e
-█████████████████████     ░░░░░░░░░░  ███
-████████████████          ░░░░░░░░░░  ███
-██████████████████        ░░░░░░░░░░  ███
+🎓 UTBILDNING & SKOLOR
+
+Meritvärde (skolor)        ▓▓▓▓▓▓▓▓▓░  91:a
+Lärarbehörighet            ▓▓▓▓▓▓▓░░░  68:e
+████████████████████       ░░░░░░░░░░  ███
+🔒 + 3 indikatorer i rapporten
+🏫 3 skolor inom 2 km — detaljer i rapporten
+
+Skolanalys baserad på 7 507 grundskolor.
+
+
+🌳 MILJÖ & SERVICE
+
+Mataffärer                 ▓▓▓▓▓▓▓▓░░  71:a
+Kollektivtrafik            ▓▓▓▓▓▓▓▓▓░  82:a
+████████████               ░░░░░░░░░░  ███
+████████████████           ░░░░░░░░░░  ███
 🔒 + 3 indikatorer i rapporten
 
-Skolanalys baserad på 7 507 grundskolor med
-meritvärden, måluppfyllelse och lärarbehörighet.
+Baserat på 137 170 kartlagda servicepunkter.
 
-📍 NÄRHETSANALYS
 
-Kollektivtrafik           ▓▓▓▓▓▓▓▓░░  82:a
-Livsmedel                 ▓▓▓▓▓▓▓░░░  71:a
-█████████████████████     ░░░░░░░░░░  ███
-██████████████████        ░░░░░░░░░░  ███
-████████████████          ░░░░░░░░░░  ███
-██████████████████████    ░░░░░░░░░░  ███
-🔒 + 4 indikatorer i rapporten
+📍 PLATSANALYS
 
-Vi analyserade 254 servicepunkter inom 2 km —
-kollektivtrafik, grönområden, mataffärer och mer.
+Din exakta adress analyserad — avstånd till
+närmaste skola, hållplats, park och mataffär.
+🔒 6 platsspecifika analyser i rapporten
 ```
 
-The free rows POP because they have color (green/amber bars) against the gray locked rows. The contrast is the sales pitch.
+### 4.2 Free Preview Indicators — Updated Selection
+
+| Category | Free 1 | Free 2 |
+|---|---|---|
+| Safety | Upplevd trygghet (NTU) | Våldsbrott |
+| Economy | Medianinkomst | Sysselsättningsgrad |
+| Education | Meritvärde (skolor) | Lärarbehörighet |
+| Environment | Mataffärer | Kollektivtrafik |
+| Proximity | *(No free values — the whole point is pin-specific detail)* | |
+
+Proximity gets no free values because the entire category is the upsell — "we analyzed YOUR exact address." Showing a proximity value for free undermines the report's unique selling point.
+
+### 4.3 CTA Summary — Updated
+
+```
+🔒 Se alla värden
+
+30 indikatorer med exakta värden och percentiler
+6 platsspecifika närhetsanalyser
+3 skolor med meritvärden och avstånd
+
+Lås upp — 79 kr
+Engångsköp · Ingen prenumeration
+```
+
+Note: "30 indikatorer" not "33" — the 3 contextual ones (foreign_background, population, rental_tenure) are excluded from the user-facing count.
 
 ---
 
-## Step 4: Admin Control
+## Step 5: Admin Dashboard Updates
 
-### 4.1 Admin Dashboard Update
+### 5.1 Group Indicators by New Categories
 
-In the indicator management table, add a toggle column for `is_free_preview`:
-
-```tsx
-// In Admin/Indicators.tsx
-<TableHead>Fri förhandsgranskning</TableHead>
-// ...
-<TableCell>
-    <Switch
-        checked={indicator.is_free_preview}
-        onCheckedChange={(checked) => updateIndicator(indicator.id, { is_free_preview: checked })}
-    />
-</TableCell>
-```
-
-### 4.2 Validation: Max 2 Per Category
-
-The admin shouldn't be able to set more than 2 free preview indicators per category. Add a backend validation:
-
-```php
-// In AdminIndicatorController::update
-
-public function update(Request $request, Indicator $indicator)
-{
-    $validated = $request->validate([
-        'is_free_preview' => 'sometimes|boolean',
-        // ... other fields
-    ]);
-
-    if (($validated['is_free_preview'] ?? false) === true) {
-        $currentFreeCount = Indicator::where('category', $indicator->category)
-            ->where('is_free_preview', true)
-            ->where('id', '!=', $indicator->id)
-            ->count();
-
-        if ($currentFreeCount >= 2) {
-            return back()->withErrors([
-                'is_free_preview' => "Max 2 fria förhandsgranskningsindikatorer per kategori. Inaktivera en annan i '{$indicator->category}' först.",
-            ]);
-        }
-    }
-
-    $indicator->update($validated);
-
-    return back()->with('success', 'Indikator uppdaterad.');
-}
-```
-
-### 4.3 Admin Visual: Free Preview Count
-
-In the weight allocation bar at the top of the admin page, add a count:
+The admin indicator table should group by the 5 display categories + contextual. Each group shows:
 
 ```
-Fri förhandsgranskning: 8/8 indikatorer (2 per kategori)
+🛡️ Trygghet & brottslighet  8 indicators · 5 active · weight: 25%
+▼ Economy & arbetsmarknad   6 indicators · 6 active · weight: 20%
+  ...
+▼ Kontextuell              3 indicators · weight: 0% (ej visad)
 ```
+
+### 5.2 Category Summary Row
+
+Each category header shows total weight allocation for that category. This replaces the old single weight bar with a per-category breakdown.
 
 ---
 
-## Step 5: Handle Missing Values
+## Step 6: Weight Rebalancing
 
-Some DeSOs may not have data for a free preview indicator. Handle gracefully:
+With the new categories, suggested weights:
 
-```tsx
-// In CategorySection
-{category.free_indicators.length > 0 ? (
-    category.free_indicators.map(indicator => (
-        <FreeIndicatorRow key={indicator.slug} indicator={indicator} />
-    ))
-) : (
-    // No free indicators have data for this DeSO — show all locked
-    <LockedIndicatorRows count={Math.min(category.indicator_count, 3)} />
-)}
-```
+| Category | Indicators | Total Weight | Notes |
+|---|---|---|---|
+| **Safety** | violent_crime (0.06), property_crime (0.045), total_crime (0.025), vulnerability (0.095), perceived_safety (0.045), gambling (0.02), pawn_shop (0.01), fast_food (0.01) | **25%** | Biggest driver of "would I live here?" |
+| **Economy** | median_income (0.065), low_economic_standard (0.04), employment (0.055), debt_rate (0.05), eviction_rate (0.03), median_debt (0.02) | **20%** | Financial health of the area |
+| **Education** | post_secondary (0.038), below_secondary (0.022), merit_value (0.07), goal_achievement (0.045), teacher_certification (0.035) | **15%** | School quality + education level |
+| **Environment** | grocery (0.04), healthcare (0.03), restaurant (0.02), fitness (0.02), transit_stop (0.04) | **10%** | Service level of the area |
+| **Proximity** | school (0.10), green_space (0.04), transit (0.05), grocery (0.03), negative_poi (0.04), positive_poi (0.04) | **30%** | Pin-specific. This IS the product differentiator |
+| **Contextual** | foreign_background, population, rental_tenure | **0%** | Internal model inputs, not scored |
 
-If a free preview indicator has `raw_value = null` for this DeSO, the backend should exclude it from `free_indicators` and increment `locked_count`. The frontend never shows "Medianinkomst — —" — either it has a value and shows it, or it's hidden in the gray bars.
+Total: 100%
 
 ---
 
-## Step 6: Value Formatting
+## Implementation Order
 
-### 6.1 Format Function
+This task is a specification. Implementation should happen in this order:
 
-```tsx
-function formatIndicatorValue(value: number, unit: string): string {
-    switch (unit) {
-        case 'SEK':
-            return `${Math.round(value).toLocaleString('sv-SE')} kr`;
-        case 'percent':
-            return `${value.toFixed(1)}%`;
-        case 'per_1000':
-            return `${value.toFixed(1)}/1000`;
-        case 'points':
-            return `${Math.round(value)}`;
-        case 'index':
-            return value.toFixed(1);
-        default:
-            return value.toFixed(1);
-    }
-}
-```
+### Phase A: Category Reorganization (Backend)
+1. Run the category migration (update all indicator categories)
+2. Update `config/display_categories.php`
+3. Update admin dashboard to use new groupings
+4. Update free preview indicator selection
+5. Update sidebar teaser to show 5 categories
 
-### 6.2 Tooltip on Hover
+### Phase B: POI Architecture Clarification (Backend)
+1. Document the dual role clearly in code comments and CLAUDE.md
+2. Verify area density indicators are computed correctly per DeSO
+3. Verify proximity indicators reference the same POI table
+4. No structural code change needed — the architecture is sound, it just needs documentation
 
-Free indicator rows show a tooltip with the raw value on hover:
+### Phase C: Per-School Proximity (Backend + Frontend)
+1. Implement `ProximityScoreService::computeSchoolProximity()`
+2. Update the report data structure to include per-school details
+3. Update the proximity score computation to use real school data
+4. Test: schools near pin should include schools from neighboring DeSOs
 
-```tsx
-<div className="..." title={`${indicator.name}: ${formatIndicatorValue(indicator.raw_value, indicator.unit)}`}>
-```
-
-The percentile is shown inline (e.g., "42:a"). The raw value is in the tooltip (e.g., "Upplevd trygghet: 4.2"). This keeps the row compact while still providing the actual number.
-
-The full report shows both inline — percentile AND raw value. Another reason to unlock.
+### Phase D: Weight Rebalancing
+1. Update indicator weights via seeder/migration
+2. Recompute all scores
+3. Verify sanity (Danderyd green, Rinkeby purple)
 
 ---
 
 ## Verification
 
-### Visual
-- [ ] Each category shows exactly 2 real indicator rows with colored bars and percentile values
-- [ ] Below the real rows, gray locked rows match the layout structure (text placeholder + bar + value placeholder)
-- [ ] "🔒 + N indikatorer i rapporten" shows correct locked count per category
-- [ ] Free indicator bars are colored (green for good, amber for bad) — contrasts with gray locked bars
-- [ ] Data scale stat line still appears below each category
-- [ ] Swedish ordinal formatting works: 1:a, 2:a, 3:e, 42:a, 78:e
+### Category Reorg
+- [ ] All 33 indicators assigned to one of 6 categories (safety, economy, education, environment, proximity, contextual)
+- [ ] No orphaned indicators (every slug in the mapping)
+- [ ] Admin dashboard groups by new categories
+- [ ] Sidebar teaser shows 5 categories (not contextual)
+- [ ] CTA says "30 indikatorer" (excluding 3 contextual)
 
-### Data
-- [ ] Free preview values are REAL — match what the full report would show
-- [ ] Percentiles are correct (match normalized_value × 100)
-- [ ] Direction logic correct: high "Upplevd trygghet" = green (positive direction), high "Våldsbrott" = amber (negative direction)
-- [ ] DeSOs with missing data for a free indicator: indicator excluded, not shown with "—"
+### POI Architecture
+- [ ] Area density indicators (grocery_density etc.) are computed per DeSO — same value for all pins in a DeSO
+- [ ] Proximity factors (prox_grocery etc.) are computed per pin — different values for different addresses
+- [ ] No double-counting in the composite score (area 70% + proximity 30%)
 
-### Admin
-- [ ] `is_free_preview` toggle visible in admin indicator table
-- [ ] Max 2 per category enforced — can't enable a third without disabling one
-- [ ] Changing which indicators are free preview updates the sidebar immediately (after page refresh)
+### Per-School Data
+- [ ] Report includes individual schools within radius, not DeSO averages
+- [ ] Schools from neighboring DeSOs appear if within radius
+- [ ] Schools with no meritvärde data show "Inga publicerade meritvärden"
+- [ ] "No schools within 2km" case shows nearest school with distance
 
-### Edge Cases
-- [ ] DeSO with no data for either free indicator in a category → category shows only locked bars (no empty free rows)
-- [ ] DeSO with data for only 1 of 2 free indicators → shows 1 free row + locked bars
-- [ ] Category with 0 locked indicators (only 2 total, both free) → no gray bars, no "🔒 +" label
+### Weights
+- [ ] Total active weights = 1.0
+- [ ] Per-category totals match the table above (±0.01)
+- [ ] Score recomputation passes sanity checks
 
 ---
 
 ## What NOT to Do
 
-- **DO NOT blur values.** Blurred text says "we're hiding this from you" — adversarial. Real values + locked remaining = "here's a taste, want more?" — generous.
-- **DO NOT show raw values inline for free indicators.** Keep the row compact: name + bar + percentile. Raw value in tooltip. The full report shows everything — that's part of the upsell.
-- **DO NOT hardcode which indicators are free.** The `is_free_preview` flag is admin-controlled. You'll want to A/B test different combinations to optimize conversion.
-- **DO NOT show more than 2 free per category.** Two creates curiosity. Three starts to feel like you're giving away the product. One feels stingy. Two is the sweet spot.
-- **DO NOT change the free values based on whether they look "good" or "bad" for the area.** Always show the same two indicators regardless of whether the percentile is flattering. Selective data display destroys trust.
-- **DO NOT add a "sign up to see these free" gate.** The free values are free for everyone. No email, no account, no cookie wall. They see the score + 8 real indicator values + locked rest. That's the free tier.
+- **DO NOT delete the DeSO-level school indicators.** They're valid area-level metrics. Add per-school proximity ON TOP, don't replace.
+- **DO NOT expose `foreign_background_pct` in any user-facing category.** It stays `contextual` with weight 0. Used internally for the disaggregation model, never shown to users.
+- **DO NOT count contextual indicators in user-facing numbers.** "30 indikatorer" not "33". The user doesn't care about population count.
+- **DO NOT create a "Social" or "Demographics" display category.** Mixing foreign background + debt + income under a social label is legally and ethically fraught in Sweden. Economy handles the financial indicators. Demographics stays internal.
+- **DO NOT rename `category` column values in a way that breaks existing code.** Check all references to old category names (income, employment, financial_distress, amenities, transport, demographics, housing, crime) before running the migration.

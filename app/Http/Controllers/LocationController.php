@@ -322,9 +322,10 @@ class LocationController extends Controller
             $categories[] = $category;
         }
 
-        // Total indicator count (all active with weight)
+        // Total indicator count: active indicators excluding contextual (weight > 0)
         $totalIndicatorCount = Indicator::where('is_active', true)
             ->where('weight', '>', 0)
+            ->where('category', '!=', 'contextual')
             ->count();
 
         return [
