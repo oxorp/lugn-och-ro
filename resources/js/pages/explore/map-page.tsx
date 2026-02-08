@@ -76,32 +76,18 @@ export default function MapPage({
         mapRef.current?.clearPin();
     }, [handlePinClear]);
 
-    const handleTrySearch = useCallback((query: string) => {
-        // Focus the search input and set query
-        const input =
-            document.querySelector<HTMLInputElement>('input[type="text"]');
-        if (input) {
-            input.focus();
-            // Trigger the search by dispatching an input event
-            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-                window.HTMLInputElement.prototype,
-                'value',
-            )?.set;
-            nativeInputValueSetter?.call(input, query);
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-        }
-    }, []);
-
     return (
         <MapLayout>
             <Head title={t('map.title')} />
             <>
                 {/* Map */}
                 <div className="relative h-2/5 flex-none md:h-auto md:flex-1">
-                    <MapSearch
-                        onResultSelect={handleSearchResult}
-                        onClear={handleSearchClear}
-                    />
+                    {pinActive && (
+                        <MapSearch
+                            onResultSelect={handleSearchResult}
+                            onClear={handleSearchClear}
+                        />
+                    )}
                     <HeatmapMap
                         ref={mapRef}
                         initialCenter={initialCenter}
@@ -127,7 +113,10 @@ export default function MapPage({
                             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                         </div>
                     ) : (
-                        <DefaultSidebar onTrySearch={handleTrySearch} />
+                        <DefaultSidebar
+                            onResultSelect={handleSearchResult}
+                            onSearchClear={handleSearchClear}
+                        />
                     )}
                 </div>
 

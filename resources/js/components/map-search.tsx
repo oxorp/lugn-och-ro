@@ -33,9 +33,10 @@ function typeIcon(type: SearchResult['type']) {
 interface MapSearchProps {
     onResultSelect: (result: SearchResult) => void;
     onClear: () => void;
+    className?: string;
 }
 
-export default function MapSearch({ onResultSelect, onClear }: MapSearchProps) {
+export default function MapSearch({ onResultSelect, onClear, className }: MapSearchProps) {
     const { t } = useTranslation();
     const [query, setQuery] = useState('');
     const [results, setResults] = useState<SearchResult[]>([]);
@@ -185,7 +186,7 @@ export default function MapSearch({ onResultSelect, onClear }: MapSearchProps) {
     return (
         <div
             ref={containerRef}
-            className="absolute top-4 left-4 z-20 w-[calc(100%-2rem)] md:w-[360px]"
+            className={className ?? 'absolute top-4 left-4 z-20 w-[calc(100%-2rem)] md:w-[360px]'}
         >
             {/* Search input */}
             <div className="bg-background/95 flex items-center gap-2 rounded-lg border px-3 py-2 shadow-sm backdrop-blur-sm">

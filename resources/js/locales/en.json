@@ -29,7 +29,7 @@
         }
     },
     "search": {
-        "placeholder": "Search address, postal code, or city... (/)",
+        "placeholder": "Search address",
         "no_results": "No results found in Sweden.",
         "no_results_hint": "Try a street name, postal code, or city name.",
         "type": {
@@ -46,8 +46,7 @@
         "default": {
             "title": "Explore any location",
             "subtitle": "Search for an address or click anywhere on the map.",
-            "try": "Try",
-            "legend_hint": "Green = positive. Purple = risk."
+            "try": "Try"
         },
         "empty": {
             "title": "Click an area",

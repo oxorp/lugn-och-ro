@@ -29,7 +29,7 @@
         }
     },
     "search": {
-        "placeholder": "S\u00f6k adress, postnummer eller ort... (/)",
+        "placeholder": "S\u00f6k adress",
         "no_results": "Inga resultat hittades i Sverige.",
         "no_results_hint": "F\u00f6rs\u00f6k med gatunamn, postnummer eller ortnamn.",
         "type": {
@@ -46,8 +46,7 @@
         "default": {
             "title": "Utforska valfri plats",
             "subtitle": "S\u00f6k efter en adress eller klicka var som helst p\u00e5 kartan.",
-            "try": "Prova",
-            "legend_hint": "Gr\u00f6nt = positivt. Lila = risk."
+            "try": "Prova"
         },
         "empty": {
             "title": "Klicka p\u00e5 ett omr\u00e5de",
