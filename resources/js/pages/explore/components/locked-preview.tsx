@@ -4,7 +4,6 @@ import { PercentileBar } from '@/components/percentile-bar';
 import { Button } from '@/components/ui/button';
 import { useTranslation } from '@/hooks/use-translation';
 import { Database, GraduationCap, Lock } from 'lucide-react';
-import { useMemo } from 'react';
 
 import type {
     PreviewCategory,
@@ -102,29 +101,6 @@ function FreeIndicatorRow({
     );
 }
 
-function LockedIndicatorRows({ count }: { count: number }) {
-    const barWidths = useMemo(() => {
-        return Array.from({ length: count }, (_, i) => {
-            const base = ((i * 37 + 13) % 35) + 55;
-            return `${base}%`;
-        });
-    }, [count]);
-
-    return (
-        <div className="mt-2 space-y-2 opacity-50">
-            {barWidths.map((_, i) => (
-                <div key={i} className="flex items-center gap-3 py-1">
-                    <div
-                        className="h-3 flex-1 rounded bg-muted"
-                        style={{ maxWidth: '45%' }}
-                    />
-                    <div className="h-2 w-20 shrink-0 rounded-full bg-muted" />
-                    <div className="h-3 w-10 shrink-0 rounded bg-muted" />
-                </div>
-            ))}
-        </div>
-    );
-}
 
 function LockedCountLabel({ count }: { count: number }) {
     return (
@@ -153,34 +129,21 @@ function CategorySection({
 
             {/* Free preview indicators with real values */}
             {category.free_indicators.length > 0 ? (
-                category.free_indicators.map((indicator) => (
-                    <FreeIndicatorRow
-                        key={indicator.slug}
-                        indicator={indicator}
-                        meta={indicatorMeta?.[indicator.slug]}
-                    />
-                ))
-            ) : (
-                <LockedIndicatorRows
-                    count={Math.min(category.indicator_count, 3)}
-                />
-            )}
-
-            {/* Locked indicators (gray bars matching layout) */}
-            {category.free_indicators.length > 0 &&
-                category.locked_count > 0 && (
-                    <>
-                        <LockedIndicatorRows
-                            count={Math.min(category.locked_count, 3)}
+                <>
+                    {category.free_indicators.map((indicator) => (
+                        <FreeIndicatorRow
+                            key={indicator.slug}
+                            indicator={indicator}
+                            meta={indicatorMeta?.[indicator.slug]}
                         />
+                    ))}
+                    {category.locked_count > 0 && (
                         <LockedCountLabel count={category.locked_count} />
-                    </>
-                )}
-
-            {/* Data scale stat line */}
-            <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
-                {category.stat_line}
-            </p>
+                    )}
+                </>
+            ) : (
+                <LockedCountLabel count={category.indicator_count} />
+            )}
         </div>
     );
 }
@@ -314,17 +277,8 @@ export function LockedPreviewContent({
                 <SourceBadges sources={preview.sources} />
             )}
 
-            {/* First CTA */}
-            <div ref={ctaRef} className="mt-4">
-                <a href={`/purchase/${lat},${lng}`}>
-                    <Button className="w-full" size="lg">
-                        {t('sidebar.preview.unlock_button')}
-                    </Button>
-                </a>
-                <p className="mt-1.5 text-center text-xs text-muted-foreground">
-                    {t('sidebar.preview.one_time')}
-                </p>
-            </div>
+            {/* Anchor for sticky CTA visibility observer */}
+            <div ref={ctaRef} />
 
             {/* Category sections with free + locked indicators */}
             <div className="mt-6 divide-y divide-border">
