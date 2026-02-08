@@ -81,6 +81,7 @@ interface LocationData {
         factor_scores: Record<string, number> | null;
     } | null;
     tier: number;
+    display_radius: number;
     proximity: ProximityData | null;
     indicators: Array<{
         slug: string;
@@ -564,7 +565,7 @@ export default function MapPage({
                 setTimeout(() => {
                     mapRef.current?.dropPin(lat, lng);
                     mapRef.current?.zoomToPoint(lat, lng, 14);
-                    mapRef.current?.setRadiusCircle(lat, lng, 3000);
+                    mapRef.current?.setRadiusCircle(lat, lng, 2000);
                     handlePinDrop(lat, lng);
                 }, 500);
             }
@@ -599,12 +600,12 @@ export default function MapPage({
 
             // Zoom to neighborhood level and show radius
             mapRef.current?.zoomToPoint(lat, lng, 14);
-            mapRef.current?.setRadiusCircle(lat, lng, 3000);
+            mapRef.current?.setRadiusCircle(lat, lng, data.display_radius);
 
             // Set school markers on map
             mapRef.current?.setSchoolMarkers(data.schools);
 
-            // Set POI markers within 3km radius (with icons)
+            // Set POI markers within radius (with icons)
             if (data.pois?.length > 0) {
                 mapRef.current?.setPoiMarkers(data.pois, data.poi_categories);
             }

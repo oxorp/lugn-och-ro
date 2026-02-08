@@ -1,723 +1,771 @@
-# TASK: Public Transport Accessibility — GTFS Ingestion & Transit Scoring
+# AMENDMENT: GTFS Transit Task — OSM Migration, Deduplication & Performance
 
-## Context
+## Applies To
 
-Public transport accessibility is one of the strongest property value predictors in Sweden. A 2BR in Sundbyberg (8 min to T-Centralen) costs 2× what the same apartment costs in Märsta (40 min). The difference isn't crime, schools, or demographics — it's the commute. We need to capture this.
+`task-gtfs-transit.md` (Public Transport Accessibility — GTFS Ingestion & Transit Scoring)
 
-The good news: **we don't need to deal with 21 different regional operators.** Samtrafiken (the consortium of all Swedish regional transport authorities) publishes **GTFS Sverige 2** — a single unified GTFS feed covering every public transport operator in the country. 69 operators, ~47,000 stops, ~5,700 routes, CC0 license, updated daily, free API key from Trafiklab.
-
-The hard news: raw GTFS data is a timetable, not a score. Converting "bus 176 departs stop 740012345 at 07:23" into "this DeSO has excellent transit access" requires real thinking about what matters.
+This amendment addresses the fact that the proximity scoring task already ingests transit stops from OpenStreetMap. The GTFS task was written assuming a blank slate. This document specifies how GTFS data replaces, coexists with, and supersedes OSM transit data.
 
 ---
 
-## The Core Question: What Actually Matters for Property Value?
+## The Situation
 
-### What Doesn't Work: Counting Stops
+### What We Already Have (from proximity task)
 
-A DeSO with 12 bus stops sounds better than one with 3. But what if those 12 stops are all on the same local line that runs twice an hour to a village center? And the 3 stops include a commuter rail station with 6-minute headways to Stockholm Central?
+The proximity scoring task ingests transit stops via OSM Overpass:
+```
+node["public_transport"="stop_position"](area.sweden);
+node["highway"="bus_stop"](area.sweden);
+node["railway"="station"](area.sweden);
+node["railway"="tram_stop"](area.sweden);
+node["railway"="halt"](area.sweden);
+```
 
-Stop count is noise. **Frequency-weighted reachability is signal.**
+These go into two places:
+1. **`transit_stops` table** — dedicated table with lat/lng, name, basic type
+2. **`pois` table** — transit stops also inserted as POIs with `category = 'transit_stop'`
 
-### What Matters (Ranked by Property Value Impact)
+OSM gives us: location, name, basic type tag. ~30,000-60,000 stops.
 
-1. **Commute time to nearest major employment center** — The killer metric. How long does it take to get to work from here? A DeSO where you can reach Stockholm CBD in 20 minutes is worth dramatically more than one where it takes 55 minutes, even if the latter has "more stops."
+OSM does NOT give us: departure frequency, route information, operating hours, mode quality, operator, whether the stop is actually active.
 
-2. **Service frequency (headways)** — A stop with a bus every 5 minutes is fundamentally different from one with a bus every 60 minutes. Frequency determines whether transit is a viable daily transport mode or an emergency fallback.
+### What GTFS Gives Us
 
-3. **Mode quality** — Rail > subway/tram > bus rapid transit > regular bus > on-demand/flex. Rail-connected areas command premiums because rail is faster, more reliable, and harder to cut. Rail doesn't get stuck in traffic.
+GTFS Sverige 2 gives us: everything OSM has, plus departure counts per time window, route types with extended mode classification, operator info, service patterns, parent-station grouping. ~47,000 stops.
 
-4. **First/last mile** — How far do you walk to the nearest high-frequency stop? 300m vs 1200m is the difference between "I take transit daily" and "I drive."
-
-5. **Service span** — Does transit run evenings and weekends? A bus that stops at 19:00 isn't real transit for anyone with a social life.
-
-6. **Reliability** — Consistently on time vs. chronically delayed. (We can get this from GTFS-RT data but it's a stretch goal.)
+**GTFS is the authority on transit.** OSM is community-maintained and varies wildly in completeness — some stops have detailed metadata, others are just a dot on the map. GTFS is the official timetable from Samtrafiken, updated daily, covering every licensed operator in Sweden.
 
 ---
 
-## Step 1: Data Source — Trafiklab GTFS Sverige 2
+## Decision: GTFS Replaces OSM for Transit
 
-### 1.1 What We're Using
+### What happens to OSM transit data
 
-| Field | Detail |
-|---|---|
-| Dataset | GTFS Sverige 2 |
-| Provider | Trafiklab / Samtrafiken |
-| URL | https://www.trafiklab.se/api/gtfs-datasets/gtfs-sverige-2/ |
-| Coverage | All public transport operators in Sweden |
-| Operators | ~69 (SL, Västtrafik, Skånetrafiken, SJ, MTRX, Vy, etc.) |
-| Stops | ~47,000 |
-| Routes | ~5,700 |
-| Format | GTFS (zip of CSV files) |
-| License | CC0 1.0 (public domain) |
-| Update frequency | Daily |
-| Auth | Free API key from Trafiklab |
-| Size | ~40 MB compressed |
+**Discard it.** When GTFS ingestion runs:
 
-### 1.2 Why GTFS Sverige 2 Over GTFS Regional or Sweden 3
+1. Delete all rows from `pois` where `source = 'osm'` AND `category IN ('transit_stop', 'bus_stop', 'tram_stop', 'rail_station', 'subway_station')` — any transit-related POI sourced from OSM
+2. Delete all rows from `transit_stops` where `source = 'osm'` (if the source column exists) or truncate if the table was exclusively OSM-sourced
+3. Import GTFS stops into `transit_stops` (the authoritative table)
+4. Insert qualifying GTFS stops into `pois` (only high-value stops, per the display tier logic in the GTFS task)
 
-- **Sverige 2** has complete coverage of all operators. Regional and Sweden 3 are still catching up.
-- We don't need shapes.txt (route geometry) or real-time data for scoring. We need stop locations and frequencies.
-- Single file, single download, no operator-by-operator assembly.
-- Sverige 2 is the established dataset with 5+ years of archives (via KoDa API) for historical analysis.
+### Why not keep both and deduplicate?
 
-### 1.3 GTFS File Structure (What We Use)
+Deduplication between OSM and GTFS is surprisingly hard and not worth the effort:
 
-From the zip, we need these files:
+- **ID mismatch:** OSM uses `node:12345678`, GTFS uses `740012345`. No shared key.
+- **Name mismatch:** OSM might say "Sundbybergs station" while GTFS says "Sundbyberg station" or "Sundbyberg". Fuzzy matching at scale = bugs.
+- **Coordinate drift:** OSM has the stop at 59.36128, 17.97189. GTFS has it at 59.36132, 17.97185. Close but not identical. Matching on "within 50m" catches false positives in dense urban areas where stops are 30m apart.
+- **Granularity mismatch:** GTFS has parent stations with child platforms. OSM sometimes has the station as one node, sometimes individual platforms, sometimes both. Merging this is a headache with zero value.
+- **The merge adds nothing:** Every useful field GTFS has, OSM either also has (location, name) or doesn't have at all (frequency, routes). There's no OSM-only transit data worth preserving.
 
-| File | What It Contains | Our Use |
-|---|---|---|
-| `stops.txt` | Stop locations (id, name, lat, lng) | Stop coordinates → DeSO assignment |
-| `routes.txt` | Route definitions (id, name, type) | Mode classification (bus/rail/tram/ferry) |
-| `trips.txt` | Individual trips on routes | Link routes to stop sequences |
-| `stop_times.txt` | Arrival/departure times per stop per trip | Frequency calculation |
-| `calendar.txt` | Service days (M-F, weekends) | Weekday vs weekend frequency |
-| `calendar_dates.txt` | Exceptions (holidays) | Filter out non-representative days |
-| `agency.txt` | Operator info | Operator name for display |
+**The only exception:** If OSM has transit stops that GTFS somehow misses (informal stops, very recent additions not yet in the timetable), those are edge cases not worth building infrastructure for.
 
-We do NOT need: `shapes.txt` (route geometry), `transfers.txt` (transfer rules), `fare_*.txt` (pricing).
+### Migration command
 
-### 1.4 API Key
-
-Register at https://www.trafiklab.se/ to get a free API key. Store in `.env`:
-
-```
-TRAFIKLAB_API_KEY=your_key_here
-```
-
-Download URL:
-```
-https://opendata.samtrafiken.se/gtfs/sweden/sweden.zip?key={TRAFIKLAB_API_KEY}
-```
-
----
-
-## Step 2: What We Compute (Three Indicators)
-
-### Indicator 1: Transit Frequency Score
-
-**What:** How much transit service exists in/near this DeSO?
-
-**Method:** For each DeSO, find all stops within the DeSO boundary (or within 400m of boundary for edge stops). For each stop, count the number of departures on a representative weekday (Tuesday or Wednesday, non-holiday) between 06:00-20:00. Sum across all stops, weight by mode:
-
-```
-frequency_score = Σ (departures_per_stop × mode_weight)
-
-mode_weights:
-  commuter_rail / intercity_rail: 3.0    (route_type 100-199)
-  subway / metro:                 3.0    (route_type 400-499)  
-  tram / light rail:              2.0    (route_type 900-999, 0)
-  bus rapid transit:              1.5    (route_type 700-799 if identifiable)
-  regular bus:                    1.0    (route_type 3, 200-299)
-  ferry:                          0.5    (route_type 4, 1000-1099)
-  on-demand / flex:               0.3    (route_type 1500+)
-```
-
-**Why weight by mode?** A commuter rail departure is worth more than a bus departure because: faster, more reliable, longer range, harder infrastructure (signals permanence — rail lines don't get canceled like bus routes).
-
-**Normalization:** Percentile rank across all DeSOs. This becomes `transit_frequency_score` indicator.
-
-### Indicator 2: Station Proximity Score
-
-**What:** How close is the nearest high-quality transit stop?
-
-**Method:** For each DeSO centroid, compute distance to:
-- Nearest rail station (SJ, commuter rail, subway) → `distance_rail_m`
-- Nearest high-frequency bus/tram stop (≥4 departures/hour in peak) → `distance_hf_transit_m`
-
-Combine into a proximity score using distance decay:
-
-```
-proximity_score = 
-    0.6 × max(0, 1 - (distance_rail_m / 5000)²) +     // Rail within 5km
-    0.4 × max(0, 1 - (distance_hf_transit_m / 1500)²)  // HF transit within 1.5km
-```
-
-Quadratic decay: being 500m from a rail station is dramatically better than being 2km away, but the difference between 4km and 5km barely matters.
-
-**Why this matters:** In Stockholm, the subway map essentially IS the property value map. Being within walking distance of a T-bana station is worth 15-20% on an apartment. Same for pendeltåg stations. In Gothenburg, tram proximity matters similarly.
-
-**Normalization:** Percentile rank. Becomes `transit_proximity_score`.
-
-### Indicator 3: Commute Time Estimate
-
-**What:** Estimated public transit commute time to the nearest major employment center.
-
-**Method:** This is the most valuable and most complex metric.
-
-**Step A — Define employment centers:**
-
-| Rank | Center | Coordinates | Regional Gravity |
-|---|---|---|---|
-| 1 | Stockholm T-Centralen | 59.3309, 18.0597 | National |
-| 2 | Göteborg Centralstation | 57.7089, 11.9740 | Regional |
-| 3 | Malmö Centralstation | 55.6092, 13.0007 | Regional |
-| 4 | Uppsala Centralstation | 59.8585, 17.6448 | Sub-regional |
-| 5 | Linköping Centralstation | 58.4165, 15.6253 | Sub-regional |
-| 6 | Västerås Centralstation | 59.6099, 16.5448 | Sub-regional |
-| 7 | Örebro Centralstation | 59.2753, 15.2134 | Sub-regional |
-| 8 | Umeå Centralstation | 63.8258, 20.2630 | Northern |
-| 9 | Lund Centralstation | 55.7087, 13.1870 | Sub-regional |
-| 10 | Jönköping Resecentrum | 57.7826, 14.1618 | Sub-regional |
-
-For each DeSO: find the nearest employment center, then estimate transit time.
-
-**Step B — Estimate transit time:**
-
-We have two approaches, from simple to sophisticated:
-
-**Simple (Phase 1):** Straight-line distance to nearest center + mode-based speed estimate:
-```
-if has_rail_station_within_2km:
-    estimated_time = (distance_to_center_km / 50) * 60 + 10  // Rail avg 50km/h + 10min access
-elif has_hf_bus_within_500m:
-    estimated_time = (distance_to_center_km / 25) * 60 + 10  // Bus avg 25km/h + 10min access
-else:
-    estimated_time = (distance_to_center_km / 20) * 60 + 20  // Slow transit + long access
-```
-
-This is a rough proxy but captures the right ordering: rail-connected suburbs beat bus-only suburbs beat isolated areas.
-
-**Sophisticated (Phase 2):** Use OpenTripPlanner (OTP) with the GTFS data to compute actual routing. OTP can answer "what's the fastest trip from point A to point B departing at 08:00 on a Tuesday?" accounting for real routes, transfers, and walking. Run this for each DeSO centroid → nearest employment center. This gives actual commute times.
-
-OTP is a Java application, so we'd run it as a Docker sidecar or use a hosted instance. This is a separate infrastructure task but would give us gold-standard commute data.
-
-**Phase 1 is sufficient for launch.** The distance-based estimate with mode adjustment correlates well enough with actual commute times for scoring purposes. Phase 2 is a future enhancement.
-
-**Normalization:** Inverse percentile rank (shorter commute = higher score). Becomes `transit_commute_score`.
-
----
-
-## Step 3: Database Schema
-
-### 3.1 Transit Stops Table
+Add to the GTFS ingestion command:
 
 ```php
-Schema::create('transit_stops', function (Blueprint $table) {
-    $table->id();
-    $table->string('gtfs_stop_id', 30)->unique()->index();
-    $table->string('name');
-    $table->decimal('lat', 10, 7);
-    $table->decimal('lng', 10, 7);
-    $table->string('deso_code', 10)->nullable()->index();   // Resolved via ST_Contains
-    $table->string('kommun_code', 4)->nullable();
-    $table->string('parent_station', 30)->nullable();        // GTFS parent_station field
-    $table->unsignedTinyInteger('location_type')->default(0); // 0=stop, 1=station
-    $table->timestamps();
-});
+// Step 0: Clear OSM transit data before importing GTFS
+$this->info('Clearing OSM-sourced transit data...');
 
-// Spatial column + index
-DB::statement("SELECT AddGeometryColumn('public', 'transit_stops', 'geom', 4326, 'POINT', 2)");
-DB::statement("CREATE INDEX transit_stops_geom_idx ON transit_stops USING GIST (geom)");
+$deletedPois = Poi::where('source', 'osm')
+    ->whereIn('category', ['transit_stop', 'bus_stop', 'tram_stop', 'rail_station', 'subway_station', 'transit'])
+    ->delete();
+$this->info("  Deleted {$deletedPois} OSM transit POIs");
+
+$deletedStops = TransitStop::where('source', 'osm')->delete();
+// Or if no source column: TransitStop::truncate();
+$this->info("  Deleted {$deletedStops} OSM transit stops");
+
+// Step 1-5: GTFS import as specified in the main task
 ```
 
-### 3.2 Transit Stop Frequencies Table
+### The `source` column
 
-Pre-computed: how many departures does each stop have, by mode and day type?
+Both `transit_stops` and `pois` should have a `source` column if they don't already. This makes the "delete old source, import new source" pattern clean:
 
 ```php
-Schema::create('transit_stop_frequencies', function (Blueprint $table) {
-    $table->id();
-    $table->string('gtfs_stop_id', 30)->index();
-    $table->string('feed_version', 20);                      // Which GTFS download
-    $table->string('day_type', 10);                          // "weekday", "saturday", "sunday"
-    $table->string('route_type', 10);                        // GTFS route_type (100, 3, 900, etc.)
-    $table->string('mode_category', 20);                     // "rail", "subway", "tram", "bus", "ferry"
-    $table->integer('departures_06_09')->default(0);         // Morning peak
-    $table->integer('departures_09_15')->default(0);         // Midday
-    $table->integer('departures_15_18')->default(0);         // Afternoon peak
-    $table->integer('departures_18_22')->default(0);         // Evening
-    $table->integer('departures_06_20_total')->default(0);   // Full service day
-    $table->integer('distinct_routes')->default(0);          // How many different routes serve this stop
-    $table->timestamps();
-
-    $table->unique(['gtfs_stop_id', 'feed_version', 'day_type', 'mode_category']);
+// If not already present
+Schema::table('transit_stops', function (Blueprint $table) {
+    $table->string('source', 20)->default('osm')->index();  // 'osm' or 'gtfs'
 });
 ```
 
-### 3.3 Employment Centers Table
+After GTFS import, all transit_stops have `source = 'gtfs'`. Future re-imports do `DELETE WHERE source = 'gtfs'` then reimport — idempotent.
+
+### Update proximity scoring
+
+The `ProximityScoreService::scoreTransit()` method queries `transit_stops` directly. No code change needed — it doesn't care whether the data came from OSM or GTFS. The table structure stays the same, just with better data in it.
+
+The one code change: after GTFS import, `transit_stops` has `weekly_departures` and `routes_count` populated (these were likely NULL with OSM data). The proximity scorer can now use frequency weighting:
 
 ```php
-Schema::create('employment_centers', function (Blueprint $table) {
-    $table->id();
-    $table->string('name');
-    $table->string('rank', 20);          // "national", "regional", "sub-regional", "northern"
-    $table->decimal('lat', 10, 7);
-    $table->decimal('lng', 10, 7);
-    $table->integer('gravity_radius_km'); // How far this center's influence extends
-    $table->timestamps();
-});
-
-DB::statement("SELECT AddGeometryColumn('public', 'employment_centers', 'geom', 4326, 'POINT', 2)");
-```
-
-### 3.4 Indicators
-
-Add to the indicators seeder:
-
-| slug | name | unit | direction | weight | category |
-|---|---|---|---|---|---|
-| `transit_frequency` | Transit Service Frequency | index | positive | 0.05 | transport |
-| `transit_proximity` | Transit Station Proximity | index | positive | 0.08 | transport |
-| `transit_commute` | Estimated Commute Time | minutes | negative | 0.07 | transport |
-
-**Total transport weight: 0.20** — significant but not dominant. Steal from unallocated budget.
-
-Updated weight budget:
-
-| Category | Weight |
-|---|---|
-| Income (SCB) | 0.20 |
-| Employment (SCB) | 0.10 |
-| Education — demographics (SCB) | 0.10 |
-| Education — school quality (Skolverket) | 0.25 |
-| Transport (GTFS) | 0.20 |
-| **Unallocated** (crime, debt, POI) | **0.15** |
-
----
-
-## Step 4: Ingestion Pipeline
-
-### 4.1 Artisan Command: Download & Parse GTFS
-
-```bash
-php artisan ingest:gtfs [--feed=sverige2]
-```
-
-**Phase 1: Download**
-```php
-$url = "https://opendata.samtrafiken.se/gtfs/sweden/sweden.zip?key=" . config('services.trafiklab.api_key');
-$zipPath = Storage::path('data/raw/gtfs_sverige2.zip');
-Http::withOptions(['sink' => $zipPath])->get($url);
-```
-
-**Phase 2: Extract & Import Stops**
-
-Parse `stops.txt` — a CSV with ~47,000 rows:
-```
-stop_id,stop_name,stop_lat,stop_lon,location_type,parent_station
-740012345,Sundbybergs station,59.361282,17.971893,1,
-740012346,Sundbybergs station spår 1,59.361282,17.971893,0,740012345
-```
-
-Import only `location_type = 0` (actual stops) and `location_type = 1` (stations). Skip entrances/exits (type 2) and generic nodes (type 3).
-
-**Phase 3: Compute Frequencies**
-
-This is the heavy part. `stop_times.txt` has millions of rows (every departure at every stop):
-```
-trip_id,arrival_time,departure_time,stop_id,stop_sequence
-12345,07:23:00,07:23:00,740012345,5
-12345,07:28:00,07:28:00,740012346,6
-```
-
-Algorithm:
-1. From `calendar.txt`, identify service IDs active on a representative weekday (pick a typical Tuesday 4-6 weeks from now, exclude holidays via `calendar_dates.txt`)
-2. From `trips.txt`, get all trips running on that service day, along with their `route_id`
-3. From `routes.txt`, get the `route_type` for each route
-4. From `stop_times.txt`, for each stop, count departures in each time window, grouped by route mode
-5. Bulk insert into `transit_stop_frequencies`
-
-**Performance concern:** `stop_times.txt` for all of Sweden could be 5-10 million rows. Don't load into memory. Stream-parse the CSV:
-
-```php
-$handle = fopen($stopTimesPath, 'r');
-$header = fgetcsv($handle);
-
-$counts = []; // [stop_id][mode_category][time_bucket] => count
-
-while (($row = fgetcsv($handle)) !== false) {
-    $tripId = $row[$tripIdCol];
-    
-    // Check if this trip runs on our target service day
-    if (!isset($activeTrips[$tripId])) continue;
-    
-    $stopId = $row[$stopIdCol];
-    $departureTime = $row[$departureTimeCol];
-    $routeType = $tripRouteTypes[$tripId];
-    $mode = $this->classifyMode($routeType);
-    $bucket = $this->timeBucket($departureTime);
-    
-    $counts[$stopId][$mode][$bucket] = ($counts[$stopId][$mode][$bucket] ?? 0) + 1;
-}
-```
-
-**Batch this.** Build the lookup maps (active trips, route types) first by scanning `calendar.txt`, `trips.txt`, `routes.txt` (all small). Then single-pass through `stop_times.txt` (large).
-
-### 4.2 DeSO Assignment
-
-After importing stops, spatial join to DeSOs:
-
-```sql
-UPDATE transit_stops ts
-SET deso_code = d.deso_code
-FROM deso_areas d
-WHERE ST_Contains(d.geom, ts.geom)
-  AND ts.geom IS NOT NULL
-  AND ts.deso_code IS NULL;
-```
-
-### 4.3 Mode Classification
-
-GTFS `route_type` values (extended types used by Trafiklab):
-
-```php
-private function classifyMode(int $routeType): string
+private function scoreTransit(float $lat, float $lng, float $safetyScore = 1.0): ProximityFactor
 {
-    return match(true) {
-        $routeType >= 100 && $routeType < 200 => 'rail',       // Railway
-        $routeType >= 200 && $routeType < 300 => 'bus',        // Coach / long-distance bus
-        $routeType == 3 || ($routeType >= 700 && $routeType < 800) => 'bus',  // City bus
-        $routeType >= 400 && $routeType < 500 => 'subway',     // Metro/subway
-        $routeType == 0 || ($routeType >= 900 && $routeType < 1000) => 'tram', // Tram/light rail
-        $routeType == 4 || ($routeType >= 1000 && $routeType < 1100) => 'ferry',
-        $routeType >= 1500 => 'on_demand',                     // Flex / demand-responsive
-        default => 'bus',                                        // Fallback
-    };
-}
-```
+    $stops = DB::select("
+        SELECT ts.*, 
+               ST_Distance(ts.geom::geography, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography) as distance_m
+        FROM transit_stops ts
+        WHERE ST_DWithin(ts.geom::geography, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, 1000)
+        ORDER BY distance_m
+        LIMIT 10
+    ", [$lng, $lat, $lng, $lat]);
 
----
+    if (empty($stops)) {
+        return new ProximityFactor(slug: 'transit', score: 0, details: [...]);
+    }
 
-## Step 5: Aggregation to DeSO Indicators
+    // Best stop: highest mode_weight × frequency, closest distance
+    $bestScore = 0;
+    $bestStop = null;
 
-### 5.1 Artisan Command
-
-```bash
-php artisan aggregate:transit-indicators [--feed-version=2026-02]
-```
-
-### 5.2 Transit Frequency Score (per DeSO)
-
-```php
-foreach ($desoCodes as $desoCode) {
-    // Get all stops in this DeSO
-    $stops = TransitStop::where('deso_code', $desoCode)->pluck('gtfs_stop_id');
-    
-    // Get weekday frequencies for these stops
-    $frequencies = TransitStopFrequency::whereIn('gtfs_stop_id', $stops)
-        ->where('day_type', 'weekday')
-        ->get();
-    
-    $weightedDepartures = $frequencies->sum(function ($f) {
-        $modeWeight = match($f->mode_category) {
-            'rail' => 3.0,
-            'subway' => 3.0,
-            'tram' => 2.0,
-            'bus' => 1.0,
-            'ferry' => 0.5,
-            'on_demand' => 0.3,
+    foreach ($stops as $stop) {
+        $modeWeight = match($stop->stop_type ?? 'bus') {
+            'rail', 'subway' => 1.5,
+            'tram' => 1.2,
             default => 1.0,
         };
-        return $f->departures_06_20_total * $modeWeight;
-    });
-    
-    // Store as indicator raw value
-    IndicatorValue::updateOrCreate(
-        ['deso_code' => $desoCode, 'indicator_id' => $freqIndicator->id, 'year' => $year],
-        ['raw_value' => $weightedDepartures]
+
+        // Frequency bonus: a stop with 200 departures/day is much better than 5
+        $freqBonus = $stop->weekly_departures
+            ? min(1.5, 0.5 + log10(max(1, $stop->weekly_departures / 7)) / 3)
+            : 1.0;  // Default if no frequency data (backward compat with OSM)
+
+        $settings = $this->getCategorySettings()->get('transit_stop');
+        $decay = $this->decayWithSafety(
+            $stop->distance_m,
+            $settings->max_distance_m ?? 1000,
+            $safetyScore,
+            $settings->safety_sensitivity ?? 0.5,
+        );
+
+        $score = $decay * $modeWeight * $freqBonus * 100;
+
+        if ($score > $bestScore) {
+            $bestScore = $score;
+            $bestStop = $stop;
+        }
+    }
+
+    return new ProximityFactor(
+        slug: 'transit',
+        score: min(100, round($bestScore)),
+        details: [
+            'nearest_stop' => $bestStop->name,
+            'nearest_distance_m' => round($bestStop->distance_m),
+            'mode' => $bestStop->stop_type ?? 'bus',
+            'weekly_departures' => $bestStop->weekly_departures,
+        ],
     );
 }
 ```
 
-### 5.3 Transit Proximity Score (per DeSO)
+---
+
+## POI Table Strategy
+
+### Which GTFS stops go into the `pois` table?
+
+The GTFS task already specifies this (Step 7), but to be explicit about the POI integration:
+
+**DO insert into `pois`:**
+- Major rail stations (intercity, >20 departures/day) → `category: 'rail_station'`, display tier 1
+- Commuter rail + subway stations → `category: 'rail_station'`, display tier 2
+- Tram stops → `category: 'tram_stop'`, display tier 3
+- High-frequency bus stops (≥56 departures/day i.e. ≥4/hour over 14 hours) → `category: 'bus_stop_hf'`, display tier 4
+
+**DO NOT insert into `pois`:**
+- Regular bus stops (<4 departures/hour) — there are ~35,000 of these, they'd overwhelm the map
+- Individual platforms (location_type = 0 with a parent_station) — use parent station only
+- Inactive/seasonal stops
+
+**POI metadata for transit:**
+
+```php
+Poi::updateOrCreate(
+    ['source' => 'gtfs', 'source_id' => $station->gtfs_stop_id],
+    [
+        'category' => $this->poiCategory($station, $frequency),
+        'subcategory' => $modeCategory,  // 'rail', 'subway', 'tram', 'bus'
+        'name' => $station->name,
+        'lat' => $station->lat,
+        'lng' => $station->lng,
+        'signal' => 'positive',
+        'metadata' => [
+            'departures_weekday' => $frequency->departures_06_20_total,
+            'departures_peak_hour' => max($frequency->departures_06_09 / 3, $frequency->departures_15_18 / 3),
+            'distinct_routes' => $frequency->distinct_routes,
+            'mode' => $modeCategory,
+            'operators' => $operators,
+        ],
+        'source' => 'gtfs',
+        'source_id' => $station->gtfs_stop_id,
+    ]
+);
+```
+
+### What about non-transit POIs from OSM?
+
+Parks, grocery stores, cafés, gyms, negative POIs — all of these remain sourced from OSM. Only transit POIs get replaced by GTFS. The `pois` table will have mixed sources:
+
+```
+source = 'osm'   → parks, grocery, cafes, gyms, pawnbrokers, gambling, etc.
+source = 'gtfs'  → rail stations, subway, tram stops, high-frequency bus stops
+```
+
+The `source` column makes this clean. OSM ingestion command skips transit categories. GTFS ingestion command only touches transit categories.
+
+```php
+// In the OSM ingestion command, add an exclusion:
+// Skip transit categories — these come from GTFS
+$skipCategories = ['transit_stop', 'bus_stop', 'tram_stop', 'rail_station', 'subway_station'];
+```
+
+---
+
+## Processing Speed Optimization
+
+### The Problem
+
+`stop_times.txt` for all of Sweden is 5-10 million rows. Parsing this in PHP with `fgetcsv` works but is slow. The GTFS task says "stream, don't load into memory" — correct, but we can do better.
+
+### Strategy: Pre-process in Python, Import in Laravel
+
+The frequency computation (counting departures per stop per mode per time window) is a classic data-crunching job. Python with pandas does this 10-50× faster than PHP CSV parsing.
+
+```
+Flow:
+1. Laravel downloads the GTFS zip
+2. Laravel calls Python script to compute frequencies
+3. Python outputs a single CSV: stop_id, mode, day_type, departures_per_bucket
+4. Laravel imports the CSV into transit_stop_frequencies (bulk insert)
+5. Laravel imports stops.txt directly (simple, 47k rows)
+6. Laravel does spatial joins and indicator aggregation
+```
+
+### Python Frequency Script
+
+```python
+#!/usr/bin/env python3
+"""
+Pre-process GTFS stop_times.txt into per-stop frequency counts.
+Called from Laravel: php artisan ingest:gtfs
+
+Input: extracted GTFS directory
+Output: CSV with stop frequencies ready for bulk import
+"""
+import pandas as pd
+import sys
+from pathlib import Path
+
+def main(gtfs_dir: str, output_path: str, target_date: str = None):
+    gtfs = Path(gtfs_dir)
+    
+    # 1. Load small files fully (these are tiny)
+    calendar = pd.read_csv(gtfs / 'calendar.txt', dtype=str)
+    calendar_dates = pd.read_csv(gtfs / 'calendar_dates.txt', dtype=str)
+    trips = pd.read_csv(gtfs / 'trips.txt', dtype=str, usecols=['trip_id', 'route_id', 'service_id'])
+    routes = pd.read_csv(gtfs / 'routes.txt', dtype=str, usecols=['route_id', 'route_type'])
+    routes['route_type'] = routes['route_type'].astype(int)
+    
+    # 2. Find active services for target date
+    # (pick a representative Tuesday 4 weeks from now if not specified)
+    if target_date is None:
+        import datetime
+        today = datetime.date.today()
+        # Find next Tuesday that's at least 4 weeks out
+        days_until_tuesday = (1 - today.weekday()) % 7
+        if days_until_tuesday == 0:
+            days_until_tuesday = 7
+        target = today + datetime.timedelta(days=days_until_tuesday + 28)
+        target_date = target.strftime('%Y%m%d')
+    
+    dow = pd.Timestamp(target_date).day_name().lower()
+    active_services = set(
+        calendar[calendar[dow] == '1']['service_id']
+    )
+    # Add exceptions
+    additions = set(
+        calendar_dates[
+            (calendar_dates['date'] == target_date) & 
+            (calendar_dates['exception_type'] == '1')
+        ]['service_id']
+    )
+    removals = set(
+        calendar_dates[
+            (calendar_dates['date'] == target_date) & 
+            (calendar_dates['exception_type'] == '2')
+        ]['service_id']
+    )
+    active_services = (active_services | additions) - removals
+    
+    # 3. Filter trips to active services, merge with route type
+    active_trips = trips[trips['service_id'].isin(active_services)].merge(
+        routes, on='route_id', how='left'
+    )
+    active_trip_ids = set(active_trips['trip_id'])
+    trip_route_type = dict(zip(active_trips['trip_id'], active_trips['route_type']))
+    
+    print(f"Active services: {len(active_services)}, Active trips: {len(active_trip_ids)}")
+    
+    # 4. Stream stop_times.txt in chunks — this is the big file
+    # Only load columns we need, filter immediately
+    chunk_results = []
+    
+    for chunk in pd.read_csv(
+        gtfs / 'stop_times.txt',
+        dtype=str,
+        usecols=['trip_id', 'departure_time', 'stop_id'],
+        chunksize=500_000,
+    ):
+        # Filter to active trips
+        chunk = chunk[chunk['trip_id'].isin(active_trip_ids)]
+        
+        if chunk.empty:
+            continue
+        
+        # Map route type
+        chunk['route_type'] = chunk['trip_id'].map(trip_route_type)
+        
+        # Parse departure hour (handle >24:00:00 overnight services)
+        chunk['hour'] = chunk['departure_time'].str.split(':').str[0].astype(int) % 24
+        
+        # Classify mode
+        chunk['mode'] = chunk['route_type'].astype(float).apply(classify_mode)
+        
+        # Classify time bucket
+        chunk['bucket'] = chunk['hour'].apply(classify_bucket)
+        
+        # Keep only 06-22 range
+        chunk = chunk[chunk['bucket'] != 'outside']
+        
+        chunk_results.append(
+            chunk.groupby(['stop_id', 'mode', 'bucket']).size().reset_index(name='departures')
+        )
+    
+    # 5. Combine all chunks
+    if not chunk_results:
+        print("ERROR: No departures found for target date")
+        sys.exit(1)
+    
+    result = pd.concat(chunk_results).groupby(['stop_id', 'mode', 'bucket'])['departures'].sum().reset_index()
+    
+    # 6. Pivot to wide format (one row per stop+mode)
+    pivot = result.pivot_table(
+        index=['stop_id', 'mode'],
+        columns='bucket',
+        values='departures',
+        fill_value=0,
+    ).reset_index()
+    
+    # Rename columns to match DB schema
+    pivot.columns = ['stop_id', 'mode', 'departures_06_09', 'departures_09_15', 'departures_15_18', 'departures_18_22']
+    pivot['departures_06_20_total'] = (
+        pivot['departures_06_09'] + pivot['departures_09_15'] + 
+        pivot['departures_15_18'] + pivot['departures_18_22']
+    )
+    
+    # Count distinct routes per stop+mode
+    # (we'd need to track this separately — simplified here)
+    pivot['day_type'] = 'weekday'
+    pivot['feed_version'] = target_date[:7]  # e.g., '2026-02'
+    
+    # 7. Write output
+    pivot.to_csv(output_path, index=False)
+    print(f"Written {len(pivot)} frequency records to {output_path}")
+    print(f"Unique stops: {pivot['stop_id'].nunique()}")
+    print(f"By mode: {pivot.groupby('mode')['departures_06_20_total'].sum().to_dict()}")
+
+
+def classify_mode(route_type):
+    if pd.isna(route_type):
+        return 'bus'
+    rt = int(route_type)
+    if 100 <= rt < 200: return 'rail'
+    if 400 <= rt < 500: return 'subway'
+    if rt == 0 or 900 <= rt < 1000: return 'tram'
+    if rt == 4 or 1000 <= rt < 1100: return 'ferry'
+    if rt >= 1500: return 'on_demand'
+    return 'bus'
+
+
+def classify_bucket(hour):
+    if 6 <= hour < 9: return 'departures_06_09'
+    if 9 <= hour < 15: return 'departures_09_15'
+    if 15 <= hour < 18: return 'departures_15_18'
+    if 18 <= hour < 22: return 'departures_18_22'
+    return 'outside'
+
+
+if __name__ == '__main__':
+    gtfs_dir = sys.argv[1]
+    output_path = sys.argv[2]
+    target_date = sys.argv[3] if len(sys.argv) > 3 else None
+    main(gtfs_dir, output_path, target_date)
+```
+
+### Performance Expectations
+
+| Step | Method | Time |
+|---|---|---|
+| Download GTFS zip (40MB) | HTTP | ~5s |
+| Extract zip | PHP ZipArchive | ~3s |
+| Python frequency computation | pandas chunked | **~30-60s** |
+| Import stops.txt (47k rows) | Laravel bulk insert | ~5s |
+| Import frequency CSV | Laravel bulk insert | ~10s |
+| Spatial join (stops → DeSO) | PostGIS ST_Contains | ~15s |
+| Clear old OSM transit data | DELETE WHERE source | ~2s |
+| Insert POIs (qualifying stops) | Laravel bulk insert | ~3s |
+| Aggregate to DeSO indicators | SQL + PHP | ~30s |
+| **Total** | | **~2-3 minutes** |
+
+Compare to pure PHP parsing of stop_times.txt: 15-30 minutes. Python with pandas chunked reading is the move.
+
+### Laravel Command Structure
+
+```php
+class IngestGtfs extends Command
+{
+    protected $signature = 'ingest:gtfs {--target-date=} {--skip-download}';
+
+    public function handle()
+    {
+        $log = IngestionLog::start('gtfs', 'ingest:gtfs');
+
+        try {
+            // Step 1: Download
+            if (!$this->option('skip-download')) {
+                $this->downloadGtfsFeed();
+            }
+
+            // Step 2: Extract
+            $extractDir = $this->extractZip();
+
+            // Step 3: Clear old transit data
+            $this->clearOldTransitData();
+
+            // Step 4: Import stops (PHP — simple CSV, 47k rows)
+            $stopCount = $this->importStops($extractDir);
+
+            // Step 5: Compute frequencies (Python — heavy lifting)
+            $freqCsv = $this->computeFrequencies($extractDir);
+
+            // Step 6: Import frequencies (PHP — bulk insert from CSV)
+            $freqCount = $this->importFrequencies($freqCsv);
+
+            // Step 7: Spatial join (PostGIS)
+            $this->assignDesoCodes();
+
+            // Step 8: Insert qualifying stops as POIs
+            $poiCount = $this->insertTransitPois();
+
+            // Step 9: Aggregate to DeSO-level indicators
+            $this->call('aggregate:transit-indicators');
+
+            $log->complete($stopCount, $poiCount);
+
+        } catch (\Exception $e) {
+            $log->fail($e->getMessage());
+            throw $e;
+        }
+    }
+
+    private function clearOldTransitData(): void
+    {
+        $this->info('Clearing old transit data...');
+
+        // Remove OSM-sourced transit POIs
+        $deletedPois = DB::table('pois')
+            ->where('source', 'osm')
+            ->where(function ($q) {
+                $q->where('category', 'like', 'transit%')
+                  ->orWhere('category', 'like', 'bus%')
+                  ->orWhere('category', 'like', 'rail%')
+                  ->orWhere('category', 'like', 'tram%')
+                  ->orWhere('category', 'like', 'subway%');
+            })
+            ->delete();
+
+        // Remove old GTFS data (for re-import idempotency)
+        $deletedStops = DB::table('transit_stops')->where('source', 'gtfs')->delete();
+        $deletedFreqs = DB::table('transit_stop_frequencies')->delete();
+
+        // Also remove old GTFS POIs
+        $deletedGtfsPois = DB::table('pois')->where('source', 'gtfs')->delete();
+
+        $this->info("  Cleared: {$deletedPois} OSM POIs, {$deletedStops} stops, {$deletedFreqs} frequencies, {$deletedGtfsPois} GTFS POIs");
+    }
+
+    private function computeFrequencies(string $extractDir): string
+    {
+        $outputCsv = storage_path('app/data/processed/gtfs_frequencies.csv');
+        $targetDate = $this->option('target-date');
+
+        $cmd = [
+            'python3',
+            base_path('scripts/compute_gtfs_frequencies.py'),
+            $extractDir,
+            $outputCsv,
+        ];
+        if ($targetDate) $cmd[] = $targetDate;
+
+        $this->info('Computing frequencies via Python...');
+        $process = Process::run($cmd);
+
+        if (!$process->successful()) {
+            throw new \RuntimeException("Python frequency computation failed: " . $process->errorOutput());
+        }
+
+        $this->info($process->output());
+        return $outputCsv;
+    }
+
+    private function importStops(string $extractDir): int
+    {
+        $stopsFile = $extractDir . '/stops.txt';
+        $handle = fopen($stopsFile, 'r');
+        $header = fgetcsv($handle);
+        $colMap = array_flip($header);
+
+        $batch = [];
+        $count = 0;
+
+        while (($row = fgetcsv($handle)) !== false) {
+            $locationType = (int) ($row[$colMap['location_type'] ?? -1] ?? 0);
+
+            // Only import stops (0) and stations (1)
+            if ($locationType > 1) continue;
+
+            $lat = (float) $row[$colMap['stop_lat']];
+            $lng = (float) $row[$colMap['stop_lon']];
+
+            // Skip if outside Sweden bounds
+            if ($lat < 55 || $lat > 69 || $lng < 11 || $lng > 25) continue;
+
+            $batch[] = [
+                'gtfs_stop_id' => $row[$colMap['stop_id']],
+                'name' => $row[$colMap['stop_name']],
+                'lat' => $lat,
+                'lng' => $lng,
+                'parent_station' => $row[$colMap['parent_station'] ?? -1] ?? null,
+                'location_type' => $locationType,
+                'source' => 'gtfs',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ];
+
+            if (count($batch) >= 1000) {
+                DB::table('transit_stops')->insert($batch);
+                $count += count($batch);
+                $batch = [];
+            }
+        }
+
+        if (!empty($batch)) {
+            DB::table('transit_stops')->insert($batch);
+            $count += count($batch);
+        }
+
+        fclose($handle);
+
+        // Set PostGIS geometry column
+        DB::statement("
+            UPDATE transit_stops 
+            SET geom = ST_SetSRID(ST_MakePoint(lng, lat), 4326)
+            WHERE source = 'gtfs' AND geom IS NULL
+        ");
+
+        $this->info("  Imported {$count} stops");
+        return $count;
+    }
+
+    private function importFrequencies(string $csvPath): int
+    {
+        // Bulk import from the Python-generated CSV
+        // Use PostgreSQL COPY for maximum speed
+        $count = DB::getDriverName() === 'pgsql'
+            ? $this->copyFromCsv($csvPath)
+            : $this->insertFromCsv($csvPath);
+
+        $this->info("  Imported {$count} frequency records");
+        return $count;
+    }
+
+    private function copyFromCsv(string $csvPath): int
+    {
+        // PostgreSQL COPY is the fastest way to bulk-load CSV
+        $tempTable = 'transit_freq_import_' . time();
+
+        DB::statement("
+            CREATE TEMP TABLE {$tempTable} (
+                stop_id VARCHAR(30),
+                mode VARCHAR(20),
+                departures_06_09 INTEGER,
+                departures_09_15 INTEGER,
+                departures_15_18 INTEGER,
+                departures_18_22 INTEGER,
+                departures_06_20_total INTEGER,
+                day_type VARCHAR(10),
+                feed_version VARCHAR(20)
+            )
+        ");
+
+        DB::statement("
+            COPY {$tempTable} FROM '{$csvPath}' 
+            WITH (FORMAT csv, HEADER true)
+        ");
+
+        $count = DB::table($tempTable)->count();
+
+        DB::statement("
+            INSERT INTO transit_stop_frequencies 
+                (gtfs_stop_id, mode_category, departures_06_09, departures_09_15, 
+                 departures_15_18, departures_18_22, departures_06_20_total, 
+                 day_type, feed_version, created_at, updated_at)
+            SELECT stop_id, mode, departures_06_09, departures_09_15,
+                   departures_15_18, departures_18_22, departures_06_20_total,
+                   day_type, feed_version, NOW(), NOW()
+            FROM {$tempTable}
+        ");
+
+        DB::statement("DROP TABLE {$tempTable}");
+
+        return $count;
+    }
+}
+```
+
+---
+
+## Update to `transit_stops` Schema
+
+Add `source` column and `weekly_departures`/`routes_count` for backward compatibility with proximity scoring:
+
+```php
+// Migration: add columns if they don't exist
+Schema::table('transit_stops', function (Blueprint $table) {
+    if (!Schema::hasColumn('transit_stops', 'source')) {
+        $table->string('source', 20)->default('osm')->index();
+    }
+    if (!Schema::hasColumn('transit_stops', 'stop_type')) {
+        $table->string('stop_type', 20)->nullable(); // 'rail', 'subway', 'tram', 'bus', 'ferry'
+    }
+    if (!Schema::hasColumn('transit_stops', 'weekly_departures')) {
+        $table->integer('weekly_departures')->nullable();
+    }
+    if (!Schema::hasColumn('transit_stops', 'routes_count')) {
+        $table->integer('routes_count')->nullable();
+    }
+});
+```
+
+After frequency import, backfill these columns:
 
 ```sql
--- Find nearest rail station to each DeSO centroid
-SELECT d.deso_code,
-       MIN(ST_Distance(ST_Centroid(d.geom)::geography, ts.geom::geography)) as distance_rail_m
-FROM deso_areas d
-CROSS JOIN LATERAL (
-    SELECT ts.geom
-    FROM transit_stops ts
-    JOIN transit_stop_frequencies tsf ON tsf.gtfs_stop_id = ts.gtfs_stop_id
-    WHERE tsf.mode_category IN ('rail', 'subway')
-      AND tsf.day_type = 'weekday'
-      AND tsf.departures_06_20_total > 0
-    ORDER BY ts.geom <-> ST_Centroid(d.geom)
-    LIMIT 1
-) ts
-GROUP BY d.deso_code;
+-- Update transit_stops with frequency summaries for proximity scoring
+UPDATE transit_stops ts
+SET 
+    stop_type = freq.mode_category,
+    weekly_departures = freq.departures_06_20_total * 5,  -- weekday × 5 as proxy
+    routes_count = freq.distinct_routes
+FROM (
+    SELECT gtfs_stop_id, 
+           mode_category,
+           departures_06_20_total,
+           distinct_routes,
+           ROW_NUMBER() OVER (PARTITION BY gtfs_stop_id ORDER BY departures_06_20_total DESC) as rn
+    FROM transit_stop_frequencies
+    WHERE day_type = 'weekday'
+) freq
+WHERE ts.gtfs_stop_id = freq.gtfs_stop_id
+  AND freq.rn = 1;  -- Use the dominant mode for stops served by multiple modes
 ```
 
-Similar query for high-frequency bus/tram (≥4 departures/hour = ≥56 departures in 06:00-20:00).
+This means `ProximityScoreService::scoreTransit()` works unchanged — it reads `weekly_departures` and `stop_type` from `transit_stops`, which now have real data instead of NULL.
 
-Then compute:
-```php
-$proximityScore = 
-    0.6 * max(0, 1 - pow($distanceRail / 5000, 2)) +
-    0.4 * max(0, 1 - pow($distanceHfTransit / 1500, 2));
-```
+---
 
-### 5.4 Commute Time Estimate (per DeSO)
+## OSM Ingestion Command Update
+
+The OSM ingestion command (`ingest:osm-pois`) must skip transit categories once GTFS is the authority:
 
 ```php
-foreach ($desoCodes as $desoCode) {
-    $centroid = DB::selectOne(
-        "SELECT ST_X(ST_Centroid(geom)) as lng, ST_Y(ST_Centroid(geom)) as lat 
-         FROM deso_areas WHERE deso_code = ?", [$desoCode]
-    );
-    
-    // Find nearest employment center
-    $nearest = EmploymentCenter::orderByRaw(
-        "geom <-> ST_SetSRID(ST_MakePoint(?, ?), 4326)", 
-        [$centroid->lng, $centroid->lat]
-    )->first();
-    
-    $distanceKm = DB::selectOne(
-        "SELECT ST_Distance(
-            ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography,
-            ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography
-        ) / 1000 as km",
-        [$centroid->lng, $centroid->lat, $nearest->lng, $nearest->lat]
-    )->km;
-    
-    // Check what transit is available in this DeSO
-    $hasRail = TransitStopFrequency::whereIn('gtfs_stop_id', 
-            TransitStop::where('deso_code', $desoCode)->pluck('gtfs_stop_id')
-        )
-        ->where('mode_category', 'rail')
-        ->where('day_type', 'weekday')
-        ->where('departures_06_20_total', '>', 0)
-        ->exists();
-    
-    $hasHfTransit = /* similar check for high-freq bus/tram */;
-    
-    // Estimate commute time
-    if ($hasRail) {
-        $commuteMin = ($distanceKm / 50) * 60 + 10;  // Rail speed + access time
-    } elseif ($hasHfTransit) {
-        $commuteMin = ($distanceKm / 25) * 60 + 10;
-    } else {
-        $commuteMin = ($distanceKm / 20) * 60 + 20;
+class IngestOsmPois extends Command
+{
+    // Categories that are sourced from GTFS, not OSM
+    private const GTFS_MANAGED_CATEGORIES = [
+        'transit_stop', 'bus_stop', 'tram_stop',
+        'rail_station', 'subway_station', 'transit',
+    ];
+
+    public function handle()
+    {
+        $category = $this->option('category');
+
+        if ($category && in_array($category, self::GTFS_MANAGED_CATEGORIES)) {
+            $this->warn("Category '{$category}' is managed by GTFS ingestion. Skipping.");
+            $this->warn("Run 'php artisan ingest:gtfs' instead.");
+            return;
+        }
+
+        if ($category === 'all' || !$category) {
+            $this->info('Skipping transit categories (managed by GTFS)...');
+            // ... existing logic, but skip GTFS_MANAGED_CATEGORIES
+        }
     }
-    
-    // Cap at reasonable maximum
-    $commuteMin = min($commuteMin, 180);
-    
-    IndicatorValue::updateOrCreate(
-        ['deso_code' => $desoCode, 'indicator_id' => $commuteIndicator->id, 'year' => $year],
-        ['raw_value' => round($commuteMin, 1)]
-    );
 }
 ```
 
 ---
 
-## Step 6: The Urban/Rural Problem
+## Execution Order
 
-### 6.1 The Problem
-
-Transit scoring inherently favors urban areas. Stockholm's inner city gets perfect transit scores. Rural Norrland gets zero. This is... correct for property value prediction, but it creates a problem: transit dominates the composite score for rural areas, dragging them down even when they're perfectly nice places to live (with a car).
-
-### 6.2 The Solution: Context-Aware Weighting
-
-The transit indicators should have **reduced effective weight for DeSOs where car dependency is the norm.** Two approaches:
-
-**Approach A: Urbanity-based weight scaling**
-
-SCB classifies all DeSOs into urbanity categories. Use this to scale transit weight:
-- Urban (tätort >50,000): full weight (1.0×)
-- Small town (tätort 10,000-50,000): 0.7× weight
-- Rural town (tätort 1,000-10,000): 0.4× weight
-- Rural/wilderness: 0.2× weight
-
-This means transit matters a lot in scoring Stockholm suburbs but barely affects scoring a DeSO in inland Norrland. This is realistic — nobody in rural Jämtland chooses where to live based on bus frequency.
-
-**Approach B: Peer-group normalization**
-
-Instead of one national percentile rank, compute percentile within urbanity peer groups. A rural DeSO with the best transit in its class (maybe a bus every hour to the regional center) gets a high score within the rural group, even though it would score terribly nationally.
-
-**Recommendation:** Use Approach A. It's simpler, more defensible, and aligns with how transit actually affects property values. Peer-group ranking sounds fairer but hides the real signal: urban areas genuinely have better transit, and that genuinely increases property value.
-
-Implementation: The `ScoringService` already has per-indicator weights. Extend it to support per-DeSO weight modifiers based on urbanity classification. Store urbanity tier in `deso_areas` (we may already have this from SCB data).
-
----
-
-## Step 7: Transit Stops as POIs
-
-### 7.1 Integration with POI Display System
-
-Transit stops should also appear in the POI display system (from task-poi-display.md). But not all 47,000 stops — that would overwhelm everything.
-
-**Which stops become POIs:**
-
-| Category | Criteria | Display Tier | Icon |
-|---|---|---|---|
-| Major rail stations | Intercity rail, >20 departures/day | Tier 1 (zoom 8+) | `train-front` |
-| Commuter rail / subway stations | Pendeltåg, T-bana | Tier 2 (zoom 10+) | `train` |
-| Tram stops | Tram/spårvagn | Tier 3 (zoom 12+) | `tram-front` |
-| High-frequency bus stops | ≥4 departures/hour peak | Tier 4 (zoom 14+) | `bus` |
-
-Regular bus stops (the majority of 47,000) do NOT become POIs — they're too numerous and too low-value individually. They contribute to the DeSO-level transit frequency score but don't merit individual map markers.
-
-### 7.2 Insert into POIs Table
-
-After GTFS import, insert qualifying stops into the `pois` table:
-
-```php
-// Major rail stations → POI
-$majorStations = TransitStop::whereIn('gtfs_stop_id',
-    TransitStopFrequency::where('mode_category', 'rail')
-        ->where('day_type', 'weekday')
-        ->where('departures_06_20_total', '>=', 20)
-        ->pluck('gtfs_stop_id')
-)
-->where('location_type', 1)  // Station level, not individual platforms
-->get();
-
-foreach ($majorStations as $station) {
-    Poi::updateOrCreate(
-        ['source_id' => 'gtfs:' . $station->gtfs_stop_id],
-        [
-            'name' => $station->name,
-            'poi_type' => 'rail_station_major',
-            'category' => 'transport',
-            'sentiment' => 'positive',
-            'lat' => $station->lat,
-            'lng' => $station->lng,
-            'display_tier' => 1,
-            'extra_data' => json_encode([
-                'departures_weekday' => $station->frequencies->sum('departures_06_20_total'),
-                'modes' => $station->frequencies->pluck('mode_category')->unique()->values(),
-                'operators' => /* from agency.txt */,
-            ]),
-        ]
-    );
-}
-```
-
----
-
-## Step 8: The Full Pipeline
-
-### 8.1 Commands
+### First Time (GTFS replaces OSM transit)
 
 ```bash
-# 1. Download and parse GTFS feed
+# 1. Run migration to add source/stop_type/weekly_departures columns
+php artisan migrate
+
+# 2. Run GTFS ingestion (handles clearing OSM transit + importing GTFS)
 php artisan ingest:gtfs
 
-# 2. Assign stops to DeSOs (spatial join)
-# (happens automatically in step 1)
+# 3. Verify the transition
+php artisan tinker
+>>> TransitStop::where('source', 'gtfs')->count()   // ~47,000
+>>> TransitStop::where('source', 'osm')->count()     // 0
+>>> Poi::where('source', 'gtfs')->count()             // ~2,000-5,000 qualifying stops
+>>> Poi::where('source', 'osm')->where('category', 'like', 'transit%')->count()  // 0
 
-# 3. Compute per-DeSO transit indicators
-php artisan aggregate:transit-indicators
-
-# 4. Insert qualifying stops as POIs
-php artisan process:transit-pois
-
-# 5. Normalize all indicators
+# 4. Normalize and recompute
 php artisan normalize:indicators --year=2026
-
-# 6. Recompute scores
 php artisan compute:scores --year=2026
 ```
 
-### 8.2 Schedule
+### Subsequent Runs (Monthly GTFS Update)
 
-GTFS data changes slowly (monthly timetable updates). Run monthly:
-
-```php
-$schedule->command('ingest:gtfs')->monthly();
-$schedule->command('aggregate:transit-indicators')->monthly();
-$schedule->command('process:transit-pois')->monthly();
+```bash
+# Same command — it clears old GTFS data and reimports
+php artisan ingest:gtfs
+php artisan normalize:indicators --year=2026
+php artisan compute:scores --year=2026
 ```
 
-### 8.3 Performance Notes
-
-- `stop_times.txt` parsing: stream, don't load into memory. Build lookup maps first, single-pass the big file.
-- Spatial joins (47k stops × 6,160 DeSOs): use PostGIS ST_Contains with GIST index. Should take <30 seconds.
-- Frequency aggregation: ~47,000 stops × ~5 modes × 4 time buckets = 940k rows in transit_stop_frequencies. Small.
-- Commute time: 6,160 DeSOs × 1 nearest-center query each. Use `<->` operator with GIST index. Fast.
+Idempotent. Run it monthly, no manual cleanup needed.
 
 ---
 
-## Step 9: Verification
+## Verification
 
-### 9.1 Sanity Checks
-
-```sql
--- Stop import
-SELECT COUNT(*) FROM transit_stops;  -- Expect ~47,000
-SELECT COUNT(*) FROM transit_stops WHERE deso_code IS NOT NULL;  -- Most should resolve
-
--- Frequency sanity
-SELECT mode_category, 
-       COUNT(DISTINCT gtfs_stop_id) as stops,
-       SUM(departures_06_20_total) as total_departures
-FROM transit_stop_frequencies
-WHERE day_type = 'weekday'
-GROUP BY mode_category;
--- Expect: bus has most stops, rail has fewer but more departures per stop
-
--- Top transit DeSOs should be urban cores
-SELECT iv.deso_code, da.kommun_name, iv.raw_value
-FROM indicator_values iv
-JOIN indicators i ON i.id = iv.indicator_id
-JOIN deso_areas da ON da.deso_code = iv.deso_code
-WHERE i.slug = 'transit_frequency'
-ORDER BY iv.raw_value DESC LIMIT 15;
--- Expect: Stockholm (Sergels torg, Slussen, T-Centralen DeSOs), Göteborg C, Malmö C
-
--- Worst commute DeSOs should be remote rural
-SELECT iv.deso_code, da.kommun_name, iv.raw_value as commute_min
-FROM indicator_values iv
-JOIN indicators i ON i.id = iv.indicator_id
-JOIN deso_areas da ON da.deso_code = iv.deso_code
-WHERE i.slug = 'transit_commute'
-ORDER BY iv.raw_value DESC LIMIT 15;
--- Expect: remote Norrland, inland Småland, Gotland interior
-
--- Proximity: DeSOs near T-Centralen should score ~1.0
-SELECT iv.deso_code, da.kommun_name, iv.raw_value
-FROM indicator_values iv
-JOIN indicators i ON i.id = iv.indicator_id
-JOIN deso_areas da ON da.deso_code = iv.deso_code
-WHERE i.slug = 'transit_proximity'
-ORDER BY iv.raw_value DESC LIMIT 15;
-```
-
-### 9.2 The Sundbyberg Test
-
-Sundbyberg is the ultimate transit-rich suburb: commuter rail (pendeltåg), subway (T-bana Blå), tram (Tvärbanan), and tons of buses. It should score near the top on all three transit indicators. If it doesn't, something is wrong.
-
-### 9.3 The Arjeplog Test  
-
-Arjeplog in inland Norrbotten has ~3,000 people spread over 14,000 km². Public transit is essentially nonexistent. Its transit scores should be near zero — but with urbanity weighting, this should NOT tank its composite score. If Arjeplog's composite score drops dramatically after adding transit, the urbanity weighting isn't working.
-
----
-
-## Notes for the Agent
-
-### The 47,000 Stop IDs
-
-GTFS Sverige 2 uses national stop IDs (rikshållplatser) starting with `740`. These are stable IDs maintained by Samtrafiken. Each "stop area" (like "Sundbybergs station") may have multiple physical stops (platforms, bus bays) sharing a parent. Use `parent_station` to group them — frequencies should be summed at the station level, not double-counted per platform.
-
-### Extended Route Types
-
-Trafiklab uses GTFS extended route types (100-series numbers, not just 0-7). The classification varies by operator — some use specific types (101 = high-speed rail), others use generic (100 = all rail). Don't over-parse. Group into the 6 mode categories and move on.
-
-### Watch Out For
-
-- **Overnight services:** Some trips have departure_time > 24:00:00 (e.g., "25:15:00" = 1:15 AM the next day). Handle this in time bucket classification.
-- **Seasonal services:** Some routes only run in summer. Use a representative date well within the main service period.
-- **Flex/on-demand:** Growing in rural Sweden. These have irregular schedules. Count them but weight low.
-- **Duplicate stops:** A station may appear multiple times (once per platform). Group by `parent_station` before counting.
-- **Ferry stops:** Include but weight low. Ferries are slow and infrequent but some island communities depend on them (Gotlandsbåten, Waxholmsbolaget).
-
-### What NOT to Do
-
-- Don't try real-time data (GTFS-RT) for scoring — we need static timetables, not live positions
-- Don't compute actual routing (OTP) in Phase 1 — the distance-based estimate is good enough
-- Don't weight all modes equally — rail is fundamentally more valuable than bus
-- Don't show all 47,000 stops on the map — only qualifying stations/stops via the POI system
-- Don't normalize transit scores nationally without urbanity context — it'll unfairly punish every rural DeSO
-- Don't parse `shapes.txt` — we don't need route geometries for scoring
-
-### Phase 2 Enhancements (Not Now)
-
-- **OpenTripPlanner routing:** Actual computed commute times instead of distance estimates
-- **Isochrone maps:** "Show me everywhere I can reach in 30 minutes from this DeSO"
-- **Service reliability:** Use GTFS-RT historical data to compute on-time performance per stop
-- **Weekend/evening scores:** Separate indicators for off-peak transit (matters for social quality of life)
-- **Transfer penalty:** Account for having to change buses/trains (a 30-min journey with 2 transfers is worse than 30-min direct)
-- **Walking isochrones to stops:** Use road network distance instead of straight-line for proximity scoring
+- [ ] After `ingest:gtfs`: zero rows in `transit_stops` with `source = 'osm'`
+- [ ] After `ingest:gtfs`: zero rows in `pois` with `source = 'osm'` AND transit-related category
+- [ ] `transit_stops` has ~47,000 rows with `source = 'gtfs'`
+- [ ] `transit_stops.weekly_departures` is populated for all stops with departures
+- [ ] `pois` has ~2,000-5,000 GTFS-sourced transit POIs (qualifying high-value stops only)
+- [ ] Parks, grocery, cafes etc. in `pois` table are untouched (still `source = 'osm'`)
+- [ ] `ProximityScoreService::scoreTransit()` works without code changes (reads from same table)
+- [ ] Transit proximity score now uses frequency weighting (GTFS data) instead of flat scoring (OSM)
+- [ ] `ingest:osm-pois --category=transit` prints a warning and exits
+- [ ] `ingest:osm-pois --all` skips transit categories automatically
+- [ ] Full pipeline runs in < 3 minutes (Python frequency computation is the bottleneck)
+- [ ] Sundbyberg scores near top for transit (rail + subway + tram + bus)
+- [ ] Rural Norrland DeSO has near-zero transit frequency but doesn't tank composite score (urbanity weighting)
