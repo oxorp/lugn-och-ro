@@ -1,55 +1,83 @@
 # POI Display
 
-> Point of interest layer with clustering and category controls.
+> Point of interest markers with category-specific icons and colors.
 
-## POI Layer
+## When POIs Appear
 
-**Hook**: `resources/js/hooks/use-poi-layer.ts`
+POIs appear in two ways:
 
-POIs are loaded as a separate vector layer with client-side clustering. The hook manages:
-- Fetching POIs from `/api/pois` based on viewport and enabled categories
-- Clustering nearby POIs at lower zoom levels
-- Styling clusters by sentiment (positive/negative/neutral)
+1. **Pin-based** — When a pin is dropped, the location API returns POIs within **3 km**. These are rendered via `setPoiMarkers()`.
+2. **Viewport-based** — The `usePoiLayer` hook can fetch POIs for the visible map area (with clustering at lower zooms).
 
-## POI Controls
+## Marker Style
 
-**Component**: `resources/js/components/poi-controls.tsx`
+POIs use Lucide SVG icons rendered as OpenLayers `Icon` styles, matching each category's configured icon and color:
 
-A floating panel (top-left, below search) that lets users toggle POI visibility.
+```typescript
+if (iconName && hasIcon(iconName)) {
+    const dataUrl = getPoiMarkerDataUrl(iconName, color, iconSize);
+    // Render as pin-shaped marker with icon
+} else {
+    // Fallback: colored circle (radius 5)
+}
+```
 
-### Group Structure
+### Icon Size by Zoom
 
-POI categories are organized into groups:
+| Zoom | Icon Size |
+|---|---|
+| < 14 | 20 px |
+| 14 | 24 px |
+| 15+ | 28 px |
 
-| Group | Sentiment | Examples |
-|---|---|---|
-| Nuisances | Negative (orange) | Gambling, pawn shops, fast food, liquor stores |
-| Amenities | Positive (green) | Grocery, healthcare, restaurants, fitness |
-| Other | Neutral | Transit stops, parks |
+### Icon Generation
 
-### Controls
+**File**: `resources/js/lib/poi-icons.ts`
 
-- **Group toggle**: Expand/collapse category groups
-- **Category checkbox**: Toggle individual categories (supports indeterminate state)
-- **Quick actions**: "All", "None", "Reset" buttons
-- **Counter**: Shows enabled category count and visible POI count
+The `getPoiMarkerDataUrl()` function generates SVG data URLs for map markers. Each marker is a colored pin shape with a white Lucide icon centered inside.
 
-### Category Configuration
+### Category Colors and Icons
 
-Categories are defined in `resources/js/lib/poi-config.ts` with subcategories mapping to backend `poi_categories` slugs.
+Category metadata (name, color, icon, signal) comes from the `poi_categories` database table and is included in the location API response. Examples:
+
+| Category | Signal | Color | Icon |
+|---|---|---|---|
+| grocery | positive | green | shopping-cart |
+| healthcare | positive | blue | heart-pulse |
+| restaurant | positive | orange | utensils |
+| gambling | negative | red | dice |
+| pawn_shop | negative | red | banknote |
+| park | positive | green | tree-pine |
+| public_transport_stop | positive | blue | bus |
+
+## Sidebar Display
+
+In the sidebar, POIs are summarized as category counts (not individual listings):
+
+```
+Nearby Points of Interest
+● Grocery           3
+● Healthcare        2
+● Restaurant        5
+● Public transport  8
+```
+
+Each row shows the category color dot, category name, and count.
 
 ## Interactions
 
-### Hover (tooltip)
-- **Single POI**: Name and type
-- **Cluster**: Count with sentiment breakdown (e.g., "3 nuisances, 2 amenities")
+### Hover Tooltip
+
+- **Single POI**: Name and category label
+- **Cluster** (from `usePoiLayer`): Count with positive/negative/neutral breakdown
 
 ### Click
-- **Cluster**: Zooms to cluster extent (max zoom 16)
-- **Single POI**: Shows impact radius and details
+
+No dedicated click handler for pin-based POI markers.
 
 ## Related
 
 - [POIs API](/api/pois)
 - [POI Indicators](/indicators/poi)
+- [Location Lookup API](/api/location-lookup)
 - [Admin Dashboard](/frontend/admin-dashboard) — POI category management

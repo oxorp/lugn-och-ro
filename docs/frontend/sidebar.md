@@ -1,77 +1,133 @@
 # Sidebar
 
-> Score display, indicator breakdown, and area comparison.
+> Location score display with proximity factors, indicators, schools, and POIs.
 
-## Map Page Sidebar
+## Overview
 
 **File**: `resources/js/pages/map.tsx`
 
-The sidebar is the right panel of the map page. It shows detailed information when a DeSO area is selected.
+The sidebar is a 360px right panel on the map page. It has two states:
+
+1. **Default state** — Prompt to search or click the map, with suggested addresses
+2. **Active state** — Full location detail after a pin drop
+
+## Default Sidebar
+
+Shown when no pin is active. Contains:
+
+- MapPin icon and title ("Explore any address")
+- Subtitle explaining pin-drop or search
+- Three suggestion buttons (e.g., "Try: Sveavägen, Stockholm") that pre-fill the search bar
+- Legend hint text
+
+## Active Sidebar
+
+Shown after a pin drop or search result selection. Fetches data from `GET /api/location/{lat},{lng}`.
 
 ### Sections (top to bottom)
 
-1. **Area header** — DeSO name, kommun, lan, urbanity tier badge
-2. **Composite score** — Large score number with color-matched progress bar and label
-3. **Score band label** — "Strong Growth", "Positive", "Mixed", "Challenging", "High Risk"
-4. **Trend indicator** — Arrow up/down/stable with 1-year change
-5. **Factor scores** — Per-indicator contribution bars
-6. **Top positive / negative** — Badges highlighting strongest and weakest indicators
-7. **Schools section** — School list (tier-gated, loaded on demand)
-8. **Crime section** — Crime rates and safety info (tier-gated)
-9. **Financial section** — Debt rates and distress indicators (tier-gated)
-10. **Unlock prompt** — For free-tier users, shows pricing to unlock detailed data
+1. **Location header** — Reverse-geocoded address name (via Photon/Komoot), kommun, close button
+2. **Blended score card** — Large colored score badge (0–100), trend arrow, score label
+3. **Score breakdown** — Area score vs proximity score as sub-values
+4. **Proximity Analysis** — Per-factor bars with icons (paid tiers only)
+5. **Indicator Breakdown** — All area-level indicators with percentile bars (paid tiers only)
+6. **Schools** — Nearby schools within 1.5 km with merit values and distance (paid tiers only)
+7. **POIs** — Nearby POI counts by category with color dots (paid tiers only)
 
-### Score Bands
+### Score Card
 
-| Score Range | Label | Color |
+The main score card shows:
+
+```
+┌──────────────────────────────────────┐
+│  ┌──────┐  Stabilt / Positivt       │
+│  │ 72.3 │  Urban                    │
+│  │ +1.2 │  Area: 75.0  Location: 66 │
+│  └──────┘                            │
+└──────────────────────────────────────┘
+```
+
+- Score badge is color-matched to the purple→green gradient
+- Trend arrow shows 1-year change (if available)
+- Area vs proximity sub-scores shown below the label
+
+### Score Labels
+
+| Score Range | Swedish | English |
 |---|---|---|
-| 80-100 | Strong Growth | Green |
-| 60-79 | Positive | Light green |
-| 40-59 | Mixed | Yellow |
-| 20-39 | Challenging | Red-purple |
-| 0-19 | High Risk | Purple |
+| 80–100 | Starkt tillväxtområde | Strong Growth Area |
+| 60–79 | Stabilt / Positivt | Stable / Positive |
+| 40–59 | Blandat | Mixed Signals |
+| 20–39 | Förhöjd risk | Elevated Risk |
+| 0–19 | Hög risk | High Risk |
 
-### Tier-Gated Content
+### Proximity Factors
 
-The sidebar adapts to the user's data tier. Lower tiers see blurred previews and lock icons with upgrade prompts.
+Each factor shows an icon, name, 0–100 score bar, and detail line:
 
-## Comparison Sidebar
+| Factor | Icon | Detail |
+|---|---|---|
+| School | GraduationCap | Nearest school name + distance |
+| Green Space | TreePine | Nearest park name + distance |
+| Transit | Bus | Nearest stop name + type + distance |
+| Grocery | ShoppingCart | Nearest store name + distance |
+| Negative POIs | ShieldAlert | Count of nearby negative POIs |
+| Positive POIs | Sparkles | Count of nearby positive amenities |
 
-**File**: `resources/js/components/comparison-sidebar.tsx`
+For negative POI factor, score 100 = good (no negatives nearby). The detail shows "No negative POIs nearby" or "3 within 500m".
 
-Activated when two comparison pins are placed. Shows side-by-side analysis.
+### Indicator Bars
 
-### Layout
+Each indicator shows:
+- Name with info tooltip (description, methodology, source)
+- Direction-adjusted percentile value (0–100)
+- Color-coded progress bar
+- Raw value with unit (e.g., "312,000 SEK")
+- Scope label: national percentile or urbanity-stratified percentile
 
-1. **Header** — Location labels (A = blue, B = amber) with kommun/lan info
-2. **Distance** — Kilometers between the two points
-3. **Composite scores** — Side-by-side score bars with point difference
-4. **Indicator breakdown** — Per-indicator comparison bars showing:
-   - Direction-adjusted percentile for A and B
-   - Raw values with units
-   - "A higher by X%", "B higher by X%", or "Similar"
-5. **Verdict** — Badges grouped by: A stronger, B stronger, Similar
-6. **Actions** — Share link (copies URL with compare params) and PDF export (locked)
+### Tier Gating
 
-### Comparison URL Format
+| Tier | Score | Proximity | Indicators | Schools | POIs |
+|---|---|---|---|---|---|
+| Public (0) | Blended only | Hidden | Hidden | Hidden | Hidden |
+| Paid (1+) | Full breakdown | Shown | Shown | Shown | Shown |
+
+Public tier shows a CTA card with login/upgrade prompt instead of detail sections.
+
+## Explore URL
+
+Pin drops update the URL for shareable links:
 
 ```
-?compare={lat_a},{lng_a}|{lat_b},{lng_b}
+/explore/{lat},{lng}
 ```
 
-### Indicator Sorting
+On page load, if the URL contains explore coordinates, the pin is automatically dropped and data fetched.
 
-Indicators are sorted by weight (highest first) so the most important factors appear at the top.
+## Reverse Geocoding
+
+After a pin drop, the map page calls the Photon API for a human-readable address:
+
+```
+https://photon.komoot.io/reverse?lat={lat}&lon={lng}&lang=default
+```
+
+Falls back to the kommun name from the location API if geocoding fails.
+
+## Mobile
+
+On smaller screens (< `md` breakpoint), the sidebar collapses into a bottom sheet with the same content in a compact layout.
 
 ## Internationalization
 
-All text uses the `useTranslation()` hook with keys like:
+All text uses `useTranslation()` with keys like:
 - `sidebar.score.strong_growth`
-- `sidebar.indicators.labels.median_income`
-- `compare.a_stronger`
+- `sidebar.proximity.school`
+- `sidebar.indicators.percentile_national`
+- `sidebar.default.title`
 
 ## Related
 
 - [Map Rendering](/frontend/map-rendering)
-- [DeSO Indicators API](/api/deso-indicators)
+- [Location Lookup API](/api/location-lookup)
 - [Tiering Model](/business/tiering-model)
