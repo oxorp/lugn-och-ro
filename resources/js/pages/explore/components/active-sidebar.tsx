@@ -64,6 +64,7 @@ export function ActiveSidebar({
         indicators,
         schools,
         pois,
+        poi_summary,
         poi_categories,
         tier,
         preview,
@@ -245,25 +246,16 @@ export function ActiveSidebar({
                         )}
 
                         {/* POIs */}
-                        {pois.length > 0 && (
+                        {poi_summary?.length > 0 && (
                             <>
                                 <Separator className="my-3" />
                                 <h3 className="mb-3 text-xs font-semibold tracking-wider text-muted-foreground uppercase">
                                     {t('sidebar.pois.title')}
                                 </h3>
                                 <div className="space-y-1.5">
-                                    {Object.entries(
-                                        pois.reduce<Record<string, number>>(
-                                            (acc, p) => {
-                                                acc[p.category] =
-                                                    (acc[p.category] || 0) + 1;
-                                                return acc;
-                                            },
-                                            {},
-                                        ),
-                                    ).map(([category, count]) => (
+                                    {poi_summary.map((s) => (
                                         <div
-                                            key={category}
+                                            key={s.category}
                                             className="flex items-center justify-between text-xs"
                                         >
                                             <span className="flex items-center gap-1.5">
@@ -272,18 +264,21 @@ export function ActiveSidebar({
                                                     style={{
                                                         backgroundColor:
                                                             poi_categories[
-                                                                category
+                                                                s.category
                                                             ]?.color ??
                                                             '#94a3b8',
                                                     }}
                                                 />
                                                 <span className="text-foreground">
-                                                    {poi_categories[category]
-                                                        ?.name ?? category}
+                                                    {poi_categories[s.category]
+                                                        ?.name ?? s.category}
                                                 </span>
                                             </span>
                                             <span className="text-muted-foreground tabular-nums">
-                                                {count}
+                                                {s.count}
+                                                <span className="ml-1 text-[10px] opacity-60">
+                                                    ({s.nearest_m}m)
+                                                </span>
                                             </span>
                                         </div>
                                     ))}

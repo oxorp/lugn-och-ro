@@ -659,6 +659,99 @@ class LocationControllerTest extends TestCase
         $categories = $response->json('poi_categories');
         $this->assertArrayHasKey('grocery', $categories);
         $this->assertEquals('#16a34a', $categories['grocery']['color']);
+
+        // Check poi_summary includes counts
+        $summary = $response->json('poi_summary');
+        $this->assertNotEmpty($summary);
+        $grocerySummary = collect($summary)->firstWhere('category', 'grocery');
+        $this->assertNotNull($grocerySummary);
+        $this->assertEquals(1, $grocerySummary['count']);
+        $this->assertArrayHasKey('nearest_m', $grocerySummary);
+    }
+
+    public function test_tier2_pois_appear_in_summary_not_markers(): void
+    {
+        $this->createDesoWithGeom('0180C1090', 'Stockholm');
+
+        CompositeScore::create([
+            'deso_code' => '0180C1090',
+            'year' => 2024,
+            'score' => 70.0,
+            'computed_at' => now(),
+        ]);
+
+        // Tier 1 category (show_on_map = true)
+        PoiCategory::create([
+            'slug' => 'grocery',
+            'name' => 'Grocery',
+            'osm_tags' => ['shop' => ['supermarket']],
+            'catchment_km' => 1.0,
+            'is_active' => true,
+            'show_on_map' => true,
+            'color' => '#16a34a',
+            'icon' => 'shopping-cart',
+            'signal' => 'positive',
+        ]);
+
+        // Tier 2 category (show_on_map = false)
+        PoiCategory::create([
+            'slug' => 'restaurant',
+            'name' => 'Restaurants',
+            'osm_tags' => ['amenity' => ['restaurant']],
+            'catchment_km' => 1.0,
+            'is_active' => true,
+            'show_on_map' => false,
+            'color' => '#f59e0b',
+            'icon' => 'utensils',
+            'signal' => 'positive',
+        ]);
+
+        // Create one Tier 1 POI and two Tier 2 POIs within radius
+        Poi::factory()->grocery()->create([
+            'name' => 'ICA Nära',
+            'lat' => 59.336,
+            'lng' => 18.062,
+        ]);
+
+        Poi::factory()->create([
+            'name' => 'Restaurang A',
+            'category' => 'restaurant',
+            'lat' => 59.335,
+            'lng' => 18.061,
+        ]);
+
+        Poi::factory()->create([
+            'name' => 'Restaurang B',
+            'category' => 'restaurant',
+            'lat' => 59.337,
+            'lng' => 18.063,
+        ]);
+
+        DB::statement('
+            UPDATE pois SET geom = ST_SetSRID(ST_MakePoint(lng, lat), 4326)
+            WHERE lat IS NOT NULL AND lng IS NOT NULL AND geom IS NULL
+        ');
+
+        $admin = User::factory()->create(['is_admin' => true]);
+        $response = $this->actingAs($admin)->getJson('/api/location/59.335,18.06');
+        $response->assertOk();
+
+        // Tier 1 POIs appear as map markers
+        $pois = $response->json('pois');
+        $this->assertCount(1, $pois);
+        $this->assertEquals('grocery', $pois[0]['category']);
+        $this->assertArrayHasKey('lat', $pois[0]);
+
+        // Both tiers appear in summary
+        $summary = collect($response->json('poi_summary'));
+        $restaurantSummary = $summary->firstWhere('category', 'restaurant');
+        $this->assertNotNull($restaurantSummary);
+        $this->assertEquals(2, $restaurantSummary['count']);
+        $this->assertArrayHasKey('nearest_m', $restaurantSummary);
+
+        $grocerySummary = $summary->firstWhere('category', 'grocery');
+        $this->assertNotNull($grocerySummary);
+        $this->assertEquals(1, $grocerySummary['count']);
     }
 
     public function test_authenticated_user_gets_full_data(): void

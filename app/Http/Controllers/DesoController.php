@@ -33,7 +33,7 @@ class DesoController extends Controller
             ]);
         }
 
-        // Fallback: generate from DB if static file doesn't exist
+        // Fallback: generate simplified GeoJSON from DB
         $features = DB::select('
             SELECT
                 deso_code,
@@ -43,7 +43,7 @@ class DesoController extends Controller
                 lan_code,
                 lan_name,
                 area_km2,
-                ST_AsGeoJSON(ST_Buffer(geom, 0.00005)) as geometry
+                ST_AsGeoJSON(ST_SimplifyPreserveTopology(geom, 0.001)) as geometry
             FROM deso_areas
             WHERE geom IS NOT NULL
         ');

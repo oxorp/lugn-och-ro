@@ -49,8 +49,8 @@ class LocationController extends Controller
 
         $areaScore = $score ? round((float) $score->score, 1) : null;
 
-        // 3. Compute proximity score for this exact coordinate
-        $proximity = $this->proximityService->score($lat, $lng);
+        // 3. Compute proximity score (cached by ~100m grid cell)
+        $proximity = $this->proximityService->scoreCached($lat, $lng);
         $proximityScore = round($proximity->compositeScore(), 1);
 
         // 4. Blend area + proximity scores
@@ -101,6 +101,7 @@ class LocationController extends Controller
                 'indicators' => [],
                 'schools' => [],
                 'pois' => [],
+                'poi_summary' => [],
                 'poi_categories' => [],
             ]);
         }
@@ -140,14 +141,43 @@ class LocationController extends Controller
             LIMIT 10
         ', [$lng, $lat, $lng, $lat, $schoolRadius]);
 
-        // 7. Get POIs within radius
+        // 7. Get POIs — split into map markers (Tier 1) and sidebar counts (Tier 2)
         $poiRadius = $this->getQueryRadius('poi_query_radius', $urbanityTier);
-        $pois = DB::select('
-            SELECT p.name, p.category, p.lat, p.lng, p.subcategory,
-                   ST_Distance(
+        $poiCategories = PoiCategory::all();
+        $mapSlugs = $poiCategories->where('show_on_map', true)->pluck('slug')->all();
+
+        // Tier 1: Full details + coordinates for map markers (show_on_map categories only)
+        $mapPois = [];
+        if (! empty($mapSlugs)) {
+            $mapPois = DB::select('
+                SELECT p.name, p.category, p.lat, p.lng, p.subcategory,
+                       ST_Distance(
+                           p.geom::geography,
+                           ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography
+                       ) as distance_m
+                FROM pois p
+                JOIN poi_categories pc ON pc.slug = p.category
+                WHERE p.status = \'active\'
+                  AND pc.show_on_map = true
+                  AND p.geom IS NOT NULL
+                  AND ST_DWithin(
+                      p.geom::geography,
+                      ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography,
+                      ?
+                  )
+                ORDER BY distance_m
+                LIMIT 100
+            ', [$lng, $lat, $lng, $lat, $poiRadius]);
+        }
+
+        // Tier 2: Counts + nearest distance for sidebar (all categories)
+        $poiSummary = DB::select('
+            SELECT p.category,
+                   COUNT(*) as count,
+                   ROUND(MIN(ST_Distance(
                        p.geom::geography,
                        ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography
-                   ) as distance_m
+                   ))::numeric) as nearest_m
             FROM pois p
             WHERE p.status = \'active\'
               AND p.geom IS NOT NULL
@@ -156,19 +186,19 @@ class LocationController extends Controller
                   ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography,
                   ?
               )
-            ORDER BY p.category, distance_m
+            GROUP BY p.category
+            ORDER BY count DESC
         ', [$lng, $lat, $lng, $lat, $poiRadius]);
 
-        // 8. Get POI category metadata for rendering (all categories for icon/color mapping)
-        $poiCategories = PoiCategory::all()
-            ->mapWithKeys(fn ($cat) => [
-                $cat->slug => [
-                    'name' => $cat->name,
-                    'color' => $cat->color,
-                    'icon' => $cat->icon,
-                    'signal' => $cat->signal,
-                ],
-            ]);
+        // 8. Build POI category metadata for rendering
+        $poiCategoryMap = $poiCategories->mapWithKeys(fn ($cat) => [
+            $cat->slug => [
+                'name' => $cat->name,
+                'color' => $cat->color,
+                'icon' => $cat->icon,
+                'signal' => $cat->signal,
+            ],
+        ]);
 
         return response()->json([
             'location' => [
@@ -206,14 +236,19 @@ class LocationController extends Controller
                 'lat' => (float) $s->lat,
                 'lng' => (float) $s->lng,
             ]),
-            'pois' => collect($pois)->map(fn ($p) => [
+            'pois' => collect($mapPois)->map(fn ($p) => [
                 'name' => $p->name,
                 'category' => $p->category,
                 'lat' => (float) $p->lat,
                 'lng' => (float) $p->lng,
                 'distance_m' => round((float) $p->distance_m),
             ]),
-            'poi_categories' => $poiCategories,
+            'poi_summary' => collect($poiSummary)->map(fn ($s) => [
+                'category' => $s->category,
+                'count' => (int) $s->count,
+                'nearest_m' => (int) $s->nearest_m,
+            ]),
+            'poi_categories' => $poiCategoryMap,
         ]);
     }
 

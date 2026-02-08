@@ -100,5 +100,10 @@ export interface LocationData {
     }>;
     schools: SchoolMarker[];
     pois: PoiMarker[];
+    poi_summary: Array<{
+        category: string;
+        count: number;
+        nearest_m: number;
+    }>;
     poi_categories: Record<string, PoiCategoryMeta>;
 }

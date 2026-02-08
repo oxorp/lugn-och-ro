@@ -36,6 +36,19 @@ class ProximityScoreService
     ) {}
 
     /**
+     * Compute proximity scores with grid-cell caching (~100m resolution).
+     * Repeat clicks within the same ~100m grid cell return cached results instantly.
+     */
+    public function scoreCached(float $lat, float $lng): ProximityResult
+    {
+        $gridLat = round($lat, 3);
+        $gridLng = round($lng, 3);
+        $cacheKey = "proximity:{$gridLat},{$gridLng}";
+
+        return Cache::remember($cacheKey, 3600, fn () => $this->score($lat, $lng));
+    }
+
+    /**
      * Compute proximity scores for a specific coordinate.
      * Returns a 0-100 composite score and breakdown of each proximity factor.
      *

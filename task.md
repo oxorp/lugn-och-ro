@@ -1,447 +1,488 @@
-# TASK: Education Data Integrity Audit — Fix Swapped/Wrong SCB Variables
+# TASK: Fix Map Performance — Pin-Drop Hot Path
 
 ## Context
 
-**Something is seriously wrong with the education indicators.** Two sanity checks failed catastrophically:
+A performance audit revealed the map tiles themselves are fine (heatmap PNGs, 60fps). The lag users feel is the **pin-drop interaction flow** — clicking the map triggers 10-12 sequential PostGIS queries that take 300-600ms in Stockholm, returns 3,767 unbounded POI markers, and runs duplicate spatial work across two services.
 
-- **Södermalm (central Stockholm):** Shows 21.9% post-secondary education, 5th percentile. Should be 55-65%+, 90th+ percentile.
-- **Lund (university city):** Shows 14.3% post-secondary education. Lund has one of Sweden's largest universities and should be among the highest in Sweden — 50-60%+.
-
-These aren't edge cases. These are the most obvious "this should be high" areas in the entire country. If they're wrong, the entire education layer is wrong, which means composite scores are wrong, which means the map is lying.
-
-**This is a P0 bug.** The map is currently showing false data to users.
-
-## Likely Root Causes
-
-In order of probability:
-
-### 1. Swapped Variables (Most Likely)
-`education_post_secondary_pct` is actually storing the "below secondary" values, and `education_below_secondary_pct` is storing the "post-secondary" values. Lund at 14.3% "post-secondary" would make perfect sense as 14.3% *below secondary* — a well-educated city would have very few people without gymnasium.
-
-**Test:** If Södermalm shows ~21.9% for `education_post_secondary_pct` and something like ~55-65% for `education_below_secondary_pct`, the variables are swapped.
-
-### 2. Wrong SCB ContentsCode
-The SCB PX-Web API has dozens of education sub-variables. The ingestion command may have requested the wrong `ContentsCode` — for example, fetching "3+ years post-secondary" when we wanted "any post-secondary", or fetching a sub-category like "post-secondary < 3 years" instead of the total.
-
-### 3. Wrong SCB Table Entirely
-The command might be hitting a different table than intended. SCB has multiple education tables at different geographic levels and with different variable definitions.
-
-### 4. DeSO Code Version Mismatch
-SCB is transitioning from DeSO 2018 (5,984 areas) to DeSO 2025 (6,160 areas). If the API returns 2018 codes and our database has 2025 codes, values get assigned to wrong areas. This would produce randomly wrong data rather than systematically swapped data.
-
-### 5. JSON-stat2 Parsing Bug
-The flat `value` array in JSON-stat2 responses must be mapped back to DeSO codes via the dimension index. If the mapping is off by one, or if multiple dimensions are iterated in the wrong order, every value gets assigned to the wrong DeSO.
+This task fixes the five issues found, in priority order.
 
 ---
 
-## Step 1: Diagnose — What Do We Actually Have?
+## P0: Split POIs into "Render on Map" vs "Count in Sidebar"
 
-### 1.1 Check the Known-Good Areas
+### The Problem
 
-Run these queries to see what our database currently stores for areas where we KNOW the answer:
+`LocationController` queries POIs with no `LIMIT`. In central Stockholm this returns 3,767 rows, all serialized to JSON, all rendered as individual OpenLayers features with icons and hit-testing. This is the single biggest cause of perceived lag.
 
-```sql
--- Areas that MUST have high post-secondary education
--- Lund, Uppsala, Stockholm inner city (Södermalm, Östermalm, Vasastan)
--- Danderyd, Lidingö, Lomma
+But hard-capping at 200 is wrong — it could cut the one school or transit stop that matters. The real issue is that **most POI types don't need map markers at all.** Nobody needs to see 847 individual café pins. They need to see "23 cafés nearby" in the sidebar and the 3 nearest schools as markers.
 
-SELECT
-    da.deso_code,
-    da.deso_name,
-    da.kommun_name,
-    post.raw_value as post_secondary_pct,
-    post.normalized_value as post_secondary_norm,
-    below.raw_value as below_secondary_pct,
-    below.normalized_value as below_secondary_norm
-FROM deso_areas da
-LEFT JOIN indicator_values post ON post.deso_code = da.deso_code
-    AND post.indicator_id = (SELECT id FROM indicators WHERE slug = 'education_post_secondary_pct')
-LEFT JOIN indicator_values below ON below.deso_code = da.deso_code
-    AND below.indicator_id = (SELECT id FROM indicators WHERE slug = 'education_below_secondary_pct')
-WHERE da.kommun_name IN ('Lund', 'Uppsala', 'Danderyd', 'Lidingö', 'Lomma')
-   OR da.deso_name ILIKE '%söder%'
-   OR da.deso_name ILIKE '%östermalm%'
-   OR da.deso_name ILIKE '%vasastan%'
-ORDER BY da.kommun_name, da.deso_name;
-```
+### The Fix: Render Tiers
 
-**Expected result if variables are swapped:**
-- Lund `post_secondary_pct` ≈ 10-20% (should be 50-60%)
-- Lund `below_secondary_pct` ≈ 50-60% (should be 10-20%)
-- The values are flipped
+Add a `render_on_map` boolean to `poi_categories` (or use a config). POI types are split into two tiers:
 
-**Expected result if wrong ContentsCode:**
-- Both values might be in a plausible but wrong range
-- Or one might be consistently too low/too high
+**Tier 1 — Render as map markers** (things users navigate to, need to see location of):
+- Schools (grundskola, gymnasie)
+- Transit stops (major only — rail, subway, high-frequency bus)
+- Grocery stores
+- Healthcare (vårdcentral, hospital)
+- Negative POIs (gambling, pawn shops) — user needs to see WHERE they are
 
-### 1.2 Check the National Distribution
+**Tier 2 — Count only, show in sidebar/report** (ambient neighborhood character):
+- Restaurants & cafés
+- Gyms & fitness
+- Parks & green spaces (the area score already captures this; exact pin less useful)
+- Pharmacies
+- Retail / specialty shops
+- Cultural venues
+- Any other "nice to have" category
 
-```sql
--- What does our post-secondary data look like nationally?
-SELECT
-    'post_secondary' as indicator,
-    COUNT(*) as deso_count,
-    ROUND(MIN(raw_value)::numeric, 1) as min_val,
-    ROUND(PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY raw_value)::numeric, 1) as p25,
-    ROUND(PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY raw_value)::numeric, 1) as median,
-    ROUND(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY raw_value)::numeric, 1) as p75,
-    ROUND(MAX(raw_value)::numeric, 1) as max_val,
-    ROUND(AVG(raw_value)::numeric, 1) as mean
-FROM indicator_values iv
-JOIN indicators i ON i.id = iv.indicator_id
-WHERE i.slug = 'education_post_secondary_pct'
-  AND iv.raw_value IS NOT NULL
-
-UNION ALL
-
-SELECT
-    'below_secondary' as indicator,
-    COUNT(*),
-    ROUND(MIN(raw_value)::numeric, 1),
-    ROUND(PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY raw_value)::numeric, 1),
-    ROUND(PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY raw_value)::numeric, 1),
-    ROUND(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY raw_value)::numeric, 1),
-    ROUND(MAX(raw_value)::numeric, 1),
-    ROUND(AVG(raw_value)::numeric, 1)
-FROM indicator_values iv
-JOIN indicators i ON i.id = iv.indicator_id
-WHERE i.slug = 'education_below_secondary_pct'
-  AND iv.raw_value IS NOT NULL;
-```
-
-**What we should see (from SCB national statistics 2024):**
-- Post-secondary education (ages 25-64): national average ~29-35% depending on exact definition
-  - Distribution: ranges from ~10% (some rural areas) to ~70% (university city cores)
-  - Median should be around 25-30%
-- Below secondary education (ages 25-64): national average ~10-15%
-  - Distribution: ranges from ~3% to ~40%+
-  - Median should be around 10-12%
-
-**If the numbers look right nationally but wrong locally**, it's a DeSO mapping issue. If the **national distribution itself looks wrong**, it's a variable/table issue.
-
-### 1.3 Check the SCB API Call
-
-Look at the ingestion command code to find:
-
-```bash
-# Find the SCB API call for education data
-grep -rn "education\|UF0506\|utbildning\|ContentsCode" app/Console/Commands/ app/Services/ScbApiService.php
-```
-
-Identify:
-1. Which SCB table is being queried (table ID / API path)
-2. Which `ContentsCode` values are being requested
-3. Which `Region` filter is being used (DeSO level?)
-4. How the response values are mapped to indicator slugs
-
-### 1.4 Cross-Reference with SCB Directly
-
-Go to https://www.statistikdatabasen.scb.se and manually look up the education data for a Lund DeSO code. Compare the value SCB shows vs what our database has. This tells us definitively whether the problem is in the API call or in the parsing/storage.
-
-```sql
--- Get some Lund DeSO codes to look up manually on SCB
-SELECT deso_code, deso_name FROM deso_areas WHERE kommun_name = 'Lund' LIMIT 5;
-```
-
----
-
-## Step 2: Fix Based on Diagnosis
-
-### Fix A: If Variables Are Swapped
-
-The `education_post_secondary_pct` and `education_below_secondary_pct` columns have each other's data.
-
-**Database fix (swap the values):**
-
-```sql
--- CAREFUL: Run in a transaction, verify before committing
-
-BEGIN;
-
--- Step 1: Get the indicator IDs
-SELECT id, slug FROM indicators WHERE slug IN ('education_post_secondary_pct', 'education_below_secondary_pct');
--- Let's say post_secondary has id=X and below_secondary has id=Y
-
--- Step 2: Swap the indicator_id references
--- Temporarily use a third ID to avoid unique constraint violations
-UPDATE indicator_values SET indicator_id = -1 WHERE indicator_id = X;  -- post → temp
-UPDATE indicator_values SET indicator_id = X WHERE indicator_id = Y;   -- below → post
-UPDATE indicator_values SET indicator_id = Y WHERE indicator_id = -1;  -- temp → below
-
--- Step 3: Verify the swap worked
-SELECT da.kommun_name, iv.raw_value
-FROM indicator_values iv
-JOIN indicators i ON i.id = iv.indicator_id
-JOIN deso_areas da ON da.deso_code = iv.deso_code
-WHERE i.slug = 'education_post_secondary_pct'
-  AND da.kommun_name = 'Lund'
-LIMIT 5;
--- Should now show 50-60% for Lund
-
-COMMIT;  -- Only if verification passes!
-```
-
-**Then fix the ingestion command** so this doesn't happen on the next data refresh. Swap the ContentsCode mapping in the SCB API call.
-
-### Fix B: If Wrong ContentsCode
-
-Find the correct ContentsCode by exploring the SCB API:
-
-```bash
-# List available contents codes for the education DeSO table
-curl -s "https://api.scb.se/OV0104/v1/doris/en/ssd/UF/UF0506/UF0506B/TabVXUtbniva" | python3 -m json.tool | grep -A5 "ContentsCode"
-```
-
-The education level variable we want is typically:
-- **"Eftergymnasial utbildning, 3 år eller mer"** — post-secondary 3+ years
-- Or the broader **"Eftergymnasial utbildning"** — any post-secondary
-
-We might accidentally be fetching:
-- "Förgymnasial utbildning" (pre-gymnasium = below secondary)
-- A sub-category that's too narrow
-- A count instead of a percentage
-
-Update the `ContentsCode` in the SCB API service and re-ingest.
-
-### Fix C: If DeSO Code Mismatch
-
-If SCB returns DeSO 2018 codes and our database has DeSO 2025:
-
-1. Check how many DeSO codes from the SCB response match our database:
-```sql
--- After ingestion, how many matched vs didn't?
-SELECT
-    COUNT(*) FILTER (WHERE da.deso_code IS NOT NULL) as matched,
-    COUNT(*) FILTER (WHERE da.deso_code IS NULL) as unmatched
-FROM indicator_values iv
-LEFT JOIN deso_areas da ON da.deso_code = iv.deso_code
-WHERE iv.indicator_id = (SELECT id FROM indicators WHERE slug = 'education_post_secondary_pct');
-```
-
-2. If there are many unmatched, we need a DeSO 2018→2025 crosswalk table from SCB.
-
-### Fix D: If JSON-stat2 Parsing Bug
-
-Check `ScbApiService::parseJsonStat2()` for:
-- Correct dimension ordering (Region × ContentsCode × Time)
-- Correct index mapping (the `value` array is flat, mapped by cartesian product of dimensions)
-- Off-by-one errors in the index calculation
-
-Add a sanity check to the parser:
-```php
-// After parsing, spot-check a known value
-$lundDeso = '1281A0010'; // or whatever Lund's first DeSO code is
-$parsedValue = $result[$lundDeso] ?? null;
-Log::info("Sanity check: Lund DeSO {$lundDeso} education value = {$parsedValue}");
-// This should be 50-60% for post-secondary, 10-15% for below-secondary
-```
-
----
-
-## Step 3: Re-ingest and Renormalize
-
-After fixing the root cause:
-
-```bash
-# 1. Re-ingest education data with corrected API call
-php artisan ingest:scb --indicator=education_post_secondary_pct
-php artisan ingest:scb --indicator=education_below_secondary_pct
-
-# 2. Renormalize (percentile ranks change when values change)
-php artisan normalize:indicators --year=2024
-
-# 3. Recompute composite scores
-php artisan compute:scores --year=2024
-```
-
----
-
-## Step 4: Verify the Fix
-
-### 4.1 Sanity Check — Known Areas
-
-```sql
--- After fix: these should all make sense now
-SELECT
-    da.kommun_name,
-    da.deso_name,
-    ROUND(post.raw_value::numeric, 1) as post_secondary_pct,
-    ROUND(post.normalized_value::numeric * 100) as post_secondary_percentile,
-    ROUND(below.raw_value::numeric, 1) as below_secondary_pct,
-    ROUND(below.normalized_value::numeric * 100) as below_secondary_percentile
-FROM deso_areas da
-LEFT JOIN indicator_values post ON post.deso_code = da.deso_code
-    AND post.indicator_id = (SELECT id FROM indicators WHERE slug = 'education_post_secondary_pct')
-LEFT JOIN indicator_values below ON below.deso_code = da.deso_code
-    AND below.indicator_id = (SELECT id FROM indicators WHERE slug = 'education_below_secondary_pct')
-WHERE da.kommun_name IN ('Lund', 'Danderyd', 'Lidingö')
-ORDER BY post.raw_value DESC
-LIMIT 10;
-```
-
-**Expected after fix:**
-| kommun | post_secondary_pct | post_secondary_percentile | below_secondary_pct | below_secondary_percentile |
-|---|---|---|---|---|
-| Lund (central) | 55-65% | 95-99th | 5-10% | 5-15th |
-| Danderyd | 60-70% | 97-99th | 3-8% | 1-10th |
-| Lidingö | 55-65% | 95-99th | 5-10% | 5-15th |
-
-### 4.2 Sanity Check — Known Low-Education Areas
-
-```sql
--- Areas that should have LOW post-secondary education
--- Typical: smaller industrial towns, some immigrant-dense suburbs
-SELECT
-    da.kommun_name,
-    da.deso_name,
-    ROUND(post.raw_value::numeric, 1) as post_secondary_pct
-FROM deso_areas da
-JOIN indicator_values post ON post.deso_code = da.deso_code
-    AND post.indicator_id = (SELECT id FROM indicators WHERE slug = 'education_post_secondary_pct')
-WHERE da.kommun_name IN ('Filipstad', 'Gislaved', 'Lessebo')
-ORDER BY post.raw_value ASC
-LIMIT 10;
-```
-
-**Expected:** 10-20% post-secondary. If these now show 50-60%, we over-corrected (swapped the wrong way).
-
-### 4.3 Visual Check
-
-- [ ] Open the map, click Södermalm → post-secondary education should show 55-65%, high percentile, green bar
-- [ ] Click a Lund DeSO → similar, high post-secondary
-- [ ] Click a known low-education area → low post-secondary, red bar
-- [ ] The overall map color pattern should shift (education indicators contribute to composite score)
-- [ ] Danderyd and Lidingö should still be green overall
-- [ ] The education indicator tooltip shows a value that matches the national average context (~29%)
-
----
-
-## Step 5: Add Permanent Sanity Checks
-
-### 5.1 Post-Ingestion Validation
-
-Add automatic sanity checks to the ingestion command that run after every data load:
+**Implementation:**
 
 ```php
-// In IngestScbData.php, after data is stored
+// Migration: add render tier to poi_categories
+Schema::table('poi_categories', function (Blueprint $table) {
+    $table->boolean('render_on_map')->default(false);
+});
 
-private function validateEducationData(): void
+// Seed the tiers
+DB::table('poi_categories')
+    ->whereIn('slug', [
+        'school', 'grundskola', 'gymnasieskola',
+        'transit_stop', 'rail_station', 'subway_station',
+        'grocery', 'supermarket',
+        'healthcare', 'hospital', 'vardcentral',
+        'gambling', 'pawn_shop', 'fast_food_cluster',
+    ])
+    ->update(['render_on_map' => true]);
+```
+
+**API response changes:**
+
+The endpoint returns two sections:
+
+```php
+public function show(Request $request)
 {
-    // Known reference points (won't change dramatically year to year)
-    $checks = [
-        // [deso_code_pattern, indicator_slug, expected_min, expected_max, description]
-        ['kommun_name' => 'Lund', 'slug' => 'education_post_secondary_pct', 'min' => 40, 'max' => 80, 'label' => 'Lund post-secondary'],
-        ['kommun_name' => 'Danderyd', 'slug' => 'education_post_secondary_pct', 'min' => 50, 'max' => 80, 'label' => 'Danderyd post-secondary'],
-        ['kommun_name' => 'Lund', 'slug' => 'education_below_secondary_pct', 'min' => 2, 'max' => 20, 'label' => 'Lund below-secondary'],
-    ];
+    // ... existing DeSO/score logic ...
 
-    foreach ($checks as $check) {
-        $avgValue = DB::table('indicator_values')
-            ->join('indicators', 'indicators.id', '=', 'indicator_values.indicator_id')
-            ->join('deso_areas', 'deso_areas.deso_code', '=', 'indicator_values.deso_code')
-            ->where('indicators.slug', $check['slug'])
-            ->where('deso_areas.kommun_name', $check['kommun_name'])
-            ->avg('indicator_values.raw_value');
+    // Tier 1: Full details + coordinates (for map markers)
+    $mapPois = Poi::query()
+        ->join('poi_categories', 'poi_categories.id', '=', 'pois.poi_category_id')
+        ->where('poi_categories.render_on_map', true)
+        ->where(DB::raw("ST_DWithin(pois.geom::geography, ..., {$radius})"))
+        ->orderByRaw("pois.geom::geography <-> ...")
+        ->select('pois.*', 'poi_categories.name as category_name', 'poi_categories.slug as category_slug')
+        ->limit(100) // Safety cap — Tier 1 categories won't hit this in practice
+        ->get();
 
-        if ($avgValue < $check['min'] || $avgValue > $check['max']) {
-            Log::error("SANITY CHECK FAILED: {$check['label']} avg={$avgValue}, expected {$check['min']}-{$check['max']}");
-            $this->error("⚠️  SANITY CHECK FAILED: {$check['label']} = {$avgValue}% (expected {$check['min']}-{$check['max']}%)");
-        } else {
-            $this->info("✓ {$check['label']} = " . round($avgValue, 1) . "% — OK");
-        }
-    }
+    // Tier 2: Counts only (for sidebar stats)
+    $sidebarCounts = Poi::query()
+        ->join('poi_categories', 'poi_categories.id', '=', 'pois.poi_category_id')
+        ->where('poi_categories.render_on_map', false)
+        ->where(DB::raw("ST_DWithin(pois.geom::geography, ..., {$radius})"))
+        ->groupBy('poi_categories.slug', 'poi_categories.name')
+        ->select(
+            'poi_categories.slug',
+            'poi_categories.name',
+            DB::raw('COUNT(*) as count'),
+            DB::raw('MIN(ST_Distance(pois.geom::geography, ...)) as nearest_m')
+        )
+        ->get();
+
+    return response()->json([
+        'map_pois' => $mapPois,       // ~30-60 features with coordinates
+        'sidebar_counts' => $sidebarCounts,  // ~10-15 rows, no coordinates
+        // ... scores, schools, indicators ...
+    ]);
 }
 ```
 
-### 5.2 Generalize to All Indicators
+**Frontend changes:**
 
-Create a validation config that can be extended for every indicator:
+```tsx
+// Only map_pois become OpenLayers features
+mapPois.forEach(poi => addMarkerToLayer(poi));
 
-```php
-// config/data_sanity_checks.php
-
-return [
-    'education_post_secondary_pct' => [
-        ['kommun' => 'Lund', 'min' => 40, 'max' => 80],
-        ['kommun' => 'Danderyd', 'min' => 50, 'max' => 80],
-        ['national_median_min' => 20, 'national_median_max' => 40],
-    ],
-    'education_below_secondary_pct' => [
-        ['kommun' => 'Lund', 'min' => 2, 'max' => 20],
-        ['kommun' => 'Danderyd', 'min' => 1, 'max' => 15],
-        ['national_median_min' => 5, 'national_median_max' => 20],
-    ],
-    'median_income' => [
-        ['kommun' => 'Danderyd', 'min' => 350000, 'max' => 600000],
-        ['kommun' => 'Filipstad', 'min' => 150000, 'max' => 250000],
-        ['national_median_min' => 200000, 'national_median_max' => 300000],
-    ],
-    'employment_rate' => [
-        ['national_median_min' => 60, 'national_median_max' => 85],
-    ],
-    // Add checks for every indicator as they're ingested
-];
+// sidebar_counts render as text in the sidebar
+<div className="space-y-2">
+    <h4>Nearby</h4>
+    {sidebarCounts.map(cat => (
+        <div key={cat.slug} className="flex justify-between text-sm">
+            <span>{cat.name}</span>
+            <span className="text-muted-foreground">
+                {cat.count} ({Math.round(cat.nearest_m)}m)
+            </span>
+        </div>
+    ))}
+</div>
 ```
 
-### 5.3 Artisan Command
+### Why This Works
 
-```bash
-php artisan validate:indicators [--year=2024] [--indicator=education_post_secondary_pct]
-```
+- Stockholm central drops from 3,767 markers to ~30-60 (schools + transit + grocery + healthcare + negative POIs)
+- Zero data loss — every café and gym is still counted and shown in the sidebar
+- The categories that users actually click on (schools, transit) keep full markers with tooltips
+- Ambient categories (cafés, restaurants) become neighborhood character stats — which is what they really are
+- The `render_on_map` boolean is admin-configurable — if a category becomes important later, flip the flag
 
-Runs all sanity checks and reports pass/fail. Should be called automatically at the end of every ingestion run. If any check fails, log a warning but don't block — the admin should review.
-
----
-
-## Step 6: Audit All Other Indicators
-
-While we're here, spot-check EVERY indicator, not just education. The same type of bug could affect income, employment, or anything else.
+### Verify
 
 ```sql
--- Quick sanity: for each indicator, show the top 5 and bottom 5 kommuner by average value
--- If Danderyd shows up at the bottom of median_income, we have the same problem
+-- Count Tier 1 POIs within 1km of Stockholm central
+SELECT pc.slug, COUNT(*)
+FROM pois p
+JOIN poi_categories pc ON pc.id = p.poi_category_id
+WHERE pc.render_on_map = true
+  AND ST_DWithin(p.geom::geography, ST_SetSRID(ST_MakePoint(18.0586, 59.3308), 4326)::geography, 1000)
+GROUP BY pc.slug;
+-- Should total 30-80 features — manageable
 
-SELECT i.slug, da.kommun_name,
-    ROUND(AVG(iv.raw_value)::numeric, 1) as avg_value,
-    RANK() OVER (PARTITION BY i.slug ORDER BY AVG(iv.raw_value) DESC) as rank_desc
-FROM indicator_values iv
-JOIN indicators i ON i.id = iv.indicator_id
-JOIN deso_areas da ON da.deso_code = iv.deso_code
-WHERE i.is_active = true
-  AND iv.raw_value IS NOT NULL
-GROUP BY i.slug, da.kommun_name
-HAVING COUNT(*) >= 3  -- Only kommuner with enough DeSOs
-ORDER BY i.slug, avg_value DESC;
+-- Verify nothing important is missing from Tier 1
+SELECT pc.slug, pc.render_on_map, COUNT(*) as within_1km
+FROM pois p
+JOIN poi_categories pc ON pc.id = p.poi_category_id
+WHERE ST_DWithin(p.geom::geography, ST_SetSRID(ST_MakePoint(18.0586, 59.3308), 4326)::geography, 1000)
+GROUP BY pc.slug, pc.render_on_map
+ORDER BY count DESC;
+-- Restaurants/cafés should be Tier 2 (render_on_map=false) — that's where the bulk is
 ```
-
-For each indicator, check:
-- [ ] `median_income`: Danderyd, Lidingö, Täby at the top? Filipstad, Lessebo near the bottom?
-- [ ] `employment_rate`: University cities and wealthy suburbs high? Areas with known unemployment low?
-- [ ] `low_economic_standard_pct`: Inverse of median_income pattern?
-- [ ] `education_post_secondary_pct`: University cities at top? ← **THIS IS THE ONE THAT'S BROKEN**
-- [ ] `education_below_secondary_pct`: Should be inverse of post-secondary pattern
 
 ---
 
-## Priority
+## P1: Deduplicate and Combine Spatial Queries
 
-This is **urgent**. Every user looking at the map right now sees wrong education data, which feeds into wrong composite scores, which means the entire map coloring is partially wrong. Education indicators carry significant weight (0.10 + 0.05 = 0.15 of the composite score for SCB education alone, plus 0.25 for school quality which may be correct since it's from a different source).
+### The Problem
 
-Fix order:
-1. **Diagnose** (Step 1) — 15 minutes
-2. **Fix** (Step 2) — depends on root cause, 15-60 minutes
-3. **Re-ingest + renormalize** (Step 3) — 5-10 minutes
-4. **Verify** (Step 4) — 10 minutes
-5. **Add sanity checks** (Step 5) — 30 minutes
-6. **Audit other indicators** (Step 6) — 30 minutes
+Two services query the same data for the same point:
 
-Total: 2-3 hours if the fix is straightforward (swapped variables).
+1. **`ProximityScoreService::score()`** runs 7 sequential `ST_DWithin` queries to compute proximity scores (schools, green space, transit, grocery, negative POIs, positive POIs, plus DeSO lookup + safety)
+2. **`LocationController::show()`** then runs 3+ more `ST_DWithin` queries for schools, POIs, and categories — fetching the same nearby features again with different parameters
+
+That's 10-12 spatial queries hitting the same PostGIS indexes for the same coordinates. Most of this is duplicate work.
+
+### The Fix
+
+**Option A: Share query results (simpler)**
+
+Refactor `LocationController::show()` to call `ProximityScoreService` once and reuse the intermediate results:
+
+```php
+public function show(Request $request)
+{
+    $lat = $request->float('lat');
+    $lng = $request->float('lng');
+
+    // One service call that returns BOTH scores AND the raw nearby features
+    $proximity = $this->proximityService->scoreWithDetails($lat, $lng);
+
+    // $proximity now contains:
+    // - score (the composite proximity score)
+    // - factor_scores (per-category scores)
+    // - nearby_schools (the actual school records, already fetched)
+    // - nearby_pois (the actual POI records, already fetched)
+    // - nearby_transit (the actual transit stops, already fetched)
+
+    // No need to re-query — just format for the frontend
+    $schools = $proximity->nearby_schools->map(fn ($s) => [...]);
+    $pois = $proximity->nearby_pois->map(fn ($p) => [...]);
+
+    // ... build response using shared data
+}
+```
+
+**Option B: Single CTE query (more effort, bigger win)**
+
+Combine all spatial lookups into one round-trip using a CTE:
+
+```sql
+WITH pin AS (
+    SELECT ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography AS geog
+),
+nearby_deso AS (
+    SELECT deso_code, geom
+    FROM deso_areas, pin
+    WHERE ST_Contains(deso_areas.geom, pin.geog::geometry)
+    LIMIT 1
+),
+nearby_schools AS (
+    SELECT s.*, ss.merit_value_17, ss.goal_achievement_pct,
+           ST_Distance(s.geom::geography, pin.geog) AS distance_m
+    FROM schools s
+    CROSS JOIN pin
+    LEFT JOIN school_statistics ss ON ss.school_unit_code = s.school_unit_code
+        AND ss.academic_year = (SELECT MAX(academic_year) FROM school_statistics WHERE school_unit_code = s.school_unit_code)
+    WHERE ST_DWithin(s.geom::geography, pin.geog, 2000)
+      AND s.status = 'active'
+    ORDER BY distance_m
+    LIMIT 15
+),
+nearby_pois AS (
+    SELECT p.*, pc.name as category_name, pc.sentiment,
+           ST_Distance(p.geom::geography, pin.geog) AS distance_m
+    FROM pois p
+    CROSS JOIN pin
+    JOIN poi_categories pc ON pc.id = p.poi_category_id
+    WHERE ST_DWithin(p.geom::geography, pin.geog, 1000)
+    ORDER BY distance_m
+    LIMIT 200
+)
+SELECT 'deso' AS result_type, nearby_deso.deso_code AS id, NULL AS data FROM nearby_deso
+UNION ALL
+SELECT 'school', school_unit_code, row_to_json(nearby_schools.*)::text FROM nearby_schools
+UNION ALL
+SELECT 'poi', id::text, row_to_json(nearby_pois.*)::text FROM nearby_pois;
+```
+
+This is one query, one round-trip, one index scan sweep. PostGIS is extremely efficient at batching spatial operations in a single query plan.
+
+**Recommendation:** Start with Option A (30 minutes, immediate dedup). Do Option B later if latency is still >200ms.
+
+### Verify
+
+Add timing to the controller:
+
+```php
+$start = microtime(true);
+// ... all queries ...
+$elapsed = (microtime(true) - $start) * 1000;
+Log::info("Pin-drop response: {$elapsed}ms", ['lat' => $lat, 'lng' => $lng]);
+```
+
+Test with Stockholm coordinates (59.33, 18.07). Should drop from 300-600ms to 100-200ms.
+
+---
+
+## P2: Throttle the Hover Handler
+
+### The Problem
+
+`deso-map.tsx` line ~563 registers a `pointermove` handler that calls `forEachFeatureAtPixel` on every mouse movement. With 200 POI markers loaded (3,767 before the P0 fix), this is expensive hit-testing running at 60Hz.
+
+### The Fix
+
+Debounce or throttle to 50ms:
+
+```tsx
+// BEFORE
+map.on('pointermove', (evt) => {
+    const feature = map.forEachFeatureAtPixel(evt.pixel, (f) => f);
+    // ... tooltip logic
+});
+
+// AFTER
+import { throttle } from 'lodash'; // or a simple manual throttle
+
+const handlePointerMove = throttle((evt: MapBrowserEvent<UIEvent>) => {
+    const feature = map.forEachFeatureAtPixel(evt.pixel, (f) => f);
+    // ... tooltip logic
+}, 50);
+
+map.on('pointermove', handlePointerMove);
+
+// IMPORTANT: Clean up on unmount
+return () => {
+    map.un('pointermove', handlePointerMove);
+    handlePointerMove.cancel();
+};
+```
+
+**Alternative:** Use `pointerInteractionOptions` on the layer to restrict which layers participate in hit-testing. If tooltips only apply to POI/school markers, exclude the heatmap tile layer from hit-testing.
+
+```tsx
+const poiLayer = new VectorLayer({
+    source: poiSource,
+    // Only this layer responds to hover
+});
+
+map.on('pointermove', throttle((evt) => {
+    // Only check the POI layer, not all layers
+    const hit = map.forEachFeatureAtPixel(evt.pixel, (f) => f, {
+        layerFilter: (layer) => layer === poiLayer || layer === schoolLayer,
+    });
+}, 50));
+```
+
+### Verify
+
+Open DevTools Performance tab, mouse around the map quickly in Stockholm. Frame times should stay under 16ms (60fps). No long `pointermove` handler tasks in the flame chart.
+
+---
+
+## P3: Cache Proximity Scores by Grid Cell
+
+### The Problem
+
+Every pin-drop runs the full `ProximityScoreService::score()` computation — 7 spatial queries. Two clicks 50 meters apart produce nearly identical results but cost the same computation.
+
+### The Fix
+
+Round coordinates to a ~100m grid and cache results:
+
+```php
+// In ProximityScoreService or LocationController
+
+public function getCachedScore(float $lat, float $lng): ProximityResult
+{
+    // Round to ~100m precision (3 decimal places ≈ 111m lat, ~55-80m lng in Sweden)
+    $gridLat = round($lat, 3);
+    $gridLng = round($lng, 3);
+    $cacheKey = "proximity:{$gridLat},{$gridLng}";
+
+    return Cache::remember($cacheKey, now()->addHour(), function () use ($lat, $lng) {
+        return $this->score($lat, $lng);
+    });
+}
+```
+
+**Cache invalidation:** Proximity data changes when:
+- New POIs are ingested (monthly) → flush all `proximity:*` keys after POI ingestion
+- School data updates (monthly) → same
+- Score recomputation → same
+
+For simplicity, just flush the entire proximity cache after any data pipeline run:
+
+```php
+// In any ingestion command, after completion
+Cache::flush(); // or more targeted: clear keys with 'proximity:' prefix
+```
+
+**Trade-off:** First click on a new grid cell is still slow. Subsequent clicks within ~100m are instant. In practice, users click nearby points when exploring an area, so the cache hit rate will be high.
+
+### Verify
+
+```php
+// Click the same area twice, check logs
+Log::info("Proximity cache", ['hit' => Cache::has($cacheKey)]);
+// Second click should show cache hit
+```
+
+---
+
+## P4: Verify Spatial Indexes
+
+### The Problem
+
+If any table is missing its GIST index, every `ST_DWithin` and `ST_Contains` query is a full table scan. With 3,767 POIs and 6,160 DeSO polygons, this would be catastrophic but might not be obvious during development with small datasets.
+
+### The Fix
+
+Run this check and create any missing indexes:
+
+```sql
+-- Check existing spatial indexes
+SELECT
+    tablename,
+    indexname,
+    indexdef
+FROM pg_indexes
+WHERE indexdef LIKE '%gist%'
+ORDER BY tablename;
+
+-- These MUST exist:
+-- deso_areas: GIST index on geom
+-- schools: GIST index on geom
+-- pois: GIST index on geom
+-- (any transit/green_space tables): GIST index on geom
+
+-- If ANY are missing, create them:
+CREATE INDEX IF NOT EXISTS deso_areas_geom_idx ON deso_areas USING GIST (geom);
+CREATE INDEX IF NOT EXISTS schools_geom_idx ON schools USING GIST (geom);
+CREATE INDEX IF NOT EXISTS pois_geom_idx ON pois USING GIST (geom);
+```
+
+Also check that the `geography` cast in `ST_DWithin` queries can use the index. If queries cast `geom::geography` and the index is on `geom` (geometry type), PostGIS may not use the index. Options:
+- Store a separate `geog` column of type `geography` with its own GIST index
+- Or ensure queries use `geom` with `ST_DWithin` in geometry mode (with appropriate SRID transforms)
+
+### Verify
+
+```sql
+EXPLAIN ANALYZE
+SELECT * FROM pois
+WHERE ST_DWithin(geom::geography, ST_SetSRID(ST_MakePoint(18.0586, 59.3308), 4326)::geography, 1000);
+-- Look for "Index Scan" or "Bitmap Index Scan" — NOT "Seq Scan"
+```
+
+---
+
+## P5: Clean Up the 115MB Ghost File
+
+### The Problem
+
+`public/data/deso.geojson` is 115MB, never used by the frontend (heatmap tiles replaced it), but sits in the public directory. It inflates Docker images, git repos, and backups.
+
+### The Fix
+
+1. **Verify nothing references it:**
+```bash
+grep -rn "deso.geojson" resources/js/ app/ routes/ --include='*.tsx' --include='*.ts' --include='*.php' --include='*.vue'
+```
+
+2. **If nothing references it:** Delete it.
+```bash
+rm public/data/deso.geojson
+```
+
+3. **If the fallback GeoJSON endpoint (`DesoController.php:46`) still exists** and someone might call it via API:
+   - Either delete the endpoint too (if the tile approach fully replaces it)
+   - Or fix it to use `ST_SimplifyPreserveTopology` instead of `ST_Buffer` and add aggressive caching:
+```php
+public function geojson()
+{
+    return Cache::rememberForever('deso_geojson_simplified', function () {
+        $features = DB::table('deso_areas')
+            ->select(
+                'deso_code',
+                DB::raw("ST_AsGeoJSON(ST_SimplifyPreserveTopology(geom, 0.001)) as geometry")
+            )
+            ->get();
+        // ... build FeatureCollection
+    });
+}
+```
+
+4. **Add to `.gitignore`** if large generated files shouldn't be tracked:
+```
+public/data/deso.geojson
+```
+
+---
+
+## Execution Order
+
+| Priority | Fix | Effort | Expected Impact |
+|---|---|---|---|
+| P0 | Render tiers — map markers vs sidebar counts | 45 min | 3,767 → ~50 markers in Stockholm |
+| P1 | Deduplicate spatial queries (Option A) | 30-60 min | Cuts query count from 12 to 5-6 |
+| P2 | Throttle hover handler | 10 min | Smooth hovering in dense areas |
+| P3 | Cache proximity by grid cell | 30 min | Instant repeat lookups |
+| P4 | Verify spatial indexes | 10 min | Prevents catastrophic slow queries |
+| P5 | Delete 115MB ghost file | 5 min | Housekeeping |
+
+Total: ~2.5-3 hours. P0 + P2 alone (55 minutes) will fix the most visible lag.
+
+---
+
+## Verification
+
+After all fixes, test with Stockholm central (59.3308, 18.0586):
+
+- [ ] Pin-drop API responds in **< 200ms** (check Network tab)
+- [ ] Map markers are **only Tier 1 categories** — schools, transit, grocery, healthcare, negative POIs
+- [ ] Sidebar shows **counts for Tier 2 categories** — restaurants, cafés, gyms, parks with nearest distance
+- [ ] Stockholm central pin-drop renders **< 80 markers** (not 3,767)
+- [ ] Zero data loss — every POI type appears somewhere (either as marker or sidebar count)
+- [ ] Hovering over markers is smooth, **no frame drops** (check Performance tab)
+- [ ] Second click nearby (within ~100m) is **< 50ms** (cache hit)
+- [ ] `EXPLAIN ANALYZE` on spatial queries shows **index scans**, not seq scans
+- [ ] `public/data/deso.geojson` is **gone** (or simplified + cached if endpoint kept)
+- [ ] `poi_categories.render_on_map` column exists and is configurable in admin
 
 ---
 
 ## What NOT to Do
 
-- **DO NOT just swap the values in the database without finding the root cause.** If the ingestion command is wrong, the next data refresh will re-break it.
-- **DO NOT assume only education is affected.** Check every indicator.
-- **DO NOT skip the sanity checks in Step 5.** This bug shipped to production unnoticed. Automated validation prevents it from happening again.
-- **DO NOT trust the map until this is fixed.** The composite scores are partially computed from wrong education data.
+- **DO NOT touch the heatmap tile rendering.** It's already performant at 60fps. The problem was never the map tiles.
+- **DO NOT implement vector tiles or WebGL rendering.** Overkill for this feature count. The bottleneck is server-side queries and response size, not client-side rendering.
+- **DO NOT remove the `pointermove` handler entirely.** Hover tooltips are good UX. Just throttle them.
+- **DO NOT cache with infinite TTL.** Proximity data changes when POIs/schools update. 1-hour cache with flush-on-ingest is the right balance.

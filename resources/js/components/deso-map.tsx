@@ -559,8 +559,15 @@ const HeatmapMap = forwardRef<HeatmapMapHandle, HeatmapMapProps>(function Heatma
             map.addOverlay(tooltipOverlay);
         }
 
-        // Hover tooltip for school and POI markers
+        // Hover tooltip for school and POI markers (throttled to 50ms)
+        let lastHoverTime = 0;
+        const hoverableLayers = new Set([schoolLayer, poiLayer]);
+
         map.on('pointermove', (event) => {
+            const now = performance.now();
+            if (now - lastHoverTime < 50) return;
+            lastHoverTime = now;
+
             const overlay = tooltipOverlayRef.current;
             const el = tooltipRef.current;
             if (!overlay || !el) return;
@@ -568,73 +575,78 @@ const HeatmapMap = forwardRef<HeatmapMapHandle, HeatmapMapProps>(function Heatma
             const pixel = event.pixel;
             let found = false;
 
-            map.forEachFeatureAtPixel(pixel, (feat, layer) => {
-                if (found) return;
-                const feature = feat as Feature;
+            map.forEachFeatureAtPixel(
+                pixel,
+                (feat, layer) => {
+                    if (found) return;
+                    const feature = feat as Feature;
 
-                if (layer === schoolLayer) {
-                    const name = feature.get('name') as string | undefined;
-                    const merit = feature.get('merit_value') as number | null;
-                    if (name) {
-                        let html = `<strong>${name}</strong>`;
-                        if (merit !== null && merit !== undefined) {
-                            html += `<br><span style="opacity:0.8">Merit: ${merit}</span>`;
-                        }
-                        el.innerHTML = html;
-                        el.style.display = 'block';
-                        overlay.setPosition(event.coordinate);
-                        found = true;
-                    }
-                } else {
-                    // Check for POI features (from pin-based layer or viewport-based usePoiLayer)
-                    // The usePoiLayer hook uses clustering, so features may be wrapped
-                    const clustered = feature.get('features') as Feature[] | undefined;
-                    const poiFeatures = clustered ?? [feature];
-                    const isPoi = layer === poiLayer || poiFeatures[0]?.get('is_poi') || feature.get('category');
-
-                    if (isPoi) {
-                        if (poiFeatures.length === 1) {
-                            const poi = poiFeatures[0];
-                            const name = poi.get('name') as string | undefined;
-                            const category = poi.get('category') as string | undefined;
-                            const categoryLabel = category?.replace(/_/g, ' ') ?? 'POI';
-                            const label = name || categoryLabel;
-                            let html = `<strong>${label}</strong>`;
-                            if (name && category) {
-                                html += `<br><span style="opacity:0.8">${categoryLabel}</span>`;
+                    if (layer === schoolLayer) {
+                        const name = feature.get('name') as string | undefined;
+                        const merit = feature.get('merit_value') as number | null;
+                        if (name) {
+                            let html = `<strong>${name}</strong>`;
+                            if (merit !== null && merit !== undefined) {
+                                html += `<br><span style="opacity:0.8">Merit: ${merit}</span>`;
                             }
                             el.innerHTML = html;
                             el.style.display = 'block';
                             overlay.setPosition(event.coordinate);
                             found = true;
-                        } else if (poiFeatures.length > 1) {
-                            // Cluster tooltip
-                            let pos = 0, neg = 0, other = 0;
-                            for (const f of poiFeatures) {
-                                const s = f.get('sentiment');
-                                if (s === 'positive') pos++;
-                                else if (s === 'negative') neg++;
-                                else other++;
+                        }
+                    } else {
+                        const clustered = feature.get('features') as Feature[] | undefined;
+                        const poiFeatures = clustered ?? [feature];
+                        const isPoi =
+                            layer === poiLayer ||
+                            poiFeatures[0]?.get('is_poi') ||
+                            feature.get('category');
+
+                        if (isPoi) {
+                            if (poiFeatures.length === 1) {
+                                const poi = poiFeatures[0];
+                                const name = poi.get('name') as string | undefined;
+                                const category = poi.get('category') as string | undefined;
+                                const categoryLabel = category?.replace(/_/g, ' ') ?? 'POI';
+                                const label = name || categoryLabel;
+                                let html = `<strong>${label}</strong>`;
+                                if (name && category) {
+                                    html += `<br><span style="opacity:0.8">${categoryLabel}</span>`;
+                                }
+                                el.innerHTML = html;
+                                el.style.display = 'block';
+                                overlay.setPosition(event.coordinate);
+                                found = true;
+                            } else if (poiFeatures.length > 1) {
+                                let pos = 0,
+                                    neg = 0,
+                                    other = 0;
+                                for (const f of poiFeatures) {
+                                    const s = f.get('sentiment');
+                                    if (s === 'positive') pos++;
+                                    else if (s === 'negative') neg++;
+                                    else other++;
+                                }
+                                const parts: string[] = [];
+                                if (neg > 0) parts.push(`${neg} nuisance${neg > 1 ? 's' : ''}`);
+                                if (pos > 0) parts.push(`${pos} amenit${pos > 1 ? 'ies' : 'y'}`);
+                                if (other > 0) parts.push(`${other} other`);
+                                el.innerHTML = `<strong>${poiFeatures.length} POIs</strong><br><span style="opacity:0.8">${parts.join(' · ')}</span>`;
+                                el.style.display = 'block';
+                                overlay.setPosition(event.coordinate);
+                                found = true;
                             }
-                            const parts: string[] = [];
-                            if (neg > 0) parts.push(`${neg} nuisance${neg > 1 ? 's' : ''}`);
-                            if (pos > 0) parts.push(`${pos} amenit${pos > 1 ? 'ies' : 'y'}`);
-                            if (other > 0) parts.push(`${other} other`);
-                            el.innerHTML = `<strong>${poiFeatures.length} POIs</strong><br><span style="opacity:0.8">${parts.join(' · ')}</span>`;
-                            el.style.display = 'block';
-                            overlay.setPosition(event.coordinate);
-                            found = true;
                         }
                     }
-                }
-            });
+                },
+                { layerFilter: (layer) => hoverableLayers.has(layer) },
+            );
 
             if (!found) {
                 el.style.display = 'none';
                 overlay.setPosition(undefined);
             }
 
-            // Pointer cursor on hoverable features
             const target = map.getTargetElement() as HTMLElement;
             target.style.cursor = found ? 'pointer' : '';
         });
