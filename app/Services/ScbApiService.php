@@ -217,6 +217,9 @@ class ScbApiService
 
         $regionIndex = $dimensionMeta['Region']['category']['index'] ?? [];
 
+        // Build position-to-code mapping for variable dimensions (not Region/ContentsCode/Tid)
+        $variableDimKeys = $this->buildVariableDimKeys($dimensions, $sizes, $dimensionMeta, $regionDimIndex);
+
         // Build a map to understand how dimensions are laid out
         // Values array is a flat cartesian product of all dimensions
         $strides = $this->computeStrides($sizes);
@@ -240,6 +243,11 @@ class ScbApiService
                 $regionDimIndex,
                 $regionPos
             );
+
+            // Convert positional array to keyed array using dimension codes
+            if ($variableDimKeys) {
+                $extractedValues = $this->keyExtractedValues($extractedValues, $variableDimKeys);
+            }
 
             $hasNonNull = collect($extractedValues)->contains(fn ($v) => $v !== null);
 
@@ -269,6 +277,58 @@ class ScbApiService
         }
 
         return $this->applyTransform($regionValues, $transform);
+    }
+
+    /**
+     * Build a position-to-code mapping for variable dimensions.
+     *
+     * Returns the mapping for the single multi-value variable dimension,
+     * or null if all variable dimensions have only one value.
+     *
+     * @return array<int, string>|null
+     */
+    private function buildVariableDimKeys(array $dimensions, array $sizes, array $dimensionMeta, int $regionDimIndex): ?array
+    {
+        $skipDims = ['Region', 'ContentsCode', 'Tid'];
+
+        foreach ($dimensions as $i => $dimName) {
+            if ($i === $regionDimIndex || in_array($dimName, $skipDims, true)) {
+                continue;
+            }
+            if ($sizes[$i] <= 1) {
+                continue;
+            }
+
+            // Found a multi-value variable dimension — build position-to-code mapping
+            $categoryIndex = $dimensionMeta[$dimName]['category']['index'] ?? [];
+            $posToCode = [];
+            foreach ($categoryIndex as $code => $pos) {
+                $posToCode[$pos] = (string) $code;
+            }
+            ksort($posToCode);
+
+            return $posToCode;
+        }
+
+        return null;
+    }
+
+    /**
+     * Convert positional value array to keyed array using dimension codes.
+     *
+     * @param  array<int|float|null>  $values
+     * @param  array<int, string>  $posToCode
+     * @return array<string, int|float|null>
+     */
+    private function keyExtractedValues(array $values, array $posToCode): array
+    {
+        $keyed = [];
+        foreach ($values as $i => $val) {
+            $key = $posToCode[$i] ?? (string) $i;
+            $keyed[$key] = $val;
+        }
+
+        return $keyed;
     }
 
     /**
@@ -372,8 +432,9 @@ class ScbApiService
 
     private function ratioFirstOverLast(array $vals): ?float
     {
-        $first = $vals[0] ?? null;
-        $last = end($vals);
+        $values = array_values($vals);
+        $first = $values[0] ?? null;
+        $last = end($values);
         if ($first === null || $last === null || $last == 0) {
             return null;
         }
@@ -383,8 +444,9 @@ class ScbApiService
 
     private function ratioFirstOverSum(array $vals): ?float
     {
-        $first = $vals[0] ?? null;
-        $sum = array_sum(array_filter($vals, fn ($v) => $v !== null));
+        $values = array_values($vals);
+        $first = $values[0] ?? null;
+        $sum = array_sum(array_filter($values, fn ($v) => $v !== null));
         if ($first === null || $sum == 0) {
             return null;
         }
@@ -393,17 +455,22 @@ class ScbApiService
     }
 
     /**
-     * Education levels order: 5 (post-sec <3yr), 6 (post-sec 3yr+), 21 (primary), 3+4 (upper secondary), US (unknown)
+     * Education levels (keyed by SCB code):
+     *   '5'   = post-secondary <3yr
+     *   '6'   = post-secondary 3yr+
+     *   '21'  = primary and lower secondary
+     *   '3+4' = upper secondary
+     *   'US'  = unknown
+     *
      * Post-secondary = levels 5 + 6
      */
     private function educationPostSecondary(array $vals): ?float
     {
-        // Values in order: 5, 6, 21, 3+4, US
         if (count($vals) < 5) {
             return null;
         }
 
-        $postSec = ($vals[0] ?? 0) + ($vals[1] ?? 0);
+        $postSec = ($vals['5'] ?? 0) + ($vals['6'] ?? 0);
         $total = array_sum(array_filter($vals, fn ($v) => $v !== null));
         if ($total == 0) {
             return null;
@@ -417,12 +484,11 @@ class ScbApiService
      */
     private function educationBelowSecondary(array $vals): ?float
     {
-        // Values in order: 5, 6, 21, 3+4, US
         if (count($vals) < 5) {
             return null;
         }
 
-        $belowSec = $vals[2] ?? 0;
+        $belowSec = $vals['21'] ?? 0;
         $total = array_sum(array_filter($vals, fn ($v) => $v !== null));
         if ($total == 0) {
             return null;
