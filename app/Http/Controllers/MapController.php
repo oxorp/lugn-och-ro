@@ -51,7 +51,7 @@ class MapController extends Controller
             ],
         ]);
 
-        return Inertia::render('map', [
+        return Inertia::render('explore/map-page', [
             'initialCenter' => [62.0, 15.0],
             'initialZoom' => 5,
             'indicatorScopes' => $indicatorScopes,

@@ -15,7 +15,7 @@ class MapControllerTest extends TestCase
 
         $response->assertOk();
         $response->assertInertia(fn ($page) => $page
-            ->component('map')
+            ->component('explore/map-page')
             ->has('initialCenter')
             ->has('initialZoom')
             ->where('initialCenter', [62, 15])

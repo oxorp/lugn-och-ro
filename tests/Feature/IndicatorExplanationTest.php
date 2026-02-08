@@ -83,7 +83,7 @@ class IndicatorExplanationTest extends TestCase
 
         $response->assertOk();
         $response->assertInertia(fn ($page) => $page
-            ->component('map')
+            ->component('explore/map-page')
             ->has('indicatorMeta')
             ->has('indicatorMeta.median_income.description_short')
             ->has('indicatorMeta.median_income.source_name')
