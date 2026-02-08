@@ -81,7 +81,7 @@ export default function MapPage({
             <Head title={t('map.title')} />
             <>
                 {/* Map */}
-                <div className="relative h-2/5 flex-none md:h-auto md:flex-1">
+                <div className="relative h-3/5 flex-none md:h-auto md:flex-1">
                     {pinActive && (
                         <MapSearch
                             onResultSelect={handleSearchResult}
@@ -98,7 +98,7 @@ export default function MapPage({
                 </div>
 
                 {/* Sidebar */}
-                <div className="min-h-0 flex-1 overflow-hidden border-t border-border bg-background md:w-[420px] md:flex-none md:border-t-0 md:border-l">
+                <div className="min-h-0 flex-1 overflow-y-auto border-t border-border bg-background md:w-[460px] md:flex-none md:border-t-0 md:border-l">
                     {pinActive && locationData ? (
                         <ActiveSidebar
                             data={locationData}
