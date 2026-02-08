@@ -12,3 +12,6 @@ Artisan::command('inspire', function () {
 Schedule::command('ingest:pois --source=osm --all')->monthly();
 Schedule::command('assign:poi-deso')->monthly();
 Schedule::command('aggregate:poi-indicators')->monthly();
+
+// Daily purchase cleanup
+Schedule::command('purchase:cleanup')->daily();

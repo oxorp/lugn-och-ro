@@ -9,8 +9,13 @@ use App\Http\Controllers\DesoController;
 use App\Http\Controllers\H3Controller;
 use App\Http\Controllers\LocationController;
 use App\Http\Controllers\MapController;
+use App\Http\Controllers\MyReportsController;
 use App\Http\Controllers\PageController;
 use App\Http\Controllers\PoiController;
+use App\Http\Controllers\PurchaseController;
+use App\Http\Controllers\ReportController;
+use App\Http\Controllers\SocialAuthController;
+use App\Http\Controllers\StripeWebhookController;
 use App\Http\Controllers\TileController;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
@@ -40,6 +45,41 @@ Route::get('/api/location/{lat},{lng}', [LocationController::class, 'show'])
 Route::get('/tiles/{year}/{z}/{x}/{y}.png', [TileController::class, 'serve'])
     ->where(['year' => '[0-9]+', 'z' => '[0-9]+', 'x' => '[0-9]+', 'y' => '[0-9]+'])
     ->name('tiles.serve');
+
+// Google OAuth
+Route::get('/auth/google', [SocialAuthController::class, 'redirect'])->name('auth.google');
+Route::get('/auth/google/callback', [SocialAuthController::class, 'callback']);
+
+// Stripe webhook (CSRF excluded via bootstrap/app.php)
+Route::post('/stripe/webhook', [StripeWebhookController::class, 'handle'])
+    ->name('stripe.webhook');
+
+// Purchase flow
+Route::get('/purchase/{lat},{lng}', [PurchaseController::class, 'show'])
+    ->name('purchase')
+    ->where(['lat' => '[0-9.]+', 'lng' => '[0-9.]+']);
+
+Route::post('/purchase/checkout', [PurchaseController::class, 'checkout'])
+    ->name('purchase.checkout');
+
+Route::get('/purchase/success', [PurchaseController::class, 'success'])
+    ->name('purchase.success');
+
+Route::get('/purchase/cancel', [PurchaseController::class, 'cancel'])
+    ->name('purchase.cancel');
+
+Route::get('/purchase/status/{sessionId}', [PurchaseController::class, 'status'])
+    ->name('purchase.status');
+
+// Reports
+Route::get('/reports/{report:uuid}', [ReportController::class, 'show'])
+    ->name('reports.show');
+
+Route::get('/my-reports', [MyReportsController::class, 'index'])
+    ->name('my-reports');
+
+Route::post('/my-reports/request-access', [MyReportsController::class, 'requestAccess'])
+    ->name('my-reports.request-access');
 
 // Shared route definitions (used for both Swedish and English)
 $webRoutes = function () {

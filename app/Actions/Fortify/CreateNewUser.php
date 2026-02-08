@@ -2,16 +2,13 @@
 
 namespace App\Actions\Fortify;
 
-use App\Concerns\PasswordValidationRules;
-use App\Concerns\ProfileValidationRules;
+use App\Models\Report;
 use App\Models\User;
 use Illuminate\Support\Facades\Validator;
 use Laravel\Fortify\Contracts\CreatesNewUsers;
 
 class CreateNewUser implements CreatesNewUsers
 {
-    use PasswordValidationRules, ProfileValidationRules;
-
     /**
      * Validate and create a newly registered user.
      *
@@ -20,14 +17,21 @@ class CreateNewUser implements CreatesNewUsers
     public function create(array $input): User
     {
         Validator::make($input, [
-            ...$this->profileRules(),
-            'password' => $this->passwordRules(),
+            'email' => 'required|string|lowercase|email|max:255|unique:users',
+            'password' => ['required', 'string', 'min:8'],
         ])->validate();
 
-        return User::create([
-            'name' => $input['name'],
+        $user = User::create([
             'email' => $input['email'],
             'password' => $input['password'],
+            'provider' => 'email',
         ]);
+
+        // Claim any guest reports with this email
+        Report::where('guest_email', $user->email)
+            ->whereNull('user_id')
+            ->update(['user_id' => $user->id]);
+
+        return $user;
     }
 }

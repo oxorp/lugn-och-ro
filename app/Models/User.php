@@ -27,6 +27,10 @@ class User extends Authenticatable
         'password',
         'is_admin',
         'tenant_id',
+        'google_id',
+        'avatar_url',
+        'provider',
+        'email_verified_at',
     ];
 
     /**
@@ -62,6 +66,11 @@ class User extends Authenticatable
     public function unlocks(): HasMany
     {
         return $this->hasMany(UserUnlock::class);
+    }
+
+    public function reports(): HasMany
+    {
+        return $this->hasMany(Report::class);
     }
 
     public function activeSubscription(): HasOne

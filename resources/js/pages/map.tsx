@@ -409,6 +409,21 @@ function ActiveSidebar({
                     </div>
                 )}
 
+                {/* Purchase report CTA */}
+                {score && (
+                    <div className="mt-4 border-t pt-4">
+                        <a
+                            href={`/purchase/${location.lat},${location.lng}`}
+                            className="block w-full rounded-md bg-primary px-4 py-2.5 text-center text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+                        >
+                            Lås upp fullständig rapport — 79 kr
+                        </a>
+                        <p className="mt-2 text-center text-xs text-muted-foreground">
+                            Engångsköp · Ingen prenumeration
+                        </p>
+                    </div>
+                )}
+
                 {/* Proximity Analysis (paid tiers only) */}
                 {!isPublicTier && proximity && proximity.factors.length > 0 && (
                     <>
@@ -774,25 +789,33 @@ export default function MapPage({
                                 </button>
                             </div>
                             {locationData.score && (
-                                <div className="flex items-center gap-2">
-                                    <div
-                                        className="flex h-10 w-10 items-center justify-center rounded-md text-sm font-bold text-white"
-                                        style={scoreBgStyle(locationData.score.value)}
+                                <>
+                                    <div className="flex items-center gap-2">
+                                        <div
+                                            className="flex h-10 w-10 items-center justify-center rounded-md text-sm font-bold text-white"
+                                            style={scoreBgStyle(locationData.score.value)}
+                                        >
+                                            {locationData.score.value}
+                                        </div>
+                                        <div className="flex-1">
+                                            <span className="text-sm text-foreground">
+                                                {locationData.score.label}
+                                            </span>
+                                            {locationData.score.area_score !== null && (
+                                                <div className="flex gap-2 text-[10px] tabular-nums text-muted-foreground">
+                                                    <span>{t('sidebar.proximity.area_label')}: {locationData.score.area_score}</span>
+                                                    <span>{t('sidebar.proximity.location_label')}: {locationData.score.proximity_score}</span>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <a
+                                        href={`/purchase/${locationData.location.lat},${locationData.location.lng}`}
+                                        className="mt-3 block w-full rounded-md bg-primary px-4 py-2 text-center text-sm font-medium text-primary-foreground"
                                     >
-                                        {locationData.score.value}
-                                    </div>
-                                    <div>
-                                        <span className="text-sm text-foreground">
-                                            {locationData.score.label}
-                                        </span>
-                                        {locationData.score.area_score !== null && (
-                                            <div className="flex gap-2 text-[10px] tabular-nums text-muted-foreground">
-                                                <span>{t('sidebar.proximity.area_label')}: {locationData.score.area_score}</span>
-                                                <span>{t('sidebar.proximity.location_label')}: {locationData.score.proximity_score}</span>
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
+                                        Lås upp rapport — 79 kr
+                                    </a>
+                                </>
                             )}
                         </div>
                     </div>

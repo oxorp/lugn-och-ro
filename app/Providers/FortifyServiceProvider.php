@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Actions\Fortify\CreateNewUser;
 use App\Actions\Fortify\ResetUserPassword;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
@@ -37,6 +38,7 @@ class FortifyServiceProvider extends ServiceProvider
      */
     private function configureActions(): void
     {
+        Fortify::createUsersUsing(CreateNewUser::class);
         Fortify::resetUserPasswordsUsing(ResetUserPassword::class);
     }
 
@@ -54,6 +56,16 @@ class FortifyServiceProvider extends ServiceProvider
             return Inertia::render('auth/login', [
                 'canResetPassword' => Features::enabled(Features::resetPasswords()),
                 'canRegister' => Features::enabled(Features::registration()),
+                'status' => $request->session()->get('status'),
+            ]);
+        });
+
+        Fortify::registerView(function (Request $request) {
+            if ($redirect = $request->query('redirect')) {
+                $request->session()->put('url.intended', $redirect);
+            }
+
+            return Inertia::render('auth/register', [
                 'status' => $request->session()->get('status'),
             ]);
         });
