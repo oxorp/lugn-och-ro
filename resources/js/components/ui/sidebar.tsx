@@ -1,6 +1,7 @@
 import { Slot } from "@radix-ui/react-slot"
 import { VariantProps, cva } from "class-variance-authority"
-import { PanelLeftCloseIcon, PanelLeftOpenIcon } from "lucide-react"
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome"
+import { faSidebar, faSidebarFlip } from "@/icons"
 import * as React from "react"
 
 import { Button } from "@/components/ui/button"
@@ -268,7 +269,7 @@ function SidebarTrigger({
       }}
       {...props}
     >
-      {isMobile || state === "collapsed" ? <PanelLeftOpenIcon /> : <PanelLeftCloseIcon />}
+      {isMobile || state === "collapsed" ? <FontAwesomeIcon icon={faSidebar} /> : <FontAwesomeIcon icon={faSidebarFlip} />}
       <span className="sr-only">Toggle Sidebar</span>
     </Button>
   )

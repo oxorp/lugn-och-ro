@@ -1,4 +1,5 @@
-import { Monitor, Moon, Sun } from 'lucide-react';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faDesktop, faMoon, faSun } from '@/icons';
 import { HTMLAttributes } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -19,11 +20,11 @@ export default function AppearanceToggleDropdown({
     const getCurrentIcon = () => {
         switch (appearance) {
             case 'dark':
-                return <Moon className="h-5 w-5" />;
+                return <FontAwesomeIcon icon={faMoon} className="h-5 w-5" />;
             case 'light':
-                return <Sun className="h-5 w-5" />;
+                return <FontAwesomeIcon icon={faSun} className="h-5 w-5" />;
             default:
-                return <Monitor className="h-5 w-5" />;
+                return <FontAwesomeIcon icon={faDesktop} className="h-5 w-5" />;
         }
     };
 
@@ -43,13 +44,13 @@ export default function AppearanceToggleDropdown({
                 <DropdownMenuContent align="end">
                     <DropdownMenuItem onClick={() => updateAppearance('light')}>
                         <span className="flex items-center gap-2">
-                            <Sun className="h-5 w-5" />
+                            <FontAwesomeIcon icon={faSun} className="h-5 w-5" />
                             Light
                         </span>
                     </DropdownMenuItem>
                     <DropdownMenuItem onClick={() => updateAppearance('dark')}>
                         <span className="flex items-center gap-2">
-                            <Moon className="h-5 w-5" />
+                            <FontAwesomeIcon icon={faMoon} className="h-5 w-5" />
                             Dark
                         </span>
                     </DropdownMenuItem>
@@ -57,7 +58,7 @@ export default function AppearanceToggleDropdown({
                         onClick={() => updateAppearance('system')}
                     >
                         <span className="flex items-center gap-2">
-                            <Monitor className="h-5 w-5" />
+                            <FontAwesomeIcon icon={faDesktop} className="h-5 w-5" />
                             System
                         </span>
                     </DropdownMenuItem>

@@ -1,5 +1,6 @@
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faArrowLeft } from '@/icons';
 import { Link, usePage } from '@inertiajs/react';
-import { ArrowLeft } from 'lucide-react';
 import { type ReactNode } from 'react';
 
 import LocaleSync from '@/components/locale-sync';
@@ -37,7 +38,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
                         href="/"
                         className="flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
                     >
-                        <ArrowLeft className="h-4 w-4" />
+                        <FontAwesomeIcon icon={faArrowLeft} className="h-4 w-4" />
                         Map
                     </Link>
                     <span className="text-sm text-muted-foreground">/</span>

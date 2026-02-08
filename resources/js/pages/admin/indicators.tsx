@@ -1,5 +1,6 @@
 import { Head, router } from '@inertiajs/react';
-import { ChevronDown, ChevronRight, Info, MapPin, Pencil, RefreshCw, Search, X } from 'lucide-react';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faArrowsRotate, faChevronDown, faChevronRight, faCircleInfo, faLocationDot, faMagnifyingGlass, faPen, faXmark } from '@/icons';
 import { Fragment, useMemo, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
@@ -138,7 +139,7 @@ function Tip({ label, tip }: { label: string; tip: string }) {
             <Tooltip>
                 <TooltipTrigger className="flex items-center gap-1">
                     {label}
-                    <Info className="h-3 w-3 text-muted-foreground" />
+                    <FontAwesomeIcon icon={faCircleInfo} className="h-3 w-3 text-muted-foreground" />
                 </TooltipTrigger>
                 <TooltipContent>
                     <p className="max-w-xs text-xs">{tip}</p>
@@ -323,7 +324,7 @@ export default function IndicatorsPage({ indicators, poiCategories }: Props) {
                     </p>
                 </div>
                 <Button onClick={handleRecompute} disabled={recomputing}>
-                    <RefreshCw className={`mr-2 h-4 w-4 ${recomputing ? 'animate-spin' : ''}`} />
+                    <FontAwesomeIcon icon={faArrowsRotate} spin={recomputing} className="mr-2 h-4 w-4" />
                     {recomputing ? 'Recomputing...' : 'Recompute Scores'}
                 </Button>
             </div>
@@ -361,7 +362,7 @@ export default function IndicatorsPage({ indicators, poiCategories }: Props) {
             {/* Search & Filters */}
             <div className="mb-4 flex items-center gap-3">
                 <div className="relative max-w-sm flex-1">
-                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <FontAwesomeIcon icon={faMagnifyingGlass} className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                     <Input
                         placeholder="Search by name or slug..."
                         value={search}
@@ -373,7 +374,7 @@ export default function IndicatorsPage({ indicators, poiCategories }: Props) {
                             onClick={() => setSearch('')}
                             className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                         >
-                            <X className="h-4 w-4" />
+                            <FontAwesomeIcon icon={faXmark} className="h-4 w-4" />
                         </button>
                     )}
                 </div>
@@ -456,9 +457,9 @@ export default function IndicatorsPage({ indicators, poiCategories }: Props) {
                                             <TableCell colSpan={12} className="py-2">
                                                 <div className="flex items-center gap-2">
                                                     {isCollapsed ? (
-                                                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                                                        <FontAwesomeIcon icon={faChevronRight} className="h-4 w-4 text-muted-foreground" />
                                                     ) : (
-                                                        <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                                                        <FontAwesomeIcon icon={faChevronDown} className="h-4 w-4 text-muted-foreground" />
                                                     )}
                                                     <Badge
                                                         className={CATEGORY_COLORS[category] || 'bg-gray-100 text-gray-800'}
@@ -636,7 +637,7 @@ export default function IndicatorsPage({ indicators, poiCategories }: Props) {
                                                                     <TooltipProvider>
                                                                         <Tooltip>
                                                                             <TooltipTrigger>
-                                                                                <Info className="h-3.5 w-3.5 text-blue-500" />
+                                                                                <FontAwesomeIcon icon={faCircleInfo} className="h-3.5 w-3.5 text-blue-500" />
                                                                             </TooltipTrigger>
                                                                             <TooltipContent>
                                                                                 <p className="max-w-xs text-xs">
@@ -678,7 +679,7 @@ export default function IndicatorsPage({ indicators, poiCategories }: Props) {
                                                                 size="sm"
                                                                 onClick={() => openEditDialog(indicator)}
                                                             >
-                                                                <Pencil className="h-3.5 w-3.5" />
+                                                                <FontAwesomeIcon icon={faPen} className="h-3.5 w-3.5" />
                                                             </Button>
                                                         </TableCell>
                                                     </TableRow>
@@ -696,7 +697,7 @@ export default function IndicatorsPage({ indicators, poiCategories }: Props) {
             <Card className="mt-6">
                 <CardHeader className="pb-3">
                     <CardTitle className="flex items-center gap-2 text-sm font-medium">
-                        <MapPin className="h-4 w-4" />
+                        <FontAwesomeIcon icon={faLocationDot} className="h-4 w-4" />
                         POI Categories
                         <span className="font-normal text-muted-foreground">
                             ({poiCategories.length} categories,{' '}

@@ -1,5 +1,5 @@
-import { ArrowDown, ArrowUp } from 'lucide-react';
-
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faArrowDown, faArrowUp } from '@/icons';
 import { useTranslation } from '@/hooks/use-translation';
 
 import { useScoreLabel } from '../hooks/use-score-label';
@@ -30,9 +30,9 @@ export function ScoreCard({
                         score.trend_1y !== 0 && (
                             <span className="flex items-center text-[10px] leading-none opacity-90">
                                 {score.trend_1y > 0 ? (
-                                    <ArrowUp className="mr-0.5 h-2.5 w-2.5" />
+                                    <FontAwesomeIcon icon={faArrowUp} className="mr-0.5 h-2.5 w-2.5" />
                                 ) : (
-                                    <ArrowDown className="mr-0.5 h-2.5 w-2.5" />
+                                    <FontAwesomeIcon icon={faArrowDown} className="mr-0.5 h-2.5 w-2.5" />
                                 )}
                                 {score.trend_1y > 0 ? '+' : ''}
                                 {score.trend_1y.toFixed(1)}

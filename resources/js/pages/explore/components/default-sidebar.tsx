@@ -1,5 +1,5 @@
-import { MapPin } from 'lucide-react';
-
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faLocationDot } from '@/icons';
 import MapSearch from '@/components/map-search';
 import { useTranslation } from '@/hooks/use-translation';
 import type { SearchResult } from '@/services/geocoding';
@@ -15,7 +15,7 @@ export function DefaultSidebar({
 
     return (
         <div className="flex h-full flex-col items-center justify-center overflow-y-auto px-6 py-6 text-center md:py-12">
-            <MapPin className="mb-3 h-8 w-8 text-muted-foreground" />
+            <FontAwesomeIcon icon={faLocationDot} className="mb-3 h-8 w-8 text-muted-foreground" />
             <h3 className="mb-1 text-sm font-semibold text-foreground">
                 {t('sidebar.default.title')}
             </h3>

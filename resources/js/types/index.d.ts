@@ -1,5 +1,5 @@
 import { InertiaLinkProps } from '@inertiajs/react';
-import { LucideIcon } from 'lucide-react';
+import type { IconDefinition } from '@fortawesome/fontawesome-svg-core';
 
 export interface Auth {
     user: User;
@@ -18,7 +18,7 @@ export interface NavGroup {
 export interface NavItem {
     title: string;
     href: NonNullable<InertiaLinkProps['href']>;
-    icon?: LucideIcon | null;
+    icon?: IconDefinition | null;
     isActive?: boolean;
 }
 

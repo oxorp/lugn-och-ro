@@ -414,7 +414,7 @@ class LocationControllerTest extends TestCase
         foreach ($categories as $cat) {
             $this->assertArrayHasKey('slug', $cat);
             $this->assertArrayHasKey('label', $cat);
-            $this->assertArrayHasKey('emoji', $cat);
+            $this->assertArrayHasKey('icon', $cat);
             $this->assertArrayHasKey('stat_line', $cat);
             $this->assertArrayHasKey('has_data', $cat);
             $this->assertArrayHasKey('free_indicators', $cat);

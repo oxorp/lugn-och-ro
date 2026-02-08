@@ -1,12 +1,13 @@
-import { Head, Link, useForm, usePage } from '@inertiajs/react';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
-    Check,
-    ChevronLeft,
-    Loader2,
-    Lock,
-    Mail,
-    MapPin,
-} from 'lucide-react';
+    faCheck,
+    faChevronLeft,
+    faEnvelope,
+    faLocationDot,
+    faLock,
+    faSpinnerThird,
+} from '@/icons';
+import { Head, Link, useForm, usePage } from '@inertiajs/react';
 import React, { type FormEvent, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -46,7 +47,7 @@ function LocationSummary({
 }) {
     return (
         <div className="mb-6 flex items-center gap-4 rounded-lg border bg-card p-4">
-            <MapPin className="h-5 w-5 shrink-0 text-muted-foreground" />
+            <FontAwesomeIcon icon={faLocationDot} className="h-5 w-5 shrink-0 text-muted-foreground" />
             <div className="min-w-0 flex-1">
                 <p className="truncate font-medium">
                     {address ?? 'Vald plats'}
@@ -155,7 +156,7 @@ function GuestEmailForm({
                 onClick={onBack}
                 className="flex items-center gap-1 text-sm text-muted-foreground hover:underline"
             >
-                <ChevronLeft className="h-4 w-4" /> Tillbaka
+                <FontAwesomeIcon icon={faChevronLeft} className="h-4 w-4" /> Tillbaka
             </button>
 
             <div>
@@ -225,7 +226,7 @@ function SignupForm({
                 onClick={onBack}
                 className="flex items-center gap-1 text-sm text-muted-foreground hover:underline"
             >
-                <ChevronLeft className="h-4 w-4" /> Tillbaka
+                <FontAwesomeIcon icon={faChevronLeft} className="h-4 w-4" /> Tillbaka
             </button>
 
             <h2 className="text-xl font-semibold">Skapa konto</h2>
@@ -299,7 +300,7 @@ function LoginForm({
                 onClick={onBack}
                 className="flex items-center gap-1 text-sm text-muted-foreground hover:underline"
             >
-                <ChevronLeft className="h-4 w-4" /> Tillbaka
+                <FontAwesomeIcon icon={faChevronLeft} className="h-4 w-4" /> Tillbaka
             </button>
 
             <h2 className="text-xl font-semibold">Logga in</h2>
@@ -404,7 +405,7 @@ function IdentityStep({
                 className="w-full rounded-lg border-2 border-primary p-4 text-left transition-colors hover:bg-primary/5"
             >
                 <div className="flex items-center gap-3">
-                    <Mail className="h-5 w-5 text-primary" />
+                    <FontAwesomeIcon icon={faEnvelope} className="h-5 w-5 text-primary" />
                     <div>
                         <p className="font-medium">Fortsätt med e-post</p>
                         <p className="text-sm text-muted-foreground">
@@ -448,7 +449,7 @@ function IdentityStep({
 function Feature({ text }: { text: string }) {
     return (
         <div className="flex items-start gap-2">
-            <Check className="mt-0.5 h-4 w-4 shrink-0 text-green-600" />
+            <FontAwesomeIcon icon={faCheck} className="mt-0.5 h-4 w-4 shrink-0 text-green-600" />
             <span className="text-sm">{text}</span>
         </div>
     );
@@ -570,7 +571,7 @@ function PaymentStep({
             >
                 {loading ? (
                     <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />{' '}
+                        <FontAwesomeIcon icon={faSpinnerThird} spin className="mr-2 h-4 w-4" />{' '}
                         Förbereder betalning...
                     </>
                 ) : (
@@ -579,7 +580,7 @@ function PaymentStep({
             </Button>
 
             <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
-                <Lock className="h-3 w-3" />
+                <FontAwesomeIcon icon={faLock} className="h-3 w-3" />
                 Säker betalning via Stripe · Inga kortuppgifter sparas hos oss
             </div>
         </div>

@@ -1,5 +1,7 @@
 import { Form, Head } from '@inertiajs/react';
-import { ShieldBan, ShieldCheck } from 'lucide-react';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+
+import { faShieldCheck, faShieldXmark } from '@/icons';
 import { useState } from 'react';
 
 import HeadingSmall from '@/components/heading-small';
@@ -77,7 +79,7 @@ export default function TwoFactor({
                                             type="submit"
                                             disabled={processing}
                                         >
-                                            <ShieldBan /> Disable 2FA
+                                            <FontAwesomeIcon icon={faShieldXmark} /> Disable 2FA
                                         </Button>
                                     )}
                                 </Form>
@@ -98,7 +100,7 @@ export default function TwoFactor({
                                     <Button
                                         onClick={() => setShowSetupModal(true)}
                                     >
-                                        <ShieldCheck />
+                                        <FontAwesomeIcon icon={faShieldCheck} />
                                         Continue Setup
                                     </Button>
                                 ) : (
@@ -113,7 +115,7 @@ export default function TwoFactor({
                                                 type="submit"
                                                 disabled={processing}
                                             >
-                                                <ShieldCheck />
+                                                <FontAwesomeIcon icon={faShieldCheck} />
                                                 Enable 2FA
                                             </Button>
                                         )}

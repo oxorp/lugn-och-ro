@@ -1,5 +1,6 @@
 import { Head, router } from '@inertiajs/react';
-import { Save } from 'lucide-react';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faFloppyDisk } from '@/icons';
 import { useMemo, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
@@ -306,7 +307,7 @@ export default function PoiCategories({ categories, exampleSafe, exampleUnsafe }
                                                             onClick={() => saveCategory(cat)}
                                                             disabled={saving === cat.id}
                                                         >
-                                                            <Save className="mr-1 h-3 w-3" />
+                                                            <FontAwesomeIcon icon={faFloppyDisk} className="mr-1 h-3 w-3" />
                                                             {saving === cat.id ? '...' : 'Save'}
                                                         </Button>
                                                     )}

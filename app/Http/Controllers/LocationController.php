@@ -307,7 +307,6 @@ class LocationController extends Controller
             $category = [
                 'slug' => $key,
                 'label' => $catConfig['label'],
-                'emoji' => $catConfig['emoji'],
                 'icon' => $catConfig['icon'],
                 'stat_line' => $stats['stat_line'] ?? '',
                 'indicator_count' => $coveredInCategory,

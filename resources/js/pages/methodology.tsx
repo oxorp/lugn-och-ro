@@ -1,5 +1,7 @@
 import { Head, Link } from '@inertiajs/react';
-import { ArrowRight, CalendarClock, ChevronDown, ExternalLink } from 'lucide-react';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+
+import { faArrowRight, faArrowUpRightFromSquare, faCalendarClock, faChevronDown } from '@/icons';
 
 import {
     Accordion,
@@ -224,7 +226,7 @@ export default function Methodology() {
                                 ))}
                             </div>
 
-                            <ChevronDown className="text-muted-foreground my-2 h-5 w-5" />
+                            <FontAwesomeIcon icon={faChevronDown} className="text-muted-foreground my-2 h-5 w-5" />
 
                             <div className="bg-muted my-2 rounded-lg border px-6 py-3 text-center text-sm">
                                 <p className="font-medium">Normalization & Analysis</p>
@@ -233,13 +235,13 @@ export default function Methodology() {
                                 </p>
                             </div>
 
-                            <ChevronDown className="text-muted-foreground my-2 h-5 w-5" />
+                            <FontAwesomeIcon icon={faChevronDown} className="text-muted-foreground my-2 h-5 w-5" />
 
                             <div className="bg-muted my-2 rounded-lg border px-6 py-3 text-center text-sm">
                                 <p className="font-medium">Weighted Composite Score</p>
                             </div>
 
-                            <ChevronDown className="text-muted-foreground my-2 h-5 w-5" />
+                            <FontAwesomeIcon icon={faChevronDown} className="text-muted-foreground my-2 h-5 w-5" />
 
                             <div
                                 className="my-2 rounded-xl px-8 py-4 text-center text-white"
@@ -305,7 +307,7 @@ export default function Methodology() {
                                                     className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs transition-colors"
                                                 >
                                                     {s.name}
-                                                    <ExternalLink className="h-3 w-3" />
+                                                    <FontAwesomeIcon icon={faArrowUpRightFromSquare} className="h-3 w-3" />
                                                 </a>
                                             ))
                                         ) : (
@@ -316,11 +318,11 @@ export default function Methodology() {
                                                 className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs transition-colors"
                                             >
                                                 {source.source}
-                                                <ExternalLink className="h-3 w-3" />
+                                                <FontAwesomeIcon icon={faArrowUpRightFromSquare} className="h-3 w-3" />
                                             </a>
                                         )}
                                         <Badge variant="secondary" className="gap-1 text-xs">
-                                            <CalendarClock className="h-3 w-3" />
+                                            <FontAwesomeIcon icon={faCalendarClock} className="h-3 w-3" />
                                             {source.frequency}
                                         </Badge>
                                     </CardFooter>
@@ -497,7 +499,7 @@ export default function Methodology() {
                         <Button asChild size="lg">
                             <Link href={map().url}>
                                 Back to Map
-                                <ArrowRight className="ml-2 h-4 w-4" />
+                                <FontAwesomeIcon icon={faArrowRight} className="ml-2 h-4 w-4" />
                             </Link>
                         </Button>
                     </section>

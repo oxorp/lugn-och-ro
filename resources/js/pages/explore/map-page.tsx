@@ -1,5 +1,6 @@
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faSpinnerThird } from '@/icons';
 import { Head } from '@inertiajs/react';
-import { Loader2 } from 'lucide-react';
 import { useCallback, useRef } from 'react';
 
 import type { HeatmapMapHandle } from '@/components/deso-map';
@@ -110,7 +111,7 @@ export default function MapPage({
                         />
                     ) : loading ? (
                         <div className="flex items-center justify-center py-20">
-                            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                            <FontAwesomeIcon icon={faSpinnerThird} spin className="h-6 w-6 text-muted-foreground" />
                         </div>
                     ) : (
                         <DefaultSidebar

@@ -1,4 +1,5 @@
-import { Loader2, MapPin, Navigation, Search, X } from 'lucide-react';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faLocationArrow, faLocationDot, faMagnifyingGlass, faSpinnerThird, faXmark } from '@/icons';
 import {
     useCallback,
     useEffect,
@@ -15,18 +16,18 @@ import {
 function typeIcon(type: SearchResult['type']) {
     switch (type) {
         case 'house':
-            return <MapPin className="h-4 w-4 shrink-0 text-blue-500" />;
+            return <FontAwesomeIcon icon={faLocationDot} className="h-4 w-4 shrink-0 text-blue-500" />;
         case 'street':
         case 'locality':
         case 'district':
-            return <Navigation className="h-4 w-4 shrink-0 text-emerald-500" />;
+            return <FontAwesomeIcon icon={faLocationArrow} className="h-4 w-4 shrink-0 text-emerald-500" />;
         case 'city':
-            return <Navigation className="h-4 w-4 shrink-0 text-violet-500" />;
+            return <FontAwesomeIcon icon={faLocationArrow} className="h-4 w-4 shrink-0 text-violet-500" />;
         case 'county':
         case 'state':
-            return <Navigation className="h-4 w-4 shrink-0 text-amber-500" />;
+            return <FontAwesomeIcon icon={faLocationArrow} className="h-4 w-4 shrink-0 text-amber-500" />;
         default:
-            return <MapPin className="h-4 w-4 shrink-0 text-muted-foreground" />;
+            return <FontAwesomeIcon icon={faLocationDot} className="h-4 w-4 shrink-0 text-muted-foreground" />;
     }
 }
 
@@ -191,9 +192,9 @@ export default function MapSearch({ onResultSelect, onClear, className }: MapSea
             {/* Search input */}
             <div className="bg-background/95 flex items-center gap-2 rounded-lg border px-3 py-2 shadow-sm backdrop-blur-sm">
                 {loading ? (
-                    <Loader2 className="text-muted-foreground h-4 w-4 shrink-0 animate-spin" />
+                    <FontAwesomeIcon icon={faSpinnerThird} spin className="text-muted-foreground h-4 w-4 shrink-0" />
                 ) : (
-                    <Search className="text-muted-foreground h-4 w-4 shrink-0" />
+                    <FontAwesomeIcon icon={faMagnifyingGlass} className="text-muted-foreground h-4 w-4 shrink-0" />
                 )}
                 <input
                     ref={inputRef}
@@ -212,7 +213,7 @@ export default function MapSearch({ onResultSelect, onClear, className }: MapSea
                         onClick={handleClear}
                         className="text-muted-foreground hover:text-foreground shrink-0"
                     >
-                        <X className="h-4 w-4" />
+                        <FontAwesomeIcon icon={faXmark} className="h-4 w-4" />
                     </button>
                 )}
             </div>

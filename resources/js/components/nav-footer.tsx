@@ -1,6 +1,5 @@
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { type ComponentPropsWithoutRef } from 'react';
-
-import { Icon } from '@/components/icon';
 import {
     SidebarGroup,
     SidebarGroupContent,
@@ -37,8 +36,8 @@ export function NavFooter({
                                     rel="noopener noreferrer"
                                 >
                                     {item.icon && (
-                                        <Icon
-                                            iconNode={item.icon}
+                                        <FontAwesomeIcon
+                                            icon={item.icon}
                                             className="h-5 w-5"
                                         />
                                     )}

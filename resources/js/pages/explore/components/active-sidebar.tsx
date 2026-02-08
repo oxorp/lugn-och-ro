@@ -1,8 +1,9 @@
 import type { IndicatorMeta } from '@/components/info-tooltip';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faGraduationCap, faSpinnerThird, faXmark } from '@/icons';
 import { useTranslation } from '@/hooks/use-translation';
-import { GraduationCap, Loader2, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import type { LocationData } from '../types';
@@ -51,7 +52,7 @@ export function ActiveSidebar({
     if (loading) {
         return (
             <div className="flex items-center justify-center py-20">
-                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                <FontAwesomeIcon icon={faSpinnerThird} spin className="h-6 w-6 text-muted-foreground" />
             </div>
         );
     }
@@ -86,7 +87,7 @@ export function ActiveSidebar({
                         onClick={onClose}
                         className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                     >
-                        <X className="h-4 w-4" />
+                        <FontAwesomeIcon icon={faXmark} className="h-4 w-4" />
                     </button>
                 </div>
 
@@ -192,7 +193,7 @@ export function ActiveSidebar({
                             <>
                                 <Separator className="my-3" />
                                 <h3 className="mb-3 text-xs font-semibold tracking-wider text-muted-foreground uppercase">
-                                    <GraduationCap className="mr-1 inline h-3.5 w-3.5" />
+                                    <FontAwesomeIcon icon={faGraduationCap} className="mr-1 inline h-3.5 w-3.5" />
                                     {t('sidebar.schools.title')} (
                                     {schools.length}{' '}
                                     {t('sidebar.schools.within')})

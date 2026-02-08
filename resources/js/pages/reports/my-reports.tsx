@@ -1,5 +1,7 @@
 import { Head, Link } from '@inertiajs/react';
-import { MapPin } from 'lucide-react';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+
+import { faLocationDot } from '@/icons';
 
 interface ReportSummary {
     uuid: string;
@@ -63,7 +65,7 @@ export default function MyReports({ reports, email, guest }: Props) {
                             href={`/reports/${report.uuid}`}
                             className="flex items-center gap-4 rounded-lg border p-4 transition-colors hover:bg-accent"
                         >
-                            <MapPin className="h-5 w-5 shrink-0 text-muted-foreground" />
+                            <FontAwesomeIcon icon={faLocationDot} className="h-5 w-5 shrink-0 text-muted-foreground" />
                             <div className="min-w-0 flex-1">
                                 <p className="truncate font-medium">
                                     {report.address ?? report.kommun_name ?? 'Okänd plats'}

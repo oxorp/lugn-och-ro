@@ -2,8 +2,9 @@ import { type IndicatorMeta, InfoTooltip } from '@/components/info-tooltip';
 import { PercentileBadge } from '@/components/percentile-badge';
 import { PercentileBar } from '@/components/percentile-bar';
 import { Button } from '@/components/ui/button';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faChartColumn, faGraduationCap, faLocationDot, faLock, faShieldHalved } from '@/icons';
 import { useTranslation } from '@/hooks/use-translation';
-import { Database, GraduationCap, Lock } from 'lucide-react';
 
 import type {
     PreviewCategory,
@@ -12,54 +13,6 @@ import type {
     PreviewFreeIndicator,
 } from '../types';
 import { formatIndicatorValue } from '../utils';
-
-const SOURCE_LABELS: Record<string, string> = {
-    scb: 'SCB',
-    skolverket: 'Skolverket',
-    gtfs: 'Trafiklab',
-    osm: 'OpenStreetMap',
-    bra: 'BRA',
-    kronofogden: 'Kronofogden',
-    kolada: 'Kolada',
-};
-
-export function DataSummary({
-    dataPointCount,
-    sourceCount,
-}: {
-    dataPointCount: number;
-    sourceCount: number;
-}) {
-    const { t } = useTranslation();
-
-    return (
-        <div className="flex items-center gap-2 py-2 text-sm text-muted-foreground">
-            <Database className="h-3.5 w-3.5" />
-            <span>
-                <strong className="text-foreground">{dataPointCount}</strong>{' '}
-                {t('sidebar.preview.data_points')}
-                {' \u00b7 '}
-                <strong className="text-foreground">{sourceCount}</strong>{' '}
-                {t('sidebar.preview.sources')}
-            </span>
-        </div>
-    );
-}
-
-export function SourceBadges({ sources }: { sources: string[] }) {
-    return (
-        <div className="mb-3 flex flex-wrap gap-1.5">
-            {sources.map((source) => (
-                <span
-                    key={source}
-                    className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
-                >
-                    {SOURCE_LABELS[source] ?? source}
-                </span>
-            ))}
-        </div>
-    );
-}
 
 function FreeIndicatorRow({
     indicator,
@@ -105,10 +58,17 @@ function FreeIndicatorRow({
 function LockedCountLabel({ count }: { count: number }) {
     return (
         <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
-            <Lock className="h-3 w-3" />+ {count} indikatorer i rapporten
+            <FontAwesomeIcon icon={faLock} className="h-3 w-3" />+ {count} indikatorer i rapporten
         </p>
     );
 }
+
+const CATEGORY_ICONS: Record<string, import('@fortawesome/fontawesome-svg-core').IconDefinition> = {
+    'shield-halved': faShieldHalved,
+    'chart-column': faChartColumn,
+    'graduation-cap': faGraduationCap,
+    'location-dot': faLocationDot,
+};
 
 function CategorySection({
     category,
@@ -117,11 +77,15 @@ function CategorySection({
     category: PreviewCategory;
     indicatorMeta?: Record<string, IndicatorMeta>;
 }) {
+    const icon = CATEGORY_ICONS[category.icon];
+
     return (
-        <div className="pt-5 first:pt-0">
+        <div className="pt-12 first:pt-0">
             {/* Category header */}
             <div className="mb-3 flex items-center gap-2">
-                <span className="text-base">{category.emoji}</span>
+                {icon && (
+                    <FontAwesomeIcon icon={icon} className="h-4 w-4 text-muted-foreground" />
+                )}
                 <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
                     {category.label}
                 </h3>
@@ -152,7 +116,7 @@ function LockedSchoolCard() {
     return (
         <div className="rounded-lg border p-3 opacity-60">
             <div className="mb-2 flex items-center gap-2">
-                <GraduationCap className="h-4 w-4 text-muted-foreground" />
+                <FontAwesomeIcon icon={faGraduationCap} className="h-4 w-4 text-muted-foreground" />
                 <div className="h-4 w-32 rounded bg-muted" />
             </div>
             <div className="mb-2 flex items-center gap-2">
@@ -172,10 +136,14 @@ function LockedSchoolCard() {
 
 function CTASummary({
     summary,
+    dataPointCount,
+    sourceCount,
     lat,
     lng,
 }: {
     summary: PreviewCtaSummary;
+    dataPointCount: number;
+    sourceCount: number;
     lat: number;
     lng: number;
 }) {
@@ -184,7 +152,7 @@ function CTASummary({
     return (
         <div className="mt-6 border-t pt-5">
             <div className="rounded-xl bg-linear-to-br from-primary/5 to-primary/10 p-5 text-center">
-                <Lock className="mx-auto mb-3 h-5 w-5 text-primary" />
+                <FontAwesomeIcon icon={faLock} className="mx-auto mb-3 h-5 w-5 text-primary" />
                 <h3 className="mb-3 text-base font-semibold">
                     {t('sidebar.preview.unlock_title')}
                 </h3>
@@ -192,15 +160,21 @@ function CTASummary({
                 <div className="mb-4 space-y-1.5 text-sm text-muted-foreground">
                     <p>
                         <strong className="text-foreground">
-                            {summary.indicator_count}
+                            {dataPointCount}
                         </strong>{' '}
-                        {t('sidebar.preview.cta_indicators')}
+                        {t('sidebar.preview.data_points')}
                     </p>
                     <p>
                         <strong className="text-foreground">
-                            {summary.insight_count}
+                            {sourceCount}
                         </strong>{' '}
-                        {t('sidebar.preview.cta_insights')}
+                        {t('sidebar.preview.sources')}
+                    </p>
+                    <p>
+                        <strong className="text-foreground">
+                            {summary.indicator_count}
+                        </strong>{' '}
+                        {t('sidebar.preview.cta_indicators')}
                     </p>
                     {summary.poi_count > 0 && (
                         <p>
@@ -266,17 +240,6 @@ export function LockedPreviewContent({
 
     return (
         <>
-            {/* Data summary */}
-            <DataSummary
-                dataPointCount={preview.data_point_count}
-                sourceCount={preview.source_count}
-            />
-
-            {/* Source badges */}
-            {preview.sources.length > 0 && (
-                <SourceBadges sources={preview.sources} />
-            )}
-
             {/* Anchor for sticky CTA visibility observer */}
             <div ref={ctaRef} />
 
@@ -298,7 +261,7 @@ export function LockedPreviewContent({
                 <div className="mt-5 border-t pt-5">
                     <div className="mb-3 flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                            <GraduationCap className="h-4 w-4 text-muted-foreground" />
+                            <FontAwesomeIcon icon={faGraduationCap} className="h-4 w-4 text-muted-foreground" />
                             <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
                                 {t('sidebar.preview.schools_section')}
                             </h3>
@@ -329,6 +292,8 @@ export function LockedPreviewContent({
             {/* Final CTA with summary stats */}
             <CTASummary
                 summary={preview.cta_summary}
+                dataPointCount={preview.data_point_count}
+                sourceCount={preview.source_count}
                 lat={lat}
                 lng={lng}
             />

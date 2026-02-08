@@ -15,6 +15,7 @@ Read `data_pipeline_specification.md` for full business context, data sources, a
 - Laravel 12, PHP 8.4
 - Inertia.js v2 + React 19 + TypeScript
 - Tailwind CSS 4 + shadcn/ui
+- FontAwesome 7 Pro (icons — not Lucide, not Heroicons)
 - OpenLayers (for the map — not Mapbox, not Leaflet, not Deck.gl)
 - PostgreSQL 16 + PostGIS 3.4
 - Docker
@@ -27,6 +28,17 @@ Read `data_pipeline_specification.md` for full business context, data sources, a
 - Write Laravel code the Laravel way — Eloquent models, Artisan commands, service classes. No raw frameworks-within-frameworks.
 - Commit working states. If something works, commit before moving to the next step.
 - When a step says "verify", actually verify. Run the query, check the browser, confirm the count.
+
+## Icons (FontAwesome 7 Pro)
+
+- All icons use FontAwesome 7 Pro (`@fortawesome/pro-solid-svg-icons`, `@fortawesome/pro-regular-svg-icons`).
+- **No Lucide, no Heroicons, no other icon libraries.** `lucide-react` has been removed.
+- Central icon library in `resources/js/icons.ts` — import all icons from `@/icons`.
+- Use deep imports for tree-shaking: `import { faXmark } from '@fortawesome/pro-solid-svg-icons/faXmark'` (in icons.ts only).
+- Components use `<FontAwesomeIcon icon={faXmark} className="h-4 w-4" />` from `@fortawesome/react-fontawesome`.
+- FA Pro token is in `.npmrc` (not committed — add to CI secrets).
+- For spinners: use `faSpinnerThird` with `spin` prop (not `animate-spin`).
+- Solid icons (`fas`) for most UI; Regular icons (`far`) for eye, copy, eye-slash.
 
 ## Data Pipeline Best Practices
 

@@ -1,5 +1,6 @@
-import { Info } from 'lucide-react';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 
+import { faCircleInfo } from '@/icons';
 import {
     Tooltip,
     TooltipContent,
@@ -53,7 +54,7 @@ export function InfoTooltip({ indicator }: InfoTooltipProps) {
                         className="text-muted-foreground hover:text-foreground ml-1 inline-flex items-center transition-colors"
                         aria-label={`More info about ${indicator.name}`}
                     >
-                        <Info className="h-3.5 w-3.5" />
+                        <FontAwesomeIcon icon={faCircleInfo} className="h-3.5 w-3.5" />
                     </button>
                 </TooltipTrigger>
                 <TooltipContent
@@ -136,7 +137,7 @@ export function ScoreTooltip({ score, scoreLabel, computedAt }: ScoreTooltipProp
                         className="text-muted-foreground hover:text-foreground ml-1 inline-flex items-center transition-colors"
                         aria-label="How the score works"
                     >
-                        <Info className="h-4 w-4" />
+                        <FontAwesomeIcon icon={faCircleInfo} className="h-4 w-4" />
                     </button>
                 </TooltipTrigger>
                 <TooltipContent
@@ -212,7 +213,7 @@ export function SchoolStatTooltip({ stat }: SchoolStatTooltipProps) {
                         className="text-muted-foreground hover:text-foreground ml-1 inline-flex items-center transition-colors"
                         aria-label={`More info about ${info.title}`}
                     >
-                        <Info className="h-3 w-3" />
+                        <FontAwesomeIcon icon={faCircleInfo} className="h-3 w-3" />
                     </button>
                 </TooltipTrigger>
                 <TooltipContent
@@ -250,7 +251,7 @@ export function TrendTooltip({ trend }: TrendTooltipProps) {
                         className="text-muted-foreground hover:text-foreground ml-0.5 inline-flex items-center transition-colors"
                         aria-label="About this trend"
                     >
-                        <Info className="h-3 w-3" />
+                        <FontAwesomeIcon icon={faCircleInfo} className="h-3 w-3" />
                     </button>
                 </TooltipTrigger>
                 <TooltipContent
@@ -298,7 +299,7 @@ export function NoDataTooltip({ reason = 'no_data' }: NoDataTooltipProps) {
                         className="text-muted-foreground hover:text-foreground ml-1 inline-flex items-center transition-colors"
                         aria-label="Why is data missing?"
                     >
-                        <Info className="h-3 w-3" />
+                        <FontAwesomeIcon icon={faCircleInfo} className="h-3 w-3" />
                     </button>
                 </TooltipTrigger>
                 <TooltipContent

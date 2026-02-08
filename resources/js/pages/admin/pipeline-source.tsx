@@ -1,12 +1,13 @@
-import { Head, router } from '@inertiajs/react';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
-    ArrowLeft,
-    CheckCircle,
-    ChevronDown,
-    Clock,
-    Loader2,
-    XCircle,
-} from 'lucide-react';
+    faArrowLeft,
+    faChevronDown,
+    faCircleCheck,
+    faCircleXmark,
+    faClock,
+    faSpinnerThird,
+} from '@/icons';
+import { Head, router } from '@inertiajs/react';
 import { useEffect, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
@@ -103,9 +104,9 @@ const healthConfig = {
 };
 
 const statusIcons: Record<string, React.ReactNode> = {
-    completed: <CheckCircle className="h-4 w-4 text-emerald-500" />,
-    failed: <XCircle className="h-4 w-4 text-red-500" />,
-    running: <Loader2 className="h-4 w-4 animate-spin text-blue-500" />,
+    completed: <FontAwesomeIcon icon={faCircleCheck} className="h-4 w-4 text-emerald-500" />,
+    failed: <FontAwesomeIcon icon={faCircleXmark} className="h-4 w-4 text-red-500" />,
+    running: <FontAwesomeIcon icon={faSpinnerThird} spin className="h-4 w-4 text-blue-500" />,
 };
 
 function formatDuration(seconds: number | null): string {
@@ -180,7 +181,7 @@ export default function PipelineSourcePage({
                     className="mb-2"
                     onClick={() => router.visit('/admin/pipeline')}
                 >
-                    <ArrowLeft className="mr-1 h-4 w-4" />
+                    <FontAwesomeIcon icon={faArrowLeft} className="mr-1 h-4 w-4" />
                     Pipeline
                 </Button>
                 <div className="flex items-center justify-between">
@@ -194,10 +195,10 @@ export default function PipelineSourcePage({
                         <DropdownMenuTrigger asChild>
                             <Button disabled={source.running}>
                                 {source.running ? (
-                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    <FontAwesomeIcon icon={faSpinnerThird} spin className="mr-2 h-4 w-4" />
                                 ) : null}
                                 Run
-                                <ChevronDown className="ml-1 h-4 w-4" />
+                                <FontAwesomeIcon icon={faChevronDown} className="ml-1 h-4 w-4" />
                             </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
@@ -365,7 +366,7 @@ export default function PipelineSourcePage({
                                         <TableCell>
                                             <div className="flex items-center gap-1.5">
                                                 {statusIcons[log.status] || (
-                                                    <Clock className="h-4 w-4 text-muted-foreground" />
+                                                    <FontAwesomeIcon icon={faClock} className="h-4 w-4 text-muted-foreground" />
                                                 )}
                                                 <span className="text-sm">
                                                     {log.status}

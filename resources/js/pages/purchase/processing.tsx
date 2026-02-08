@@ -1,5 +1,7 @@
 import { Head } from '@inertiajs/react';
-import { CheckCircle, Clock, Loader2 } from 'lucide-react';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+
+import { faCalendarClock, faCircleCheck, faSpinnerThird } from '@/icons';
 import { useEffect, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -55,7 +57,7 @@ export default function Processing({
 
             {status === 'processing' && (
                 <>
-                    <Loader2 className="mb-4 h-8 w-8 animate-spin text-primary" />
+                    <FontAwesomeIcon icon={faSpinnerThird} spin className="mb-4 h-8 w-8 text-primary" />
                     <h1 className="mb-2 text-xl font-semibold">
                         Betalning mottagen!
                     </h1>
@@ -67,7 +69,7 @@ export default function Processing({
             )}
             {status === 'ready' && (
                 <>
-                    <CheckCircle className="mb-4 h-8 w-8 text-green-500" />
+                    <FontAwesomeIcon icon={faCircleCheck} className="mb-4 h-8 w-8 text-green-500" />
                     <h1 className="mb-2 text-xl font-semibold">Klar!</h1>
                     <p className="text-muted-foreground">
                         Öppnar din rapport...
@@ -76,7 +78,7 @@ export default function Processing({
             )}
             {status === 'timeout' && (
                 <>
-                    <Clock className="mb-4 h-8 w-8 text-amber-500" />
+                    <FontAwesomeIcon icon={faCalendarClock} className="mb-4 h-8 w-8 text-amber-500" />
                     <h1 className="mb-2 text-xl font-semibold">
                         Tar lite längre än vanligt
                     </h1>

@@ -1,6 +1,8 @@
 import { Form } from '@inertiajs/react';
 import { REGEXP_ONLY_DIGITS } from 'input-otp';
-import { Check, Copy, ScanLine } from 'lucide-react';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+
+import { faCheck, faQrcode, farCopy } from '@/icons';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import InputError from '@/components/input-error';
@@ -45,7 +47,7 @@ function GridScanIcon() {
                         />
                     ))}
                 </div>
-                <ScanLine className="relative z-20 size-6 text-foreground" />
+                <FontAwesomeIcon icon={faQrcode} className="relative z-20 size-6 text-foreground" />
             </div>
         </div>
     );
@@ -66,7 +68,7 @@ function TwoFactorSetupStep({
 }) {
     const { resolvedAppearance } = useAppearance();
     const [copiedText, copy] = useClipboard();
-    const IconComponent = copiedText === manualSetupKey ? Check : Copy;
+    const copyIcon = copiedText === manualSetupKey ? faCheck : farCopy;
 
     return (
         <>
@@ -128,7 +130,7 @@ function TwoFactorSetupStep({
                                         onClick={() => copy(manualSetupKey)}
                                         className="border-l border-border px-3 hover:bg-muted"
                                     >
-                                        <IconComponent className="w-4" />
+                                        <FontAwesomeIcon icon={copyIcon} className="w-4" />
                                     </button>
                                 </>
                             )}

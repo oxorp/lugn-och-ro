@@ -1,3 +1,4 @@
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { useTranslation } from '@/hooks/use-translation';
 
 import { PROXIMITY_FACTOR_CONFIG } from '../constants';
@@ -9,7 +10,6 @@ export function ProximityFactorRow({ factor }: { factor: ProximityFactor }) {
     const config = PROXIMITY_FACTOR_CONFIG[factor.slug];
     if (!config || factor.score === null) return null;
 
-    const Icon = config.icon;
     const score = factor.score;
     const details = factor.details;
 
@@ -48,7 +48,7 @@ export function ProximityFactorRow({ factor }: { factor: ProximityFactor }) {
         <div className="space-y-1">
             <div className="flex items-center justify-between text-xs">
                 <span className="flex items-center gap-1.5 font-medium text-foreground">
-                    <Icon className="h-3.5 w-3.5 text-muted-foreground" />
+                    <FontAwesomeIcon icon={config.icon} className="h-3.5 w-3.5 text-muted-foreground" />
                     {t(config.nameKey)}
                 </span>
                 <span className="font-semibold text-foreground tabular-nums">

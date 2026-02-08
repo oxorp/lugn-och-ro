@@ -1,13 +1,13 @@
-import { Head, router } from '@inertiajs/react';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
-    CheckCircle,
-    ChevronDown,
-    Clock,
-    Loader2,
-    Play,
-    RefreshCw,
-    XCircle,
-} from 'lucide-react';
+    faChevronDown,
+    faCircleCheck,
+    faCircleXmark,
+    faClock,
+    faPlay,
+    faSpinnerThird,
+} from '@/icons';
+import { Head, router } from '@inertiajs/react';
 import { useEffect, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
@@ -118,9 +118,9 @@ const healthConfig = {
 };
 
 const statusIcons: Record<string, React.ReactNode> = {
-    completed: <CheckCircle className="h-4 w-4 text-emerald-500" />,
-    failed: <XCircle className="h-4 w-4 text-red-500" />,
-    running: <Loader2 className="h-4 w-4 animate-spin text-blue-500" />,
+    completed: <FontAwesomeIcon icon={faCircleCheck} className="h-4 w-4 text-emerald-500" />,
+    failed: <FontAwesomeIcon icon={faCircleXmark} className="h-4 w-4 text-red-500" />,
+    running: <FontAwesomeIcon icon={faSpinnerThird} spin className="h-4 w-4 text-blue-500" />,
 };
 
 function formatDuration(seconds: number | null): string {
@@ -208,7 +208,7 @@ export default function PipelinePage({ sources, overallHealth, stats, pipelineOr
                         <span className="text-sm font-medium">{healthConfig[overallHealth].label}</span>
                     </div>
                     <Button onClick={() => setRunAllOpen(true)}>
-                        <Play className="mr-2 h-4 w-4" />
+                        <FontAwesomeIcon icon={faPlay} className="mr-2 h-4 w-4" />
                         Run All
                     </Button>
                 </div>
@@ -302,7 +302,7 @@ export default function PipelinePage({ sources, overallHealth, stats, pipelineOr
                                     <span className="text-muted-foreground text-sm">
                                         {source.running ? (
                                             <span className="flex items-center gap-1">
-                                                <Loader2 className="h-3 w-3 animate-spin" />
+                                                <FontAwesomeIcon icon={faSpinnerThird} spin className="h-3 w-3" />
                                                 Running...
                                             </span>
                                         ) : (
@@ -320,7 +320,7 @@ export default function PipelinePage({ sources, overallHealth, stats, pipelineOr
                                         <DropdownMenuTrigger asChild>
                                             <Button variant="outline" size="sm" disabled={source.running}>
                                                 Run
-                                                <ChevronDown className="ml-1 h-3 w-3" />
+                                                <FontAwesomeIcon icon={faChevronDown} className="ml-1 h-3 w-3" />
                                             </Button>
                                         </DropdownMenuTrigger>
                                         <DropdownMenuContent align="end">
@@ -380,7 +380,7 @@ export default function PipelinePage({ sources, overallHealth, stats, pipelineOr
                                         <TableCell>
                                             <div className="flex items-center gap-1.5">
                                                 {statusIcons[log.status] || (
-                                                    <Clock className="text-muted-foreground h-4 w-4" />
+                                                    <FontAwesomeIcon icon={faClock} className="text-muted-foreground h-4 w-4" />
                                                 )}
                                                 <span className="text-sm">{log.status}</span>
                                             </div>
@@ -450,7 +450,7 @@ export default function PipelinePage({ sources, overallHealth, stats, pipelineOr
                             Cancel
                         </Button>
                         <Button onClick={handleRunAll} disabled={submitting}>
-                            {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            {submitting && <FontAwesomeIcon icon={faSpinnerThird} spin className="mr-2 h-4 w-4" />}
                             Run Pipeline
                         </Button>
                     </DialogFooter>

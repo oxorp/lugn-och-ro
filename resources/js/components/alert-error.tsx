@@ -1,5 +1,6 @@
-import { AlertCircleIcon } from 'lucide-react';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 
+import { faCircleExclamation } from '@/icons';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 export default function AlertError({
@@ -11,7 +12,7 @@ export default function AlertError({
 }) {
     return (
         <Alert variant="destructive">
-            <AlertCircleIcon />
+            <FontAwesomeIcon icon={faCircleExclamation} />
             <AlertTitle>{title || 'Something went wrong.'}</AlertTitle>
             <AlertDescription>
                 <ul className="list-inside list-disc text-sm">

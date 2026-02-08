@@ -1,5 +1,7 @@
 import { Form } from '@inertiajs/react';
-import { Eye, EyeOff, LockKeyhole, RefreshCw } from 'lucide-react';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+
+import { faArrowsRotate, faLockKeyhole, farEye, farEyeSlash } from '@/icons';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -52,13 +54,13 @@ export default function TwoFactorRecoveryCodes({
         }
     }, [recoveryCodesList.length, fetchRecoveryCodes]);
 
-    const RecoveryCodeIconComponent = codesAreVisible ? EyeOff : Eye;
+    const recoveryCodeIcon = codesAreVisible ? farEyeSlash : farEye;
 
     return (
         <Card>
             <CardHeader>
                 <CardTitle className="flex gap-3">
-                    <LockKeyhole className="size-4" aria-hidden="true" />
+                    <FontAwesomeIcon icon={faLockKeyhole} className="size-4" aria-hidden="true" />
                     2FA Recovery Codes
                 </CardTitle>
                 <CardDescription>
@@ -74,7 +76,8 @@ export default function TwoFactorRecoveryCodes({
                         aria-expanded={codesAreVisible}
                         aria-controls="recovery-codes-section"
                     >
-                        <RecoveryCodeIconComponent
+                        <FontAwesomeIcon
+                            icon={recoveryCodeIcon}
                             className="size-4"
                             aria-hidden="true"
                         />
@@ -94,7 +97,7 @@ export default function TwoFactorRecoveryCodes({
                                     disabled={processing}
                                     aria-describedby="regenerate-warning"
                                 >
-                                    <RefreshCw /> Regenerate Codes
+                                    <FontAwesomeIcon icon={faArrowsRotate} /> Regenerate Codes
                                 </Button>
                             )}
                         </Form>

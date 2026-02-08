@@ -1,5 +1,6 @@
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faBars, faXmark } from '@/icons';
 import { Link, router, usePage } from '@inertiajs/react';
-import { Menu, X } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 
 import LanguageSwitcher from '@/components/language-switcher';
@@ -76,7 +77,7 @@ export default function MapLayout({ children }: MapLayoutProps) {
                         onClick={() => setMobileMenuOpen((v) => !v)}
                         className="text-muted-foreground hover:text-foreground md:hidden"
                     >
-                        {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+                        {mobileMenuOpen ? <FontAwesomeIcon icon={faXmark} className="h-5 w-5" /> : <FontAwesomeIcon icon={faBars} className="h-5 w-5" />}
                     </button>
 
                     <span className="text-base font-semibold text-foreground">

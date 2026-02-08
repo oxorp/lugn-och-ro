@@ -1,14 +1,15 @@
-import { LucideIcon } from 'lucide-react';
+import type { IconDefinition } from '@fortawesome/fontawesome-svg-core';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 
 interface IconProps {
-    iconNode?: LucideIcon | null;
+    iconNode?: IconDefinition | null;
     className?: string;
 }
 
-export function Icon({ iconNode: IconComponent, className }: IconProps) {
-    if (!IconComponent) {
+export function Icon({ iconNode, className }: IconProps) {
+    if (!iconNode) {
         return null;
     }
 
-    return <IconComponent className={className} />;
+    return <FontAwesomeIcon icon={iconNode} className={className} />;
 }

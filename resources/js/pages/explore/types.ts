@@ -40,7 +40,6 @@ export interface PreviewFreeIndicator {
 export interface PreviewCategory {
     slug: string;
     label: string;
-    emoji: string;
     icon: string;
     stat_line: string;
     indicator_count: number;

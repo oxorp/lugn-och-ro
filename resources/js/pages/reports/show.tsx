@@ -1,5 +1,7 @@
 import { Head, Link } from '@inertiajs/react';
-import { MapPin } from 'lucide-react';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+
+import { faLocationDot } from '@/icons';
 
 interface ReportData {
     uuid: string;
@@ -50,7 +52,7 @@ export default function ReportShow({ report }: { report: ReportData }) {
 
             <div className="mb-6 rounded-lg border p-4">
                 <div className="mb-1 flex items-center gap-2">
-                    <MapPin className="h-4 w-4 text-muted-foreground" />
+                    <FontAwesomeIcon icon={faLocationDot} className="h-4 w-4 text-muted-foreground" />
                     <span className="font-medium">
                         {report.address ?? 'Vald plats'}
                     </span>

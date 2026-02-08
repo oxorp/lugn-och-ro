@@ -4,8 +4,7 @@ return [
     'safety' => [
         'label' => 'Trygghet & brottslighet',
         'label_short' => 'Trygghet',
-        'icon' => 'shield',
-        'emoji' => "\u{1F6E1}\u{FE0F}",
+        'icon' => 'shield-halved',
         'bar_count' => 3,
         'indicators' => [
             'crime_violent_rate',
@@ -18,8 +17,7 @@ return [
     'economy' => [
         'label' => 'Ekonomi & arbetsmarknad',
         'label_short' => 'Ekonomi',
-        'icon' => 'bar-chart-3',
-        'emoji' => "\u{1F4CA}",
+        'icon' => 'chart-column',
         'bar_count' => 3,
         'indicators' => [
             'median_income',
@@ -34,7 +32,6 @@ return [
         'label' => 'Utbildning',
         'label_short' => 'Utbildning',
         'icon' => 'graduation-cap',
-        'emoji' => "\u{1F393}",
         'bar_count' => 2,
         'indicators' => [
             'education_post_secondary_pct',
@@ -47,8 +44,7 @@ return [
     'proximity' => [
         'label' => 'Närhetsanalys',
         'label_short' => 'Närhet',
-        'icon' => 'map-pin',
-        'emoji' => "\u{1F4CD}",
+        'icon' => 'location-dot',
         'bar_count' => 3,
         'indicators' => [
             'prox_school',

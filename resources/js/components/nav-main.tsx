@@ -1,3 +1,4 @@
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { Link } from '@inertiajs/react';
 
 import {
@@ -25,7 +26,7 @@ export function NavMain({ items = [] }: { items: NavItem[] }) {
                             tooltip={{ children: item.title }}
                         >
                             <Link href={item.href} prefetch>
-                                {item.icon && <item.icon />}
+                                {item.icon && <FontAwesomeIcon icon={item.icon} />}
                                 <span>{item.title}</span>
                             </Link>
                         </SidebarMenuButton>
