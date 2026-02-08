@@ -7,14 +7,20 @@ use App\Models\CompositeScore;
 use App\Models\IndicatorValue;
 use App\Models\PoiCategory;
 use App\Services\DataTieringService;
+use App\Services\ProximityScoreService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class LocationController extends Controller
 {
+    private const AREA_WEIGHT = 0.70;
+
+    private const PROXIMITY_WEIGHT = 0.30;
+
     public function __construct(
         private DataTieringService $tiering,
+        private ProximityScoreService $proximityService,
     ) {}
 
     public function show(Request $request, float $lat, float $lng): JsonResponse
@@ -38,14 +44,34 @@ class LocationController extends Controller
             ->orderByDesc('year')
             ->first();
 
+        $areaScore = $score ? round((float) $score->score, 1) : null;
+
+        // 3. Compute proximity score for this exact coordinate
+        $proximity = $this->proximityService->score($lat, $lng);
+        $proximityScore = round($proximity->compositeScore(), 1);
+
+        // 4. Blend area + proximity scores
+        $blendedScore = $this->blendScores($areaScore, $proximityScore);
+
         $scoreData = $score ? [
-            'value' => round((float) $score->score, 1),
+            'value' => $blendedScore,
+            'area_score' => $areaScore,
+            'proximity_score' => $proximityScore,
             'trend_1y' => $score->trend_1y ? round((float) $score->trend_1y, 1) : null,
-            'label' => $this->scoreLabel((float) $score->score),
+            'label' => $this->scoreLabel($blendedScore),
             'top_positive' => $score->top_positive,
             'top_negative' => $score->top_negative,
             'factor_scores' => $score->factor_scores,
-        ] : null;
+        ] : [
+            'value' => $proximityScore > 0 ? round($proximityScore * self::PROXIMITY_WEIGHT + 50 * self::AREA_WEIGHT, 1) : null,
+            'area_score' => null,
+            'proximity_score' => $proximityScore,
+            'trend_1y' => null,
+            'label' => null,
+            'top_positive' => null,
+            'top_negative' => null,
+            'factor_scores' => null,
+        ];
 
         // Public tier: location + score only, no detail data
         if ($tier === DataTier::Public) {
@@ -61,6 +87,7 @@ class LocationController extends Controller
                 ],
                 'score' => $scoreData,
                 'tier' => $tier->value,
+                'proximity' => null,
                 'indicators' => [],
                 'schools' => [],
                 'pois' => [],
@@ -68,7 +95,7 @@ class LocationController extends Controller
             ]);
         }
 
-        // 3. Get indicator values for this DeSO (paid tiers)
+        // 5. Get indicator values for this DeSO (paid tiers)
         $indicators = IndicatorValue::where('deso_code', $deso->deso_code)
             ->whereHas('indicator', fn ($q) => $q->where('is_active', true))
             ->with('indicator')
@@ -76,7 +103,7 @@ class LocationController extends Controller
             ->get()
             ->unique('indicator_id');
 
-        // 4. Get nearby schools (within 1.5km radius)
+        // 6. Get nearby schools (within 1.5km radius)
         $schools = DB::select('
             SELECT s.name, s.type_of_schooling, s.operator_type, s.lat, s.lng,
                    ss.merit_value_17, ss.goal_achievement_pct,
@@ -102,7 +129,7 @@ class LocationController extends Controller
             LIMIT 10
         ', [$lng, $lat, $lng, $lat]);
 
-        // 5. Get POIs within 3km radius
+        // 7. Get POIs within 3km radius
         $pois = DB::select('
             SELECT p.name, p.category, p.lat, p.lng, p.subcategory,
                    ST_Distance(
@@ -120,7 +147,7 @@ class LocationController extends Controller
             ORDER BY p.category, distance_m
         ', [$lng, $lat, $lng, $lat]);
 
-        // 6. Get POI category metadata for rendering
+        // 8. Get POI category metadata for rendering
         $poiCategories = PoiCategory::query()
             ->where('is_active', true)
             ->where('show_on_map', true)
@@ -146,6 +173,7 @@ class LocationController extends Controller
             ],
             'score' => $scoreData,
             'tier' => $tier->value,
+            'proximity' => $proximity->toArray(),
             'indicators' => $indicators->map(fn ($iv) => [
                 'slug' => $iv->indicator->slug,
                 'name' => $iv->indicator->name,
@@ -177,6 +205,16 @@ class LocationController extends Controller
             ]),
             'poi_categories' => $poiCategories,
         ]);
+    }
+
+    private function blendScores(?float $areaScore, float $proximityScore): float
+    {
+        if ($areaScore === null) {
+            // No area score: use proximity with default area of 50
+            return round(50 * self::AREA_WEIGHT + $proximityScore * self::PROXIMITY_WEIGHT, 1);
+        }
+
+        return round($areaScore * self::AREA_WEIGHT + $proximityScore * self::PROXIMITY_WEIGHT, 1);
     }
 
     private function scoreLabel(float $score): string

@@ -165,6 +165,20 @@
             "filter_gymnasie": "Gymnasie",
             "filter_other": "Other"
         },
+        "proximity": {
+            "title": "Proximity Analysis",
+            "area_label": "Area",
+            "location_label": "Location",
+            "school": "School",
+            "green_space": "Green Space",
+            "transit": "Transit",
+            "grocery": "Grocery",
+            "negative_poi": "Negative POIs",
+            "positive_poi": "Positive POIs",
+            "no_negative": "No negative POIs within 500m",
+            "negative_count": "within 500m",
+            "positive_count": "within 1 km"
+        },
         "pois": {
             "title": "Nearby Amenities (3 km)"
         },

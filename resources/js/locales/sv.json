@@ -164,6 +164,20 @@
             "filter_gymnasie": "Gymnasie",
             "filter_other": "\u00d6vriga"
         },
+        "proximity": {
+            "title": "N\u00e4rhetsanalys",
+            "area_label": "Omr\u00e5de",
+            "location_label": "Plats",
+            "school": "Skola",
+            "green_space": "Gr\u00f6nomr\u00e5de",
+            "transit": "Kollektivtrafik",
+            "grocery": "Livsmedel",
+            "negative_poi": "Negativa POI",
+            "positive_poi": "Positiva POI",
+            "no_negative": "Inga negativa POI inom 500m",
+            "negative_count": "inom 500m",
+            "positive_count": "inom 1 km"
+        },
         "pois": {
             "title": "N\u00e4rliggande faciliteter (3 km)"
         },

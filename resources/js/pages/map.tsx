@@ -2,10 +2,15 @@ import { Head } from '@inertiajs/react';
 import {
     ArrowDown,
     ArrowUp,
+    Bus,
     GraduationCap,
     Loader2,
     MapPin,
     Search,
+    ShoppingCart,
+    ShieldAlert,
+    Sparkles,
+    TreePine,
     X,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -37,6 +42,17 @@ interface MapPageProps {
     isAuthenticated: boolean;
 }
 
+interface ProximityFactor {
+    slug: string;
+    score: number | null;
+    details: Record<string, unknown>;
+}
+
+interface ProximityData {
+    composite: number;
+    factors: ProximityFactor[];
+}
+
 interface LocationData {
     location: {
         lat: number;
@@ -49,6 +65,8 @@ interface LocationData {
     };
     score: {
         value: number;
+        area_score: number | null;
+        proximity_score: number;
         trend_1y: number | null;
         label: string;
         top_positive: string[] | null;
@@ -56,6 +74,7 @@ interface LocationData {
         factor_scores: Record<string, number> | null;
     } | null;
     tier: number;
+    proximity: ProximityData | null;
     indicators: Array<{
         slug: string;
         name: string;
@@ -77,6 +96,11 @@ function formatIndicatorValue(value: number, unit: string | null): string {
     if (unit === '/100k') return `${value.toFixed(1)}/100k`;
     if (unit === '/1000') return `${value.toFixed(2)}/1000`;
     return value.toLocaleString(undefined, { maximumFractionDigits: 1 });
+}
+
+function formatDistance(meters: number): string {
+    if (meters < 1000) return `${meters}m`;
+    return `${(meters / 1000).toFixed(1)}km`;
 }
 
 function scoreBgStyle(score: number): React.CSSProperties {
@@ -135,6 +159,83 @@ function IndicatorBar({
             <div className="text-[11px] text-muted-foreground">
                 ({formatIndicatorValue(indicator.raw_value, indicator.unit)})
             </div>
+        </div>
+    );
+}
+
+const PROXIMITY_FACTOR_CONFIG: Record<string, {
+    icon: typeof GraduationCap;
+    nameKey: string;
+    detailKey: 'nearest_school' | 'nearest_park' | 'nearest_stop' | 'nearest_store' | 'nearest' | 'count';
+    distanceKey: string;
+}> = {
+    prox_school: { icon: GraduationCap, nameKey: 'sidebar.proximity.school', detailKey: 'nearest_school', distanceKey: 'nearest_distance_m' },
+    prox_green_space: { icon: TreePine, nameKey: 'sidebar.proximity.green_space', detailKey: 'nearest_park', distanceKey: 'distance_m' },
+    prox_transit: { icon: Bus, nameKey: 'sidebar.proximity.transit', detailKey: 'nearest_stop', distanceKey: 'nearest_distance_m' },
+    prox_grocery: { icon: ShoppingCart, nameKey: 'sidebar.proximity.grocery', detailKey: 'nearest_store', distanceKey: 'distance_m' },
+    prox_negative_poi: { icon: ShieldAlert, nameKey: 'sidebar.proximity.negative_poi', detailKey: 'count', distanceKey: 'nearest_distance_m' },
+    prox_positive_poi: { icon: Sparkles, nameKey: 'sidebar.proximity.positive_poi', detailKey: 'count', distanceKey: '' },
+};
+
+function ProximityFactorRow({ factor }: { factor: ProximityFactor }) {
+    const { t } = useTranslation();
+    const config = PROXIMITY_FACTOR_CONFIG[factor.slug];
+    if (!config || factor.score === null) return null;
+
+    const Icon = config.icon;
+    const score = factor.score;
+    const details = factor.details;
+
+    // For negative POI, 100 = good (no negatives nearby)
+    const isNegativeType = factor.slug === 'prox_negative_poi';
+    const displayName = details.nearest_school
+        ?? details.nearest_park
+        ?? details.nearest_stop
+        ?? details.nearest_store
+        ?? details.nearest
+        ?? null;
+    const distanceM = config.distanceKey ? (details[config.distanceKey] as number | undefined) : undefined;
+
+    // Special label for negative/positive POI counts
+    let subtitle: string | null = null;
+    if (factor.slug === 'prox_negative_poi') {
+        const count = (details.count as number) ?? 0;
+        subtitle = count === 0
+            ? t('sidebar.proximity.no_negative')
+            : `${count} ${t('sidebar.proximity.negative_count')}`;
+    } else if (factor.slug === 'prox_positive_poi') {
+        const count = (details.count as number) ?? 0;
+        subtitle = `${count} ${t('sidebar.proximity.positive_count')}`;
+    } else if (displayName) {
+        subtitle = String(displayName);
+    }
+
+    return (
+        <div className="space-y-1">
+            <div className="flex items-center justify-between text-xs">
+                <span className="flex items-center gap-1.5 font-medium text-foreground">
+                    <Icon className="h-3.5 w-3.5 text-muted-foreground" />
+                    {t(config.nameKey)}
+                </span>
+                <span className="tabular-nums font-semibold text-foreground">{score}</span>
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                <div
+                    className="h-full rounded-full transition-all"
+                    style={{
+                        width: `${score}%`,
+                        ...scoreBgStyle(isNegativeType ? score : score),
+                    }}
+                />
+            </div>
+            {(subtitle || distanceM !== undefined) && (
+                <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                    <span className="truncate">{subtitle}</span>
+                    {distanceM !== undefined && distanceM > 0 && (
+                        <span className="ml-2 shrink-0 tabular-nums">{formatDistance(distanceM)}</span>
+                    )}
+                </div>
+            )}
         </div>
     );
 }
@@ -201,7 +302,7 @@ function ActiveSidebar({
         );
     }
 
-    const { location, score, indicators, schools, pois, poi_categories, tier } = data;
+    const { location, score, proximity, indicators, schools, pois, poi_categories, tier } = data;
     const isPublicTier = tier === 0;
 
     return (
@@ -225,7 +326,7 @@ function ActiveSidebar({
                     </button>
                 </div>
 
-                {/* Score card */}
+                {/* Score card with area/proximity breakdown */}
                 {score && (
                     <div className="mb-4 rounded-lg border border-border p-3">
                         <div className="flex items-center gap-3">
@@ -248,13 +349,24 @@ function ActiveSidebar({
                                     </span>
                                 )}
                             </div>
-                            <div>
+                            <div className="min-w-0 flex-1">
                                 <div className="text-sm font-semibold text-foreground">
                                     {getScoreLabel(score.value)}
                                 </div>
                                 {location.urbanity_tier && (
                                     <div className="text-[11px] text-muted-foreground capitalize">
                                         {t(`sidebar.urbanity.${location.urbanity_tier}`)}
+                                    </div>
+                                )}
+                                {/* Area vs Proximity breakdown */}
+                                {score.area_score !== null && (
+                                    <div className="mt-1 flex gap-3 text-[11px] tabular-nums text-muted-foreground">
+                                        <span>
+                                            {t('sidebar.proximity.area_label')}: {score.area_score}
+                                        </span>
+                                        <span>
+                                            {t('sidebar.proximity.location_label')}: {score.proximity_score}
+                                        </span>
                                     </div>
                                 )}
                             </div>
@@ -279,6 +391,21 @@ function ActiveSidebar({
                             {t('sidebar.cta.button')}
                         </a>
                     </div>
+                )}
+
+                {/* Proximity Analysis (paid tiers only) */}
+                {!isPublicTier && proximity && proximity.factors.length > 0 && (
+                    <>
+                        <Separator className="my-3" />
+                        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            {t('sidebar.proximity.title')}
+                        </h3>
+                        <div className="space-y-3">
+                            {proximity.factors.map((factor) => (
+                                <ProximityFactorRow key={factor.slug} factor={factor} />
+                            ))}
+                        </div>
+                    </>
                 )}
 
                 {/* Indicators (paid tiers only) */}
@@ -600,9 +727,17 @@ export default function MapPage({
                                     >
                                         {locationData.score.value}
                                     </div>
-                                    <span className="text-sm text-foreground">
-                                        {locationData.score.label}
-                                    </span>
+                                    <div>
+                                        <span className="text-sm text-foreground">
+                                            {locationData.score.label}
+                                        </span>
+                                        {locationData.score.area_score !== null && (
+                                            <div className="flex gap-2 text-[10px] tabular-nums text-muted-foreground">
+                                                <span>{t('sidebar.proximity.area_label')}: {locationData.score.area_score}</span>
+                                                <span>{t('sidebar.proximity.location_label')}: {locationData.score.proximity_score}</span>
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                             )}
                         </div>

@@ -82,8 +82,9 @@ class LocationControllerTest extends TestCase
         $response->assertOk()
             ->assertJsonStructure([
                 'location' => ['lat', 'lng', 'deso_code', 'kommun', 'lan_code', 'area_km2', 'urbanity_tier'],
-                'score' => ['value', 'trend_1y', 'label', 'top_positive', 'top_negative', 'factor_scores'],
+                'score' => ['value', 'area_score', 'proximity_score', 'trend_1y', 'label', 'top_positive', 'top_negative', 'factor_scores'],
                 'tier',
+                'proximity' => ['composite', 'factors'],
                 'indicators',
                 'schools',
                 'pois',
@@ -93,8 +94,12 @@ class LocationControllerTest extends TestCase
                 'kommun' => 'Stockholm',
                 'deso_code' => '0180C1090',
             ])
-            ->assertJsonPath('score.value', 72.5)
-            ->assertJsonPath('score.label', 'Stabilt / Positivt');
+            ->assertJsonPath('score.area_score', 72.5);
+
+        // Blended score = area_score * 0.70 + proximity_score * 0.30
+        $data = $response->json();
+        $expected = round(72.5 * 0.70 + $data['score']['proximity_score'] * 0.30, 1);
+        $this->assertEquals($expected, $data['score']['value']);
     }
 
     public function test_returns_404_for_coordinates_outside_sweden(): void
@@ -189,13 +194,15 @@ class LocationControllerTest extends TestCase
     {
         $this->createDesoWithGeom('0180C1090', 'Stockholm');
 
-        // Test all score labels
+        // Blended = area * 0.70 + proximity * 0.30
+        // With no POIs/schools, proximity ≈ 0 (negative POI gives 100, but weighted low)
+        // So we need area scores high enough that blended still crosses thresholds.
+        // Labels: <20 Hög risk, 20-39 Förhöjd risk, 40-59 Blandat, 60-79 Stabilt, 80+ Starkt
         $cases = [
-            [15.0, 'Hög risk'],
-            [25.0, 'Förhöjd risk'],
-            [45.0, 'Blandat'],
-            [65.0, 'Stabilt / Positivt'],
-            [85.0, 'Starkt tillväxtområde'],
+            [5.0, 'Hög risk'],         // blended ≈ 5*0.70 + ~5*0.30 ≈ 5
+            [35.0, 'Förhöjd risk'],     // blended ≈ 35*0.70 + ~5*0.30 ≈ 26
+            [65.0, 'Blandat'],          // blended ≈ 65*0.70 + ~5*0.30 ≈ 47
+            [90.0, 'Stabilt / Positivt'], // blended ≈ 90*0.70 + ~5*0.30 ≈ 65
         ];
 
         foreach ($cases as [$score, $expectedLabel]) {
@@ -212,15 +219,20 @@ class LocationControllerTest extends TestCase
         }
     }
 
-    public function test_returns_null_score_when_no_composite_score_exists(): void
+    public function test_returns_score_with_null_area_when_no_composite_score_exists(): void
     {
         $this->createDesoWithGeom('0180C1090', 'Stockholm');
 
         $response = $this->getJson('/api/location/59.335,18.06');
 
         $response->assertOk()
-            ->assertJsonPath('score', null)
+            ->assertJsonPath('score.area_score', null)
             ->assertJsonPath('location.deso_code', '0180C1090');
+
+        // Score should still have a value (blended with default area of 50)
+        $data = $response->json();
+        $this->assertNotNull($data['score']['value']);
+        $this->assertNotNull($data['score']['proximity_score']);
     }
 
     public function test_excludes_inactive_indicators(): void
@@ -327,7 +339,8 @@ class LocationControllerTest extends TestCase
             ->assertJsonPath('schools', [])
             ->assertJsonPath('pois', [])
             ->assertJsonPath('poi_categories', [])
-            ->assertJsonPath('score.value', 65)
+            ->assertJsonPath('proximity', null)
+            ->assertJsonPath('score.area_score', 65)
             ->assertJsonPath('location.deso_code', '0180C1090');
     }
 

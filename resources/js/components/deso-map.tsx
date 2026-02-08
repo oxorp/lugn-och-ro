@@ -1,5 +1,6 @@
 import Feature from 'ol/Feature';
 import Map from 'ol/Map';
+import Overlay from 'ol/Overlay';
 import View from 'ol/View';
 import Point from 'ol/geom/Point';
 import Polygon, { circular } from 'ol/geom/Polygon';
@@ -198,11 +199,15 @@ const HeatmapMap = forwardRef<HeatmapMapHandle, HeatmapMapProps>(function Heatma
     ref,
 ) {
     const mapDivRef = useRef<HTMLDivElement>(null);
+    const tooltipRef = useRef<HTMLDivElement>(null);
+    const tooltipOverlayRef = useRef<Overlay | null>(null);
     const mapInstance = useRef<Map | null>(null);
     const pinSourceRef = useRef<VectorSource | null>(null);
     const schoolSourceRef = useRef<VectorSource | null>(null);
     const radiusSourceRef = useRef<VectorSource | null>(null);
     const poiSourceRef = useRef<VectorSource | null>(null);
+    const schoolLayerRef = useRef<VectorLayer | null>(null);
+    const poiLayerRef = useRef<VectorLayer | null>(null);
     const tileLayerRef = useRef<TileLayer | null>(null);
     const heatmapLayerRef = useRef<TileLayer | null>(null);
     const [basemapType, setBasemapType] = useState<BasemapType>('clean');
@@ -431,6 +436,7 @@ const HeatmapMap = forwardRef<HeatmapMapHandle, HeatmapMapProps>(function Heatma
             source: poiSource,
             zIndex: 8,
         });
+        poiLayerRef.current = poiLayer;
 
         // Pin marker layer
         const pinSource = new VectorSource();
@@ -447,6 +453,7 @@ const HeatmapMap = forwardRef<HeatmapMapHandle, HeatmapMapProps>(function Heatma
             source: schoolSource,
             zIndex: 10,
         });
+        schoolLayerRef.current = schoolLayer;
 
         const map = new Map({
             target: mapDivRef.current,
@@ -530,6 +537,70 @@ const HeatmapMap = forwardRef<HeatmapMapHandle, HeatmapMapProps>(function Heatma
             onPinDropRef.current(lat, lng);
         });
 
+        // Tooltip overlay
+        if (tooltipRef.current) {
+            const tooltipOverlay = new Overlay({
+                element: tooltipRef.current,
+                positioning: 'bottom-center',
+                offset: [0, -12],
+                stopEvent: false,
+            });
+            tooltipOverlayRef.current = tooltipOverlay;
+            map.addOverlay(tooltipOverlay);
+        }
+
+        // Hover tooltip for school and POI markers
+        map.on('pointermove', (event) => {
+            const overlay = tooltipOverlayRef.current;
+            const el = tooltipRef.current;
+            if (!overlay || !el) return;
+
+            const pixel = event.pixel;
+            let found = false;
+
+            map.forEachFeatureAtPixel(pixel, (feat, layer) => {
+                if (found) return;
+                const feature = feat as Feature;
+
+                if (layer === schoolLayer) {
+                    const name = feature.get('name') as string | undefined;
+                    const merit = feature.get('merit_value') as number | null;
+                    if (name) {
+                        let html = `<strong>${name}</strong>`;
+                        if (merit !== null && merit !== undefined) {
+                            html += `<br><span style="opacity:0.8">Merit: ${merit}</span>`;
+                        }
+                        el.innerHTML = html;
+                        el.style.display = 'block';
+                        overlay.setPosition(event.coordinate);
+                        found = true;
+                    }
+                } else if (layer === poiLayer) {
+                    const name = feature.get('name') as string | undefined;
+                    const category = feature.get('category') as string | undefined;
+                    if (name) {
+                        let html = `<strong>${name}</strong>`;
+                        if (category) {
+                            html += `<br><span style="opacity:0.8">${category.replace(/_/g, ' ')}</span>`;
+                        }
+                        el.innerHTML = html;
+                        el.style.display = 'block';
+                        overlay.setPosition(event.coordinate);
+                        found = true;
+                    }
+                }
+            });
+
+            if (!found) {
+                el.style.display = 'none';
+                overlay.setPosition(undefined);
+            }
+
+            // Pointer cursor on hoverable features
+            const target = map.getTargetElement() as HTMLElement;
+            target.style.cursor = found ? 'pointer' : '';
+        });
+
         // Escape key clears pin
         const handleEscape = (e: KeyboardEvent) => {
             if (e.key === 'Escape') {
@@ -558,6 +629,11 @@ const HeatmapMap = forwardRef<HeatmapMapHandle, HeatmapMapProps>(function Heatma
     return (
         <div className="relative h-full w-full">
             <div ref={mapDivRef} className="h-full w-full" />
+            <div
+                ref={tooltipRef}
+                className="pointer-events-none rounded-md bg-background/95 px-2.5 py-1.5 text-xs text-foreground shadow-lg ring-1 ring-border backdrop-blur-sm"
+                style={{ display: 'none', whiteSpace: 'nowrap' }}
+            />
             <ScoreLegend />
             <BasemapControl basemap={basemapType} onBasemapChange={setBasemapType} />
         </div>
