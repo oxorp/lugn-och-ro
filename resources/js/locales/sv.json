@@ -187,6 +187,27 @@
         "pois": {
             "title": "N\u00e4rliggande faciliteter (3 km)"
         },
+        "preview": {
+            "data_points": "datapunkter",
+            "sources": "k\u00e4llor",
+            "area_indicators": "Omr\u00e5desindikatorer",
+            "proximity_analysis": "N\u00e4rhetsanalys",
+            "schools_section": "Skolor",
+            "schools_nearby": "{{count}} skolor inom 2 km",
+            "no_schools_nearby": "Inga skolor i n\u00e4rheten",
+            "schools_report_note": "Rapporten visar n\u00e4rmaste skola med avst\u00e5nd.",
+            "more_schools": "+ {{count}} fler skolor",
+            "strengths_weaknesses": "Styrkor & svagheter",
+            "unlock_title": "Se alla v\u00e4rden",
+            "unlock_subtitle": "Alla indikatorer, skolnamn, avst\u00e5nd och personlig analys.",
+            "unlock_button": "L\u00e5s upp \u2014 79 kr",
+            "unlock_full_report": "L\u00e5s upp fullst\u00e4ndig rapport \u2014 79 kr",
+            "one_time": "Eng\u00e5ngsk\u00f6p \u00b7 Ingen prenumeration",
+            "includes": "Inkluderar alla v\u00e4rden, skolnamn, avst\u00e5nd och personlig analys.",
+            "cta_indicators": "indikatorer med exakta v\u00e4rden och percentiler",
+            "cta_insights": "identifierade styrkor och svagheter",
+            "cta_pois": "utv\u00e4rderade servicepunkter i n\u00e4rheten"
+        },
         "cta": {
             "title": "F\u00e5 hela rapporten",
             "subtitle": "Logga in f\u00f6r att se detaljerade indikatorer, skolor och faciliteter inom 3 km fr\u00e5n denna plats.",

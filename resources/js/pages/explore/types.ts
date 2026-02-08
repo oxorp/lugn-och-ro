@@ -28,6 +28,43 @@ export interface ProximityData {
     factors: ProximityFactor[];
 }
 
+export interface PreviewFreeIndicator {
+    slug: string;
+    name: string;
+    raw_value: number;
+    percentile: number | null;
+    unit: string | null;
+    direction: 'positive' | 'negative' | 'neutral';
+}
+
+export interface PreviewCategory {
+    slug: string;
+    label: string;
+    emoji: string;
+    icon: string;
+    stat_line: string;
+    indicator_count: number;
+    locked_count: number;
+    free_indicators: PreviewFreeIndicator[];
+    has_data: boolean;
+    poi_count?: number;
+}
+
+export interface PreviewCtaSummary {
+    indicator_count: number;
+    insight_count: number;
+    poi_count: number;
+}
+
+export interface PreviewData {
+    data_point_count: number;
+    source_count: number;
+    sources: string[];
+    categories: PreviewCategory[];
+    nearby_school_count: number;
+    cta_summary: PreviewCtaSummary;
+}
+
 export interface LocationData {
     location: {
         lat: number;
@@ -50,6 +87,7 @@ export interface LocationData {
     } | null;
     tier: number;
     display_radius: number;
+    preview?: PreviewData;
     proximity: ProximityData | null;
     indicators: Array<{
         slug: string;

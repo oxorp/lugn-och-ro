@@ -300,7 +300,7 @@ class LocationControllerTest extends TestCase
         $this->assertEquals('median_income', $indicators[0]['slug']);
     }
 
-    public function test_public_tier_returns_empty_detail_data(): void
+    public function test_public_tier_returns_preview_with_categories(): void
     {
         $this->createDesoWithGeom('0180C1090', 'Stockholm');
 
@@ -321,7 +321,37 @@ class LocationControllerTest extends TestCase
             'normalization_scope' => 'national',
             'source' => 'scb',
             'is_active' => true,
+            'is_free_preview' => true,
             'display_order' => 1,
+        ]);
+
+        $indicator2 = Indicator::create([
+            'slug' => 'crime_violent_rate',
+            'name' => 'Våldsbrott',
+            'unit' => '/100k',
+            'direction' => 'negative',
+            'weight' => 0.08,
+            'normalization' => 'rank_percentile',
+            'normalization_scope' => 'national',
+            'source' => 'bra',
+            'is_active' => true,
+            'is_free_preview' => true,
+            'display_order' => 2,
+        ]);
+
+        // Non-free indicator in economy category
+        $indicator3 = Indicator::create([
+            'slug' => 'low_economic_standard_pct',
+            'name' => 'Låg ekonomisk standard',
+            'unit' => '%',
+            'direction' => 'negative',
+            'weight' => 0.05,
+            'normalization' => 'rank_percentile',
+            'normalization_scope' => 'national',
+            'source' => 'scb',
+            'is_active' => true,
+            'is_free_preview' => false,
+            'display_order' => 3,
         ]);
 
         IndicatorValue::create([
@@ -330,6 +360,22 @@ class LocationControllerTest extends TestCase
             'year' => 2024,
             'raw_value' => 287000,
             'normalized_value' => 0.78,
+        ]);
+
+        IndicatorValue::create([
+            'deso_code' => '0180C1090',
+            'indicator_id' => $indicator2->id,
+            'year' => 2024,
+            'raw_value' => 15.2,
+            'normalized_value' => 0.45,
+        ]);
+
+        IndicatorValue::create([
+            'deso_code' => '0180C1090',
+            'indicator_id' => $indicator3->id,
+            'year' => 2024,
+            'raw_value' => 12.5,
+            'normalized_value' => 0.35,
         ]);
 
         // Unauthenticated request → Public tier
@@ -343,7 +389,209 @@ class LocationControllerTest extends TestCase
             ->assertJsonPath('poi_categories', [])
             ->assertJsonPath('proximity', null)
             ->assertJsonPath('score.area_score', 65)
-            ->assertJsonPath('location.deso_code', '0180C1090');
+            ->assertJsonPath('location.deso_code', '0180C1090')
+            ->assertJsonStructure([
+                'preview' => [
+                    'data_point_count',
+                    'source_count',
+                    'sources',
+                    'categories',
+                    'nearby_school_count',
+                    'cta_summary' => ['indicator_count', 'insight_count', 'poi_count'],
+                ],
+            ])
+            ->assertJsonPath('preview.data_point_count', 3)
+            ->assertJsonPath('preview.nearby_school_count', 0);
+
+        // Verify categories structure
+        $categories = $response->json('preview.categories');
+        $this->assertCount(4, $categories);
+
+        $categorySlugs = array_column($categories, 'slug');
+        $this->assertEquals(['safety', 'economy', 'education', 'proximity'], $categorySlugs);
+
+        // Each category must have required fields
+        foreach ($categories as $cat) {
+            $this->assertArrayHasKey('slug', $cat);
+            $this->assertArrayHasKey('label', $cat);
+            $this->assertArrayHasKey('emoji', $cat);
+            $this->assertArrayHasKey('stat_line', $cat);
+            $this->assertArrayHasKey('has_data', $cat);
+            $this->assertArrayHasKey('free_indicators', $cat);
+            $this->assertArrayHasKey('locked_count', $cat);
+            $this->assertArrayHasKey('indicator_count', $cat);
+        }
+
+        // Safety category: crime_violent_rate is free preview
+        $safety = collect($categories)->firstWhere('slug', 'safety');
+        $this->assertTrue($safety['has_data']);
+        $this->assertCount(1, $safety['free_indicators']);
+        $this->assertEquals('crime_violent_rate', $safety['free_indicators'][0]['slug']);
+        $this->assertEquals(15.2, $safety['free_indicators'][0]['raw_value']);
+        $this->assertEquals(45, $safety['free_indicators'][0]['percentile']);
+        $this->assertEquals('negative', $safety['free_indicators'][0]['direction']);
+
+        // Economy category: median_income is free, low_economic_standard_pct is locked
+        $economy = collect($categories)->firstWhere('slug', 'economy');
+        $this->assertTrue($economy['has_data']);
+        $this->assertCount(1, $economy['free_indicators']);
+        $this->assertEquals('median_income', $economy['free_indicators'][0]['slug']);
+        $this->assertEquals(287000.0, $economy['free_indicators'][0]['raw_value']);
+        $this->assertEquals(78, $economy['free_indicators'][0]['percentile']);
+        $this->assertEquals(1, $economy['locked_count']); // low_economic_standard_pct
+
+        // Sources should include both scb and bra
+        $sources = $response->json('preview.sources');
+        $this->assertContains('scb', $sources);
+        $this->assertContains('bra', $sources);
+
+        // CTA summary should have real counts
+        $ctaSummary = $response->json('preview.cta_summary');
+        $this->assertGreaterThanOrEqual(3, $ctaSummary['indicator_count']);
+    }
+
+    public function test_public_tier_excludes_free_indicators_without_data(): void
+    {
+        $this->createDesoWithGeom('0180C1090', 'Stockholm');
+
+        CompositeScore::create([
+            'deso_code' => '0180C1090',
+            'year' => 2024,
+            'score' => 65.0,
+            'computed_at' => now(),
+        ]);
+
+        // Free preview indicator with NO data for this DeSO
+        Indicator::create([
+            'slug' => 'perceived_safety',
+            'name' => 'Upplevd trygghet',
+            'unit' => 'index',
+            'direction' => 'positive',
+            'weight' => 0.07,
+            'normalization' => 'rank_percentile',
+            'normalization_scope' => 'national',
+            'source' => 'bra',
+            'is_active' => true,
+            'is_free_preview' => true,
+            'display_order' => 1,
+        ]);
+
+        // Non-free indicator WITH data
+        $indicator2 = Indicator::create([
+            'slug' => 'crime_total_rate',
+            'name' => 'Total brottslighet',
+            'unit' => '/100k',
+            'direction' => 'negative',
+            'weight' => 0.04,
+            'normalization' => 'rank_percentile',
+            'normalization_scope' => 'national',
+            'source' => 'bra',
+            'is_active' => true,
+            'is_free_preview' => false,
+            'display_order' => 2,
+        ]);
+
+        IndicatorValue::create([
+            'deso_code' => '0180C1090',
+            'indicator_id' => $indicator2->id,
+            'year' => 2024,
+            'raw_value' => 120.0,
+            'normalized_value' => 0.60,
+        ]);
+
+        $response = $this->getJson('/api/location/59.335,18.06');
+
+        $response->assertOk();
+
+        // Safety category should have data but no free indicators (perceived_safety has no value)
+        $safety = collect($response->json('preview.categories'))->firstWhere('slug', 'safety');
+        $this->assertTrue($safety['has_data']);
+        $this->assertCount(0, $safety['free_indicators']);
+        $this->assertEquals(1, $safety['locked_count']); // crime_total_rate
+    }
+
+    public function test_public_tier_free_indicator_direction_and_percentile(): void
+    {
+        $this->createDesoWithGeom('0180C1090', 'Stockholm');
+
+        CompositeScore::create([
+            'deso_code' => '0180C1090',
+            'year' => 2024,
+            'score' => 65.0,
+            'computed_at' => now(),
+        ]);
+
+        // Positive direction indicator
+        $indicator = Indicator::create([
+            'slug' => 'employment_rate',
+            'name' => 'Sysselsättningsgrad',
+            'unit' => '%',
+            'direction' => 'positive',
+            'weight' => 0.08,
+            'normalization' => 'rank_percentile',
+            'normalization_scope' => 'national',
+            'source' => 'scb',
+            'is_active' => true,
+            'is_free_preview' => true,
+            'display_order' => 1,
+        ]);
+
+        IndicatorValue::create([
+            'deso_code' => '0180C1090',
+            'indicator_id' => $indicator->id,
+            'year' => 2024,
+            'raw_value' => 72.3,
+            'normalized_value' => 0.614,
+        ]);
+
+        $response = $this->getJson('/api/location/59.335,18.06');
+
+        $response->assertOk();
+
+        $economy = collect($response->json('preview.categories'))->firstWhere('slug', 'economy');
+        $freeIndicators = $economy['free_indicators'];
+        $this->assertCount(1, $freeIndicators);
+        $this->assertEquals('employment_rate', $freeIndicators[0]['slug']);
+        $this->assertEquals(72.3, $freeIndicators[0]['raw_value']);
+        $this->assertEquals(61, $freeIndicators[0]['percentile']); // round(0.614 * 100)
+        $this->assertEquals('positive', $freeIndicators[0]['direction']);
+        $this->assertEquals('%', $freeIndicators[0]['unit']);
+    }
+
+    public function test_public_tier_preview_includes_nearby_schools(): void
+    {
+        $this->createDesoWithGeom('0180C1090', 'Stockholm');
+
+        CompositeScore::create([
+            'deso_code' => '0180C1090',
+            'year' => 2024,
+            'score' => 65.0,
+            'computed_at' => now(),
+        ]);
+
+        School::factory()->create([
+            'name' => 'Vasaskolan',
+            'type_of_schooling' => 'Grundskola',
+            'operator_type' => 'KOMMUN',
+            'status' => 'active',
+            'lat' => 59.335,
+            'lng' => 18.061,
+            'deso_code' => '0180C1090',
+        ]);
+
+        DB::statement('
+            UPDATE schools SET geom = ST_SetSRID(ST_MakePoint(lng, lat), 4326)
+            WHERE lat IS NOT NULL AND lng IS NOT NULL AND geom IS NULL
+        ');
+
+        // Unauthenticated request → Public tier
+        $response = $this->getJson('/api/location/59.335,18.06');
+
+        $response->assertOk()
+            ->assertJsonPath('tier', 0)
+            ->assertJsonPath('preview.nearby_school_count', 1)
+            // School names should NOT be in the response
+            ->assertJsonPath('schools', []);
     }
 
     public function test_admin_tier_returns_pois_within_radius(): void

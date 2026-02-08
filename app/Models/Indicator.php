@@ -31,6 +31,7 @@ class Indicator extends Model
         'normalization',
         'normalization_scope',
         'is_active',
+        'is_free_preview',
         'display_order',
         'category',
         'latest_data_date',
@@ -46,6 +47,7 @@ class Indicator extends Model
     {
         return [
             'is_active' => 'boolean',
+            'is_free_preview' => 'boolean',
             'weight' => 'decimal:4',
             'latest_data_date' => 'date',
             'last_ingested_at' => 'datetime',

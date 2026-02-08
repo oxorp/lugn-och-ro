@@ -4,9 +4,11 @@ namespace App\Http\Controllers;
 
 use App\Enums\DataTier;
 use App\Models\CompositeScore;
+use App\Models\Indicator;
 use App\Models\IndicatorValue;
 use App\Models\PoiCategory;
 use App\Services\DataTieringService;
+use App\Services\PreviewStatsService;
 use App\Services\ProximityScoreService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -21,6 +23,7 @@ class LocationController extends Controller
     public function __construct(
         private DataTieringService $tiering,
         private ProximityScoreService $proximityService,
+        private PreviewStatsService $previewStats,
     ) {}
 
     public function show(Request $request, float $lat, float $lng): JsonResponse
@@ -76,8 +79,10 @@ class LocationController extends Controller
         $urbanityTier = $deso->urbanity_tier ?? 'semi_urban';
         $displayRadius = $this->getQueryRadius('display_radius', $urbanityTier);
 
-        // Public tier: location + score only, no detail data
+        // Public tier: location + score + preview metadata (no actual values)
         if ($tier === DataTier::Public) {
+            $preview = $this->buildPreview($deso->deso_code, $lat, $lng);
+
             return response()->json([
                 'location' => [
                     'lat' => $lat,
@@ -91,6 +96,7 @@ class LocationController extends Controller
                 'score' => $scoreData,
                 'tier' => $tier->value,
                 'display_radius' => $displayRadius,
+                'preview' => $preview,
                 'proximity' => null,
                 'indicators' => [],
                 'schools' => [],
@@ -209,6 +215,131 @@ class LocationController extends Controller
             ]),
             'poi_categories' => $poiCategories,
         ]);
+    }
+
+    /**
+     * Build preview metadata for public tier — category groups with free indicator values + locked counts.
+     *
+     * @return array<string, mixed>
+     */
+    private function buildPreview(string $desoCode, float $lat, float $lng): array
+    {
+        // Count actual data points for this DeSO
+        $dataPointCount = IndicatorValue::where('deso_code', $desoCode)
+            ->whereNotNull('raw_value')
+            ->count();
+
+        // Count distinct sources with data for this DeSO
+        $sources = Indicator::where('is_active', true)
+            ->whereHas('values', fn ($q) => $q->where('deso_code', $desoCode)->whereNotNull('raw_value'))
+            ->distinct()
+            ->pluck('source')
+            ->values();
+
+        // Nearby school count (within 2km)
+        $nearbySchoolCount = (int) DB::selectOne('
+            SELECT COUNT(*) as count FROM schools
+            WHERE ST_DWithin(geom::geography, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, 2000)
+              AND status = \'active\'
+        ', [$lng, $lat])->count;
+
+        // Build category sections with data scale stats
+        $cachedStats = $this->previewStats->getStats();
+        $proximityStats = $this->previewStats->proximityStats($lat, $lng);
+
+        // Fetch free preview indicator values for this DeSO
+        $freePreviewValues = IndicatorValue::query()
+            ->join('indicators', 'indicators.id', '=', 'indicator_values.indicator_id')
+            ->where('indicator_values.deso_code', $desoCode)
+            ->where('indicators.is_active', true)
+            ->where('indicators.is_free_preview', true)
+            ->whereNotNull('indicator_values.raw_value')
+            ->orderBy('indicators.display_order')
+            ->select([
+                'indicators.slug',
+                'indicators.name',
+                'indicators.unit',
+                'indicators.direction',
+                'indicator_values.raw_value',
+                'indicator_values.normalized_value',
+            ])
+            ->get();
+
+        // Index free values by slug for quick lookup
+        $freeValuesBySlug = $freePreviewValues->keyBy('slug');
+
+        // Slugs with actual data for this DeSO
+        $desoCoveredSlugs = IndicatorValue::where('deso_code', $desoCode)
+            ->whereNotNull('raw_value')
+            ->join('indicators', 'indicators.id', '=', 'indicator_values.indicator_id')
+            ->where('indicators.is_active', true)
+            ->pluck('indicators.slug')
+            ->toArray();
+
+        $categories = [];
+        foreach (config('indicator_categories') as $key => $catConfig) {
+            $stats = $key === 'proximity' ? $proximityStats : ($cachedStats[$key] ?? null);
+
+            $hasData = ! empty(array_intersect($catConfig['indicators'], $desoCoveredSlugs));
+
+            // Build free indicators for this category (only those with data for this DeSO)
+            $freeIndicators = [];
+            foreach ($catConfig['indicators'] as $slug) {
+                if ($freeValuesBySlug->has($slug)) {
+                    $iv = $freeValuesBySlug->get($slug);
+                    $freeIndicators[] = [
+                        'slug' => $iv->slug,
+                        'name' => $iv->name,
+                        'raw_value' => round((float) $iv->raw_value, 1),
+                        'percentile' => $iv->normalized_value !== null
+                            ? (int) round((float) $iv->normalized_value * 100)
+                            : null,
+                        'unit' => $iv->unit,
+                        'direction' => $iv->direction,
+                    ];
+                }
+            }
+
+            // Count total indicators with data in this category, then subtract free ones shown
+            $coveredInCategory = count(array_intersect($catConfig['indicators'], $desoCoveredSlugs));
+            $lockedCount = max(0, $coveredInCategory - count($freeIndicators));
+
+            $category = [
+                'slug' => $key,
+                'label' => $catConfig['label'],
+                'emoji' => $catConfig['emoji'],
+                'icon' => $catConfig['icon'],
+                'stat_line' => $stats['stat_line'] ?? '',
+                'indicator_count' => $coveredInCategory,
+                'locked_count' => $lockedCount,
+                'free_indicators' => $freeIndicators,
+                'has_data' => $hasData,
+            ];
+
+            if ($key === 'proximity') {
+                $category['poi_count'] = $proximityStats['poi_count'];
+            }
+
+            $categories[] = $category;
+        }
+
+        // Total indicator count (all active with weight)
+        $totalIndicatorCount = Indicator::where('is_active', true)
+            ->where('weight', '>', 0)
+            ->count();
+
+        return [
+            'data_point_count' => $dataPointCount,
+            'source_count' => $sources->count(),
+            'sources' => $sources,
+            'categories' => $categories,
+            'nearby_school_count' => $nearbySchoolCount,
+            'cta_summary' => [
+                'indicator_count' => $totalIndicatorCount,
+                'insight_count' => 8,
+                'poi_count' => $proximityStats['poi_count'],
+            ],
+        ];
     }
 
     private function blendScores(?float $areaScore, float $proximityScore): float

@@ -288,6 +288,111 @@ class AdminIndicatorTest extends TestCase
         $response->assertForbidden();
     }
 
+    public function test_admin_can_toggle_free_preview(): void
+    {
+        $this->seed(\Database\Seeders\IndicatorSeeder::class);
+
+        $indicator = Indicator::query()->where('slug', 'median_income')->first();
+        $this->assertFalse($indicator->is_free_preview);
+
+        $response = $this->actingAs($this->createAdmin())->put(route('admin.indicators.update', $indicator), [
+            'direction' => 'positive',
+            'weight' => 0.09,
+            'normalization' => 'rank_percentile',
+            'normalization_scope' => 'national',
+            'is_active' => true,
+            'is_free_preview' => true,
+        ]);
+
+        $response->assertRedirect();
+
+        $indicator->refresh();
+        $this->assertTrue($indicator->is_free_preview);
+    }
+
+    public function test_admin_free_preview_max_two_per_category(): void
+    {
+        // Create 3 safety indicators
+        $safety1 = Indicator::create([
+            'slug' => 'crime_violent_rate',
+            'name' => 'Våldsbrott',
+            'unit' => '/100k',
+            'direction' => 'negative',
+            'weight' => 0.08,
+            'normalization' => 'rank_percentile',
+            'normalization_scope' => 'national',
+            'source' => 'bra',
+            'category' => 'crime',
+            'is_active' => true,
+            'is_free_preview' => true,
+            'display_order' => 1,
+        ]);
+
+        $safety2 = Indicator::create([
+            'slug' => 'perceived_safety',
+            'name' => 'Upplevd trygghet',
+            'unit' => 'index',
+            'direction' => 'positive',
+            'weight' => 0.07,
+            'normalization' => 'rank_percentile',
+            'normalization_scope' => 'national',
+            'source' => 'bra',
+            'category' => 'safety',
+            'is_active' => true,
+            'is_free_preview' => true,
+            'display_order' => 2,
+        ]);
+
+        $safety3 = Indicator::create([
+            'slug' => 'crime_property_rate',
+            'name' => 'Egendomsbrott',
+            'unit' => '/100k',
+            'direction' => 'negative',
+            'weight' => 0.06,
+            'normalization' => 'rank_percentile',
+            'normalization_scope' => 'national',
+            'source' => 'bra',
+            'category' => 'crime',
+            'is_active' => true,
+            'is_free_preview' => false,
+            'display_order' => 3,
+        ]);
+
+        // Try to enable a third free preview in safety category — should fail
+        $response = $this->actingAs($this->createAdmin())->put(route('admin.indicators.update', $safety3), [
+            'direction' => 'negative',
+            'weight' => 0.06,
+            'normalization' => 'rank_percentile',
+            'normalization_scope' => 'national',
+            'is_active' => true,
+            'is_free_preview' => true,
+        ]);
+
+        $response->assertSessionHasErrors('is_free_preview');
+
+        $safety3->refresh();
+        $this->assertFalse($safety3->is_free_preview);
+    }
+
+    public function test_admin_indicators_page_includes_free_preview_flag(): void
+    {
+        $this->seed(\Database\Seeders\IndicatorSeeder::class);
+
+        // Set one indicator as free preview
+        Indicator::where('slug', 'median_income')->update(['is_free_preview' => true]);
+
+        $response = $this->actingAs($this->createAdmin())->get(route('admin.indicators'));
+
+        $response->assertOk();
+
+        $indicators = $response->original->getData()['page']['props']['indicators'];
+        $medianIncome = collect($indicators)->firstWhere('slug', 'median_income');
+        $this->assertTrue($medianIncome['is_free_preview']);
+
+        $employment = collect($indicators)->firstWhere('slug', 'employment_rate');
+        $this->assertFalse($employment['is_free_preview']);
+    }
+
     public function test_scores_api_returns_json(): void
     {
         $response = $this->get('/api/deso/scores?year=2024');

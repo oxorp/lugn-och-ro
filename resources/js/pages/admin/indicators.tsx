@@ -49,6 +49,7 @@ interface Indicator {
     normalization: string;
     normalization_scope: 'national' | 'urbanity_stratified';
     is_active: boolean;
+    is_free_preview: boolean;
     latest_year: number | null;
     coverage: number;
     total_desos: number;
@@ -176,6 +177,7 @@ export default function IndicatorsPage({ indicators, poiCategories }: Props) {
     // Totals
     const activeIndicators = indicators.filter((i) => i.is_active && i.direction !== 'neutral');
     const totalWeight = activeIndicators.reduce((sum, i) => sum + i.weight, 0);
+    const freePreviewCount = indicators.filter((i) => i.is_free_preview).length;
 
     // Unique sources for filter
     const uniqueSources = useMemo(() => {
@@ -234,6 +236,7 @@ export default function IndicatorsPage({ indicators, poiCategories }: Props) {
                 normalization: indicator.normalization,
                 normalization_scope: indicator.normalization_scope,
                 is_active: indicator.is_active,
+                is_free_preview: indicator.is_free_preview,
                 [field]: value,
             },
             { preserveScroll: true },
@@ -273,6 +276,7 @@ export default function IndicatorsPage({ indicators, poiCategories }: Props) {
                 normalization: editingIndicator.normalization,
                 normalization_scope: editingIndicator.normalization_scope,
                 is_active: editingIndicator.is_active,
+                is_free_preview: editingIndicator.is_free_preview,
                 ...form,
             },
             {
@@ -315,6 +319,7 @@ export default function IndicatorsPage({ indicators, poiCategories }: Props) {
                     <p className="text-muted-foreground text-sm">
                         {indicators.length} indicators &middot; {activeIndicators.length} active &middot;
                         Total weight: {(totalWeight * 100).toFixed(0)}% ({totalWeight.toFixed(2)} / 1.00)
+                        {' \u00b7 '}Free preview: {freePreviewCount}/8
                     </p>
                 </div>
                 <Button onClick={handleRecompute} disabled={recomputing}>
@@ -419,6 +424,7 @@ export default function IndicatorsPage({ indicators, poiCategories }: Props) {
                             <TableHead><Tip label="Normalization" tip="Method to convert raw values to a 0–1 scale" /></TableHead>
                             <TableHead><Tip label="Scope" tip="Whether percentile ranking is computed nationally or within urbanity tiers" /></TableHead>
                             <TableHead><Tip label="Active" tip="Include this indicator in score computation" /></TableHead>
+                            <TableHead><Tip label="Free" tip="Show this indicator value in the free preview (max 2 per category)" /></TableHead>
                             <TableHead><Tip label="Year" tip="Most recent data year available" /></TableHead>
                             <TableHead><Tip label="Coverage" tip="Number of DeSOs with data out of 6,160 total" /></TableHead>
                             <TableHead></TableHead>
@@ -427,7 +433,7 @@ export default function IndicatorsPage({ indicators, poiCategories }: Props) {
                     <TableBody>
                         {sortedCategories.length === 0 ? (
                             <TableRow>
-                                <TableCell colSpan={11} className="py-8 text-center text-muted-foreground">
+                                <TableCell colSpan={12} className="py-8 text-center text-muted-foreground">
                                     No indicators match your search
                                 </TableCell>
                             </TableRow>
@@ -447,7 +453,7 @@ export default function IndicatorsPage({ indicators, poiCategories }: Props) {
                                             className="cursor-pointer bg-muted/50 hover:bg-muted"
                                             onClick={() => toggleGroup(category)}
                                         >
-                                            <TableCell colSpan={11} className="py-2">
+                                            <TableCell colSpan={12} className="py-2">
                                                 <div className="flex items-center gap-2">
                                                     {isCollapsed ? (
                                                         <ChevronRight className="h-4 w-4 text-muted-foreground" />
@@ -649,6 +655,14 @@ export default function IndicatorsPage({ indicators, poiCategories }: Props) {
                                                                 checked={indicator.is_active}
                                                                 onCheckedChange={(v) =>
                                                                     handleUpdate(indicator.id, 'is_active', v)
+                                                                }
+                                                            />
+                                                        </TableCell>
+                                                        <TableCell>
+                                                            <Switch
+                                                                checked={indicator.is_free_preview}
+                                                                onCheckedChange={(v) =>
+                                                                    handleUpdate(indicator.id, 'is_free_preview', v)
                                                                 }
                                                             />
                                                         </TableCell>

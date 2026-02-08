@@ -57,6 +57,7 @@ class AdminIndicatorController extends Controller
                     'normalization' => $indicator->normalization,
                     'normalization_scope' => $indicator->normalization_scope,
                     'is_active' => $tenantWeight?->is_active ?? $indicator->is_active,
+                    'is_free_preview' => $indicator->is_free_preview,
                     'latest_year' => $latestYear,
                     'coverage' => $coverage,
                     'total_desos' => $totalDesos,
@@ -113,9 +114,28 @@ class AdminIndicatorController extends Controller
         $validated = $request->validated();
         $tenant = currentTenant();
 
+        // Validate max 2 free preview indicators per display category
+        if (($validated['is_free_preview'] ?? false) === true) {
+            $displayCategory = $this->getDisplayCategory($indicator->slug);
+
+            if ($displayCategory) {
+                $categorySlugs = config("indicator_categories.{$displayCategory}.indicators", []);
+                $currentFreeCount = Indicator::whereIn('slug', $categorySlugs)
+                    ->where('is_free_preview', true)
+                    ->where('id', '!=', $indicator->id)
+                    ->count();
+
+                if ($currentFreeCount >= 2) {
+                    return back()->withErrors([
+                        'is_free_preview' => "Max 2 fria f\u{00F6}rhandsgranskningsindikatorer per kategori. Inaktivera en annan i '{$displayCategory}' f\u{00F6}rst.",
+                    ]);
+                }
+            }
+        }
+
         // Always update global indicator metadata (descriptions, normalization, source info)
         $globalFields = array_intersect_key($validated, array_flip([
-            'normalization', 'normalization_scope',
+            'normalization', 'normalization_scope', 'is_free_preview',
             'description_short', 'description_long', 'methodology_note',
             'national_context', 'source_name', 'source_url', 'update_frequency',
         ]));
@@ -147,6 +167,20 @@ class AdminIndicatorController extends Controller
         ]);
 
         return back()->with('success', "Updated {$indicator->name}");
+    }
+
+    /**
+     * Find which display category (safety/economy/education/proximity) an indicator belongs to.
+     */
+    private function getDisplayCategory(string $slug): ?string
+    {
+        foreach (config('indicator_categories') as $key => $catConfig) {
+            if (in_array($slug, $catConfig['indicators'], true)) {
+                return $key;
+            }
+        }
+
+        return null;
     }
 
     public function updatePoiCategory(Request $request, PoiCategory $poiCategory): RedirectResponse

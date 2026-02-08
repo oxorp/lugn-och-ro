@@ -23,6 +23,7 @@ class UpdateIndicatorRequest extends FormRequest
             'normalization' => ['required', Rule::in(['rank_percentile', 'min_max', 'z_score'])],
             'normalization_scope' => ['required', Rule::in(['national', 'urbanity_stratified'])],
             'is_active' => ['required', 'boolean'],
+            'is_free_preview' => ['sometimes', 'boolean'],
             'description_short' => ['nullable', 'string', 'max:100'],
             'description_long' => ['nullable', 'string', 'max:500'],
             'methodology_note' => ['nullable', 'string', 'max:300'],
