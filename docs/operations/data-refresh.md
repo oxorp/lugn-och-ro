@@ -67,13 +67,24 @@ php artisan compute:scores --year=2024
 php artisan check:sentinels --year=2024
 php artisan check:freshness
 
-# 5. H3 projection (if needed)
+# 5. H3 projection and heatmap tiles
 php artisan project:scores-to-h3 --year=2024
 php artisan smooth:h3-scores --year=2024 --config=Light
+php artisan generate:heatmap-tiles --year=2024
 
 # 6. Publish
 php artisan scores:publish --year=2024
 ```
+
+## Heatmap Tile Regeneration
+
+After any score recomputation, heatmap tiles must be regenerated:
+
+```bash
+php artisan generate:heatmap-tiles --year=2024 --zoom-min=5 --zoom-max=12
+```
+
+This runs a Python script that reads H3 scores and renders ~10K PNG tiles with Gaussian-blurred gradients. Takes ~10–30 minutes depending on server. Tiles are served from `storage/app/public/tiles/`.
 
 ## POI Refresh
 

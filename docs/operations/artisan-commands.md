@@ -409,6 +409,23 @@ php artisan generate:sweden-boundary --tolerance=0.005
 
 Unions all DeSO geometries and simplifies into a single boundary polygon. Saves to `public/data/sweden-boundary.geojson`.
 
+### `generate:heatmap-tiles`
+
+Generate pre-rendered heatmap PNG tiles from H3 scores.
+
+```bash
+php artisan generate:heatmap-tiles --year=2025
+php artisan generate:heatmap-tiles --year=2025 --zoom-min=5 --zoom-max=12
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--year=` | 2024 | Score year to render |
+| `--zoom-min=` | 5 | Minimum zoom level |
+| `--zoom-max=` | 12 | Maximum zoom level |
+
+Wraps the Python script `scripts/generate_heatmap_tiles.py`. Reads H3 scores from database, renders colored hexagons with Gaussian blur, and saves as XYZ tiles to `storage/app/public/tiles/{year}/`. Requires Python 3 with `h3`, `numpy`, `Pillow`, and `psycopg2` packages. Timeout: 30 minutes.
+
 ## Related
 
 - [Data Refresh](/operations/data-refresh)

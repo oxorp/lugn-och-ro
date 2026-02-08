@@ -8,7 +8,13 @@ API endpoints are defined in `routes/web.php` (not `routes/api.php`). They use J
 
 ## Endpoint Summary
 
-### Public Endpoints
+### Location Lookup (Primary API)
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/location/{lat},{lng}` | **Per-address scoring** — blended area + proximity score, nearby schools, POIs, indicators |
+
+### Map Data
 
 | Method | Path | Description | Cache |
 |---|---|---|---|
@@ -18,8 +24,7 @@ API endpoints are defined in `routes/web.php` (not `routes/api.php`). They use J
 | GET | `/api/pois/categories` | POI category definitions | — |
 | GET | `/api/h3/scores` | H3 hexagonal scores | 1h |
 | GET | `/api/h3/viewport?bbox=...&zoom=...` | Viewport-filtered H3 scores | 5min |
-| GET | `/api/geocode/resolve-deso?q=...` | Address → DeSO lookup | — |
-| POST | `/api/compare` | Compare multiple DeSOs | — |
+| GET | `/tiles/{year}/{z}/{x}/{y}.png` | Pre-rendered heatmap tiles | 24h |
 
 ### Tiered Endpoints (data varies by user tier)
 
@@ -60,9 +65,11 @@ All tiered endpoints use the `DataTieringService` to control data granularity:
 
 ## Related
 
+- [Location Lookup](/api/location-lookup)
 - [DeSO GeoJSON](/api/deso-geojson)
 - [DeSO Scores](/api/deso-scores)
 - [DeSO Schools](/api/deso-schools)
 - [DeSO Indicators](/api/deso-indicators)
 - [H3 Endpoints](/api/h3-endpoints)
+- [Heatmap Tiles](/api/heatmap-tiles)
 - [Admin Endpoints](/api/admin-endpoints)

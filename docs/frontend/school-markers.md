@@ -1,52 +1,76 @@
 # School Markers
 
-> School visualization on the map with merit-based coloring.
+> School visualization on the map with merit-based coloring and Lucide icon markers.
 
-## Marker Styles
+## When Schools Appear
 
-Schools are rendered as vector features on a dedicated layer (z-index 10).
+Schools are **not** shown by default. They appear when a user drops a pin (clicks the map or searches an address). The location API returns schools within **1.5 km** of the pin coordinate, and they're rendered on the map via the `setSchoolMarkers()` imperative handle.
 
-### Shape by School Type
+## Marker Style
 
-| School Type | Shape | Size |
-|---|---|---|
-| Grundskola | Circle | Radius 7 |
-| Gymnasieskola (only) | Diamond (rotated square) | Radius 8 |
-| Other | Small circle | Radius 4, muted color |
+Schools use Lucide `graduation-cap` SVG icons rendered as OpenLayers `Icon` styles. Each marker is a colored pin with the graduation cap icon:
+
+```typescript
+const dataUrl = getPoiMarkerDataUrl('graduation-cap', fillColor, iconSize);
+```
+
+### Icon Size by Zoom
+
+| Zoom | Icon Size |
+|---|---|
+| < 14 | 20 px |
+| 14 | 24 px |
+| 15+ | 28 px |
 
 ### Color by Meritvärde
 
 | Merit Range | Color | Meaning |
 |---|---|---|
-| > 230 | Green (`rgba(34, 197, 94, 0.9)`) | High performance |
-| 200-230 | Yellow (`rgba(234, 179, 8, 0.9)`) | Average |
-| < 200 | Orange (`rgba(249, 115, 22, 0.9)`) | Below average |
-| No data | Gray (`rgba(148, 163, 184, 0.9)`) | Statistics unavailable |
+| > 230 | Green (`#22c55e`) | High performance |
+| 200–230 | Yellow (`#eab308`) | Average |
+| < 200 | Orange (`#f97316`) | Below average |
+| No data | Gray (`#94a3b8`) | Statistics unavailable |
 
-All markers have a white 2px stroke border.
+If the SVG icon cannot be generated, a fallback colored circle (radius 6) is used.
+
+## Data Source
+
+Schools come from the **location lookup API** response, not from a separate endpoint:
+
+```
+GET /api/location/{lat},{lng}
+→ response.schools[]
+```
+
+Each school entry includes:
+- `name`, `type`, `operator_type`
+- `merit_value`, `goal_achievement`, `teacher_certification`
+- `student_count`
+- `lat`, `lng`, `distance_m` (from pin)
 
 ## Interactions
 
 ### Hover
-Shows tooltip with:
+Shows tooltip overlay with:
 - School name (bold)
-- Meritvärde (if available)
+- Meritvärde value (if available)
 
 ### Click
-Triggers the `onSchoolClick` callback with the `school_unit_code`, which loads detailed school statistics in the sidebar.
+No click handler — school details are shown in the sidebar instead.
 
-## Data Loading
+## Sidebar Display
 
-Schools are loaded on demand when a DeSO area is selected. The sidebar fetches:
+In the sidebar, schools are listed as cards sorted by distance:
 
-```
-GET /api/deso/{code}/schools
-```
+- School name
+- Type (Grundskola) and operator (Kommunal/Fristående)
+- Distance from pin
+- Merit value (if available)
 
-The response is tier-gated (see [DeSO Schools API](/api/deso-schools)). The map component receives the school array via `setSchoolMarkers()` on the imperative handle.
+Schools section is **tier-gated** — only visible to paid users (tier >= 1).
 
 ## Related
 
 - [Map Rendering](/frontend/map-rendering)
-- [DeSO Schools API](/api/deso-schools)
+- [Location Lookup API](/api/location-lookup)
 - [School Quality Indicators](/indicators/school-quality)

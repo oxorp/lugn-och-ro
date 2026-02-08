@@ -6,19 +6,38 @@
 
 | Component | File | Purpose |
 |---|---|---|
-| `DesoMap` | `components/deso-map.tsx` | OpenLayers map with DeSO/H3 layers |
-| `ComparisonSidebar` | `components/comparison-sidebar.tsx` | Side-by-side area comparison |
-| `PoiControls` | `components/poi-controls.tsx` | POI category toggle panel |
+| `HeatmapMap` | `components/deso-map.tsx` | OpenLayers map with heatmap tiles, pin-drop, and marker layers |
 | `MapSearch` | `components/map-search.tsx` | Geocoding search with autocomplete |
 | `InfoTooltip` | `components/info-tooltip.tsx` | Score, indicator, and school tooltips |
 | `LanguageSwitcher` | `components/language-switcher.tsx` | sv/en locale toggle |
 | `LocaleSync` | `components/locale-sync.tsx` | Syncs locale between server and client |
+
+## Map Sub-Components
+
+Defined within `deso-map.tsx`:
+
+| Component | Purpose |
+|---|---|
+| `ScoreLegend` | Bottom-left gradient bar (purple to green) |
+| `BasemapControl` | Top-right basemap switcher (Clean / Detailed / Satellite) |
+
+## Sidebar Sub-Components
+
+Defined within `map.tsx`:
+
+| Component | Purpose |
+|---|---|
+| `DefaultSidebar` | Empty state with search suggestions |
+| `ActiveSidebar` | Full location detail (score, proximity, indicators, schools, POIs) |
+| `ProximityFactorRow` | Individual proximity factor bar with icon and details |
+| `IndicatorBar` | Individual indicator percentile bar with raw value |
 
 ## Layout Components
 
 | Component | File | Purpose |
 |---|---|---|
 | `AdminLayout` | `layouts/admin-layout.tsx` | Admin pages with tab navigation (Indicators, Pipeline, Data Quality) |
+| `MapLayout` | `layouts/map-layout.tsx` | Full-screen map layout |
 | `AppShell` | `components/app-shell.tsx` | Main app layout with sidebar |
 | `AppSidebar` | `components/app-sidebar.tsx` | Navigation sidebar |
 | `AppHeader` | `components/app-header.tsx` | Top header bar |
@@ -42,13 +61,20 @@ Located in `components/ui/`. Standard shadcn/ui components used throughout:
 | `useTranslation` | `hooks/use-translation.ts` | i18n with Swedish/English support |
 | `usePoiLayer` | `hooks/use-poi-layer.ts` | POI data fetching and map layer management |
 
+## Utilities
+
+| File | Purpose |
+|---|---|
+| `lib/poi-icons.ts` | Generates SVG data URLs for POI marker pins with Lucide icons |
+| `services/geocoding.ts` | Address search client with zoom-level mapping per result type |
+
 ## Pages
 
 | Page | Route | Purpose |
 |---|---|---|
-| `map.tsx` | `/map` | Main map interface |
+| `map.tsx` | `/` | Main map interface with pin-drop scoring |
+| `map.tsx` | `/explore/{lat},{lng}` | Deep-link to scored location |
 | `dashboard.tsx` | `/dashboard` | User dashboard |
-| `welcome.tsx` | `/` | Landing page |
 | `methodology.tsx` | `/methodology` | Public methodology explanation |
 | `admin/indicators.tsx` | `/admin/indicators` | Indicator management |
 | `admin/data-quality.tsx` | `/admin/data-quality` | Data quality dashboard |

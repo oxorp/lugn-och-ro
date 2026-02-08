@@ -80,14 +80,40 @@ To add a new indicator to the system:
 
 No changes needed to the normalization or scoring services — they read indicator metadata dynamically.
 
+## Indicator Categories
+
+There are two classes of indicators:
+
+### Area-Level Indicators
+
+Stored in `indicator_values` per DeSO, normalized via percentile rank, and used in the batch-computed area score (70% of blended score).
+
+Categories: `income`, `employment`, `education`, `demographics`, `housing`, `crime`, `safety`, `financial_distress`, `amenities`, `transport`.
+
+### Proximity Indicators
+
+**Not** stored in `indicator_values`. Computed in real-time per coordinate by `ProximityScoreService`. Category = `proximity`, normalization = `none`.
+
+These are registered in the `indicators` table primarily so their weights can be managed through the admin UI. The `ProximityResult` DTO reads weights from the DB (cached 5 min).
+
+| Slug | Name | Direction | Weight |
+|---|---|---|---|
+| `prox_school` | School Proximity & Quality | positive | 0.10 |
+| `prox_green_space` | Green Space Access | positive | 0.04 |
+| `prox_transit` | Transit Access | positive | 0.05 |
+| `prox_grocery` | Grocery Access | positive | 0.03 |
+| `prox_negative_poi` | Negative POI Proximity | negative | 0.04 |
+| `prox_positive_poi` | Positive POI Density | positive | 0.04 |
+
 ## Normalization Scope Rules
 
 | Scope | Used For | Rationale |
 |---|---|---|
 | `national` | Income, employment, education, crime, debt | Socioeconomic rates are comparable across all areas |
 | `urbanity_stratified` | POI density, transit access, healthcare | Access indicators penalize rural areas unfairly at national scale |
+| `none` | Proximity indicators | Already 0–100 scores from distance decay; no normalization needed |
 
-Rule of thumb: if it measures **physical access** → stratified. If it measures a **rate or outcome** → national.
+Rule of thumb: if it measures **physical access** → stratified. If it measures a **rate or outcome** → national. If it's computed in real-time per coordinate → none.
 
 ## Known Issues & Edge Cases
 

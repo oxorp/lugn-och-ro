@@ -1,12 +1,27 @@
 # Scoring Engine
 
-> How composite neighborhood scores are computed from individual indicators.
+> How composite neighborhood scores are computed — area-level indicators blended with per-address proximity scores.
 
 ## Overview
 
-The scoring engine (`app/Services/ScoringService.php`) combines all active indicators into a single 0–100 composite score per DeSO area. It handles direction inversion, weight application, missing data redistribution, and factor attribution.
+The scoring system has two layers:
 
-## How It Works
+1. **Area Score** (`ScoringService`) — Weighted composite of all DeSO-level indicators (income, crime, education, etc.), computed once per DeSO per year.
+2. **Proximity Score** (`ProximityScoreService`) — Real-time scoring of a specific coordinate based on distance to nearby amenities, schools, and negative POIs.
+
+The final **blended score** shown to users combines both:
+
+```
+blended = area_score × 0.70 + proximity_score × 0.30
+```
+
+This means two addresses in the same DeSO can have different scores based on what's walkable from each.
+
+## Area Score (70%)
+
+The `ScoringService` (`app/Services/ScoringService.php`) combines all active area-level indicators into a 0–100 composite score per DeSO. It handles direction inversion, weight application, missing data redistribution, and factor attribution.
+
+### How It Works
 
 ### Step 1: Gather Indicator Values
 
@@ -66,15 +81,66 @@ These are stored as JSON in `composite_scores.top_positive` and `composite_score
 
 Each scoring run creates a `ScoreVersion` record. Scores are initially `draft` and must be explicitly published via the admin dashboard. This allows review before scores go live.
 
+## Proximity Score (30%)
+
+The `ProximityScoreService` (`app/Services/ProximityScoreService.php`) computes a real-time 0–100 score for any coordinate. It runs on every pin drop and must complete in **< 200ms**.
+
+### Proximity Factors
+
+| Factor | Slug | Radius | Default Weight | Scoring Logic |
+|---|---|---|---|---|
+| School Quality | `prox_school` | 2 km | 0.10 | Best school's merit × distance decay |
+| Green Space | `prox_green_space` | 1 km | 0.04 | Distance to nearest park/nature reserve |
+| Transit Access | `prox_transit` | 1 km | 0.05 | Nearest stop distance + mode bonus (rail 1.5×, tram 1.2×) + count bonus |
+| Grocery Access | `prox_grocery` | 1 km | 0.03 | Distance to nearest grocery store |
+| Negative POIs | `prox_negative_poi` | 500 m | 0.04 | Penalty per nearby negative POI (gambling, pawn shops) |
+| Positive POIs | `prox_positive_poi` | 1 km | 0.04 | Bonus from amenities with diminishing returns |
+
+All factors use **linear distance decay**: `score = 1 - (distance / maxDistance)`.
+
+### Distance Decay
+
+Each factor computes a 0–100 sub-score using PostGIS `ST_DWithin` for candidate selection and `ST_Distance` for precise measurement:
+
+```sql
+ST_DWithin(geom::geography, ST_SetSRID(ST_MakePoint(lng, lat), 4326)::geography, radius_meters)
+```
+
+### Weight Source
+
+Proximity weights are read from the `indicators` table (category = `proximity`) and cached for 5 minutes. The `ProximityResult` DTO uses defaults if no DB weights exist.
+
+### Score Blending
+
+**File**: `app/Http/Controllers/LocationController.php`
+
+```php
+const AREA_WEIGHT = 0.70;
+const PROXIMITY_WEIGHT = 0.30;
+
+$blendedScore = $areaScore * 0.70 + $proximityScore * 0.30;
+```
+
+If no area score exists for a DeSO, a default area score of 50 is assumed.
+
+### Weight Rebalancing
+
+When proximity indicators were introduced, area-level weights were scaled by 0.753 so that:
+- Area indicators sum to ~0.70
+- Proximity indicators sum to 0.30
+- Total = 1.00
+
+This rebalancing is handled by `ProximityIndicatorSeeder`.
+
 ## Score Interpretation
 
-| Score Range | Label | Color |
+| Score Range | Swedish Label | English Label |
 |---|---|---|
-| 80–100 | Strong Growth Area | Dark Green |
-| 60–79 | Stable / Positive Outlook | Light Green |
-| 40–59 | Mixed Signals | Yellow |
-| 20–39 | Elevated Risk | Orange |
-| 0–19 | High Risk / Declining | Red |
+| 80–100 | Starkt tillväxtområde | Strong Growth Area |
+| 60–79 | Stabilt / Positivt | Stable / Positive |
+| 40–59 | Blandat | Mixed Signals |
+| 20–39 | Förhöjd risk | Elevated Risk |
+| 0–19 | Hög risk | High Risk |
 
 ## Multi-Tenancy
 
@@ -89,12 +155,14 @@ Enterprise tenants can customize scoring through `tenant_indicator_weights`:
 ```mermaid
 graph TD
     A[indicator_values] -->|Per DeSO, per year| B[ScoringService]
-    B -->|Direction inversion| C[Directed values 0-1]
-    C -->|Weight redistribution| D[Adjusted weights]
-    D -->|Weighted sum × 100| E[Raw score 0-100]
-    E -->|Factor attribution| F[composite_scores]
-    F -->|Version control| G[score_versions]
-    G -->|Publish| H[Live on API]
+    B -->|Direction + weights| C[Area Score 0-100]
+    C -->|70% weight| D[Blended Score]
+    E[Pin Drop lat,lng] -->|Real-time| F[ProximityScoreService]
+    F -->|6 factors × distance decay| G[Proximity Score 0-100]
+    G -->|30% weight| D
+    D -->|LocationController| H[API Response]
+    C -->|Batch| I[composite_scores]
+    I -->|H3 projection| J[Heatmap Tiles]
 ```
 
 ## Artisan Commands
