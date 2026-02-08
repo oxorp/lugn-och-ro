@@ -4,10 +4,17 @@ namespace App\Services;
 
 use App\DataTransferObjects\ProximityFactor;
 use App\DataTransferObjects\ProximityResult;
+use App\Models\PoiCategory;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 class ProximityScoreService
 {
+    public function __construct(
+        private SafetyScoreService $safety,
+    ) {}
+
     /**
      * Compute proximity scores for a specific coordinate.
      * Returns a 0-100 composite score and breakdown of each proximity factor.
@@ -16,19 +23,66 @@ class ProximityScoreService
      */
     public function score(float $lat, float $lng): ProximityResult
     {
+        // Resolve DeSO for the pin to get safety context
+        $deso = DB::selectOne('
+            SELECT deso_code FROM deso_areas
+            WHERE ST_Contains(geom, ST_SetSRID(ST_MakePoint(?, ?), 4326))
+            LIMIT 1
+        ', [$lng, $lat]);
+
+        $safetyScore = $deso
+            ? $this->safety->forDeso($deso->deso_code, now()->year - 1)
+            : 0.5;
+
+        $settings = $this->getCategorySettings();
+
         return new ProximityResult(
-            school: $this->scoreSchool($lat, $lng),
-            greenSpace: $this->scoreGreenSpace($lat, $lng),
-            transit: $this->scoreTransit($lat, $lng),
-            grocery: $this->scoreGrocery($lat, $lng),
+            school: $this->scoreSchool($lat, $lng, $safetyScore, $settings),
+            greenSpace: $this->scoreGreenSpace($lat, $lng, $safetyScore, $settings),
+            transit: $this->scoreTransit($lat, $lng, $safetyScore, $settings),
+            grocery: $this->scoreGrocery($lat, $lng, $safetyScore, $settings),
             negativePoi: $this->scoreNegativePois($lat, $lng),
-            positivePoi: $this->scorePositivePois($lat, $lng),
+            positivePoi: $this->scorePositivePois($lat, $lng, $safetyScore, $settings),
+            safetyScore: $safetyScore,
         );
     }
 
-    private function scoreSchool(float $lat, float $lng): ProximityFactor
+    /**
+     * Apply safety-modulated distance decay.
+     *
+     * In safe areas (safety ~1.0), effective_distance ≈ physical_distance.
+     * In unsafe areas (safety ~0.15), effective_distance can be 2-3x physical_distance
+     * for high-sensitivity categories like entertainment.
+     */
+    private function decayWithSafety(
+        float $physicalDistanceM,
+        float $maxDistanceM,
+        float $safetyScore,
+        float $safetySensitivity,
+    ): float {
+        $riskPenalty = (1.0 - $safetyScore) * $safetySensitivity;
+        $effectiveDistance = $physicalDistanceM * (1.0 + $riskPenalty);
+
+        return max(0.0, 1.0 - $effectiveDistance / $maxDistanceM);
+    }
+
+    /**
+     * Compute effective distance for a physical distance given safety context.
+     */
+    private function effectiveDistance(
+        float $physicalDistanceM,
+        float $safetyScore,
+        float $safetySensitivity,
+    ): float {
+        $riskPenalty = (1.0 - $safetyScore) * $safetySensitivity;
+
+        return $physicalDistanceM * (1.0 + $riskPenalty);
+    }
+
+    private function scoreSchool(float $lat, float $lng, float $safetyScore, Collection $settings): ProximityFactor
     {
         $maxDistance = 2000; // 2km
+        $sensitivity = (float) ($settings->get('school_grundskola')?->safety_sensitivity ?? 0.80);
 
         $schools = DB::select("
             SELECT s.name, s.school_unit_code,
@@ -63,7 +117,6 @@ class ProximityScoreService
             );
         }
 
-        // Score = best school's quality x distance decay
         $bestScore = 0;
         $bestSchool = null;
         $schoolsWithMerit = 0;
@@ -75,12 +128,8 @@ class ProximityScoreService
 
             $schoolsWithMerit++;
 
-            // Normalize merit value: 150=0, 280=1 (roughly)
             $qualityNorm = min(1.0, max(0, ($school->merit_value_17 - 150) / 130));
-
-            // Linear distance decay
-            $decay = max(0, 1 - $school->distance_m / $maxDistance);
-
+            $decay = $this->decayWithSafety($school->distance_m, $maxDistance, $safetyScore, $sensitivity);
             $combined = $qualityNorm * $decay;
 
             if ($combined > $bestScore) {
@@ -89,19 +138,20 @@ class ProximityScoreService
             }
         }
 
-        // If schools exist but none have merit data, give partial credit for proximity
-        if ($schoolsWithMerit === 0) {
+        // No merit data, or safety modulation pushed all effective distances beyond max
+        if ($schoolsWithMerit === 0 || $bestSchool === null) {
             $nearest = $schools[0];
-            $decay = max(0, 1 - $nearest->distance_m / $maxDistance);
+            $decay = $this->decayWithSafety($nearest->distance_m, $maxDistance, $safetyScore, $sensitivity);
 
             return new ProximityFactor(
                 slug: 'prox_school',
-                score: (int) round($decay * 50), // Half credit without quality data
+                score: (int) round($decay * 50),
                 details: [
                     'nearest_school' => $nearest->name,
                     'nearest_distance_m' => (int) round($nearest->distance_m),
+                    'effective_distance_m' => (int) round($this->effectiveDistance($nearest->distance_m, $safetyScore, $sensitivity)),
                     'schools_within_2km' => count($schools),
-                    'merit_data' => false,
+                    'merit_data' => $schoolsWithMerit > 0,
                 ],
             );
         }
@@ -113,14 +163,16 @@ class ProximityScoreService
                 'nearest_school' => $bestSchool->name,
                 'nearest_merit' => (float) $bestSchool->merit_value_17,
                 'nearest_distance_m' => (int) round($bestSchool->distance_m),
+                'effective_distance_m' => (int) round($this->effectiveDistance($bestSchool->distance_m, $safetyScore, $sensitivity)),
                 'schools_within_2km' => count($schools),
             ],
         );
     }
 
-    private function scoreGreenSpace(float $lat, float $lng): ProximityFactor
+    private function scoreGreenSpace(float $lat, float $lng, float $safetyScore, Collection $settings): ProximityFactor
     {
         $maxDistance = 1000; // 1km
+        $sensitivity = (float) ($settings->get('park')?->safety_sensitivity ?? 1.00);
 
         $nearest = DB::selectOne("
             SELECT name,
@@ -142,7 +194,7 @@ class ProximityScoreService
             );
         }
 
-        $decay = max(0, 1 - $nearest->distance_m / $maxDistance);
+        $decay = $this->decayWithSafety($nearest->distance_m, $maxDistance, $safetyScore, $sensitivity);
 
         return new ProximityFactor(
             slug: 'prox_green_space',
@@ -150,13 +202,15 @@ class ProximityScoreService
             details: [
                 'nearest_park' => $nearest->name,
                 'distance_m' => (int) round($nearest->distance_m),
+                'effective_distance_m' => (int) round($this->effectiveDistance($nearest->distance_m, $safetyScore, $sensitivity)),
             ],
         );
     }
 
-    private function scoreTransit(float $lat, float $lng): ProximityFactor
+    private function scoreTransit(float $lat, float $lng, float $safetyScore, Collection $settings): ProximityFactor
     {
         $maxDistance = 1000; // 1km
+        $sensitivity = (float) ($settings->get('public_transport_stop')?->safety_sensitivity ?? 0.50);
 
         $stops = DB::select("
             SELECT name, subcategory,
@@ -178,12 +232,10 @@ class ProximityScoreService
             );
         }
 
-        // Score based on closest stop distance + mode bonus
         $score = 0;
         foreach ($stops as $stop) {
-            $decay = max(0, 1 - $stop->distance_m / $maxDistance);
+            $decay = $this->decayWithSafety($stop->distance_m, $maxDistance, $safetyScore, $sensitivity);
 
-            // Mode weight: rail > tram > bus
             $modeWeight = match ($stop->subcategory) {
                 'station', 'train' => 1.5,
                 'tram_stop' => 1.2,
@@ -194,7 +246,6 @@ class ProximityScoreService
             $score = max($score, $stopScore);
         }
 
-        // Bonus for multiple stops nearby (max 20% bonus)
         $countBonus = min(0.2, count($stops) * 0.02);
         $score = min(1.0, $score + $countBonus);
 
@@ -205,14 +256,16 @@ class ProximityScoreService
                 'nearest_stop' => $stops[0]->name,
                 'nearest_type' => $stops[0]->subcategory,
                 'nearest_distance_m' => (int) round($stops[0]->distance_m),
+                'effective_distance_m' => (int) round($this->effectiveDistance($stops[0]->distance_m, $safetyScore, $sensitivity)),
                 'stops_within_1km' => count($stops),
             ],
         );
     }
 
-    private function scoreGrocery(float $lat, float $lng): ProximityFactor
+    private function scoreGrocery(float $lat, float $lng, float $safetyScore, Collection $settings): ProximityFactor
     {
         $maxDistance = 1000; // 1km
+        $sensitivity = (float) ($settings->get('grocery')?->safety_sensitivity ?? 0.30);
 
         $nearest = DB::selectOne("
             SELECT name,
@@ -234,7 +287,7 @@ class ProximityScoreService
             );
         }
 
-        $decay = max(0, 1 - $nearest->distance_m / $maxDistance);
+        $decay = $this->decayWithSafety($nearest->distance_m, $maxDistance, $safetyScore, $sensitivity);
 
         return new ProximityFactor(
             slug: 'prox_grocery',
@@ -242,6 +295,7 @@ class ProximityScoreService
             details: [
                 'nearest_store' => $nearest->name,
                 'distance_m' => (int) round($nearest->distance_m),
+                'effective_distance_m' => (int) round($this->effectiveDistance($nearest->distance_m, $safetyScore, $sensitivity)),
             ],
         );
     }
@@ -263,7 +317,6 @@ class ProximityScoreService
         ", [$lng, $lat, $lng, $lat, $maxDistance]);
 
         if (empty($pois)) {
-            // No negative POIs nearby = full score (good)
             return new ProximityFactor(
                 slug: 'prox_negative_poi',
                 score: 100,
@@ -271,11 +324,10 @@ class ProximityScoreService
             );
         }
 
-        // Each nearby negative POI reduces the score, distance-weighted
         $penalty = 0;
         foreach ($pois as $poi) {
             $decay = max(0, 1 - $poi->distance_m / $maxDistance);
-            $penalty += $decay * 20; // Each close negative POI costs up to 20 points
+            $penalty += $decay * 20;
         }
 
         $score = max(0, 100 - $penalty);
@@ -291,11 +343,10 @@ class ProximityScoreService
         );
     }
 
-    private function scorePositivePois(float $lat, float $lng): ProximityFactor
+    private function scorePositivePois(float $lat, float $lng, float $safetyScore, Collection $settings): ProximityFactor
     {
         $maxDistance = 1000; // 1km
 
-        // Positive POIs excluding categories already scored separately
         $excludeCategories = "'grocery', 'public_transport_stop', 'park', 'nature_reserve'";
 
         $pois = DB::select("
@@ -320,10 +371,10 @@ class ProximityScoreService
             );
         }
 
-        // Each nearby positive POI adds to the score with diminishing returns
         $bonus = 0;
         foreach ($pois as $i => $poi) {
-            $decay = max(0, 1 - $poi->distance_m / $maxDistance);
+            $poiSensitivity = (float) ($settings->get($poi->category)?->safety_sensitivity ?? 1.00);
+            $decay = $this->decayWithSafety($poi->distance_m, $maxDistance, $safetyScore, $poiSensitivity);
             $diminishing = 1 / ($i + 1);
             $bonus += $decay * 15 * $diminishing;
         }
@@ -338,5 +389,15 @@ class ProximityScoreService
                 'types' => array_values(array_unique(array_column($pois, 'category'))),
             ],
         );
+    }
+
+    /**
+     * @return Collection<string, PoiCategory>
+     */
+    private function getCategorySettings(): Collection
+    {
+        return Cache::remember('poi_category_settings', 3600, function () {
+            return PoiCategory::all()->keyBy('slug');
+        });
     }
 }

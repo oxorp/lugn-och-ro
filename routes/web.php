@@ -3,6 +3,7 @@
 use App\Http\Controllers\AdminDataQualityController;
 use App\Http\Controllers\AdminIndicatorController;
 use App\Http\Controllers\AdminPipelineController;
+use App\Http\Controllers\AdminPoiCategoryController;
 use App\Http\Controllers\AdminScoreController;
 use App\Http\Controllers\DesoController;
 use App\Http\Controllers\H3Controller;
@@ -58,6 +59,8 @@ $webRoutes = function () {
         Route::get('/indicators', [AdminIndicatorController::class, 'index'])->name('admin.indicators');
         Route::put('/indicators/{indicator}', [AdminIndicatorController::class, 'update'])->name('admin.indicators.update');
         Route::put('/poi-categories/{poiCategory}', [AdminIndicatorController::class, 'updatePoiCategory'])->name('admin.poi-categories.update');
+        Route::get('/poi-categories', [AdminPoiCategoryController::class, 'index'])->name('admin.poi-categories');
+        Route::put('/poi-categories/{poiCategory}/safety', [AdminPoiCategoryController::class, 'update'])->name('admin.poi-categories.update-safety');
         Route::post('/recompute-scores', [AdminScoreController::class, 'recompute'])->name('admin.recompute');
 
         Route::get('/data-quality', [AdminDataQualityController::class, 'index'])->name('admin.data-quality');

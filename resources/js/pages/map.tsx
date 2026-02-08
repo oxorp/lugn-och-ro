@@ -48,8 +48,15 @@ interface ProximityFactor {
     details: Record<string, unknown>;
 }
 
+interface SafetyZone {
+    level: 'high' | 'medium' | 'low';
+    label: string;
+}
+
 interface ProximityData {
     composite: number;
+    safety_score: number;
+    safety_zone: SafetyZone;
     factors: ProximityFactor[];
 }
 
@@ -195,6 +202,7 @@ function ProximityFactorRow({ factor }: { factor: ProximityFactor }) {
         ?? details.nearest
         ?? null;
     const distanceM = config.distanceKey ? (details[config.distanceKey] as number | undefined) : undefined;
+    const effectiveDistanceM = details.effective_distance_m as number | undefined;
 
     // Special label for negative/positive POI counts
     let subtitle: string | null = null;
@@ -232,7 +240,14 @@ function ProximityFactorRow({ factor }: { factor: ProximityFactor }) {
                 <div className="flex items-center justify-between text-[11px] text-muted-foreground">
                     <span className="truncate">{subtitle}</span>
                     {distanceM !== undefined && distanceM > 0 && (
-                        <span className="ml-2 shrink-0 tabular-nums">{formatDistance(distanceM)}</span>
+                        <span className="ml-2 shrink-0 tabular-nums">
+                            {formatDistance(distanceM)}
+                            {effectiveDistanceM !== undefined && effectiveDistanceM > distanceM + 10 && (
+                                <span className="ml-1 text-orange-600">
+                                    ({t('sidebar.proximity.effective_distance', { distance: formatDistance(effectiveDistanceM) })})
+                                </span>
+                            )}
+                        </span>
                     )}
                 </div>
             )}
@@ -397,9 +412,27 @@ function ActiveSidebar({
                 {!isPublicTier && proximity && proximity.factors.length > 0 && (
                     <>
                         <Separator className="my-3" />
-                        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                            {t('sidebar.proximity.title')}
-                        </h3>
+                        <div className="mb-3 flex items-center justify-between">
+                            <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                                {t('sidebar.proximity.title')}
+                            </h3>
+                            {proximity.safety_zone && (
+                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                                    proximity.safety_zone.level === 'high'
+                                        ? 'bg-green-100 text-green-800'
+                                        : proximity.safety_zone.level === 'medium'
+                                          ? 'bg-yellow-100 text-yellow-800'
+                                          : 'bg-red-100 text-red-800'
+                                }`}>
+                                    {t('sidebar.proximity.safety_zone')}: {t(`sidebar.proximity.safety_${proximity.safety_zone.level}`)}
+                                </span>
+                            )}
+                        </div>
+                        {proximity.safety_zone && proximity.safety_zone.level !== 'high' && (
+                            <p className="mb-2 text-[11px] text-orange-600">
+                                {t(`sidebar.proximity.safety_note_${proximity.safety_zone.level}`)}
+                            </p>
+                        )}
                         <div className="space-y-3">
                             {proximity.factors.map((factor) => (
                                 <ProximityFactorRow key={factor.slug} factor={factor} />

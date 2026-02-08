@@ -14,6 +14,7 @@ class ProximityResult
         public ProximityFactor $grocery,
         public ProximityFactor $negativePoi,
         public ProximityFactor $positivePoi,
+        public float $safetyScore = 0.5,
     ) {}
 
     public function compositeScore(): float
@@ -41,6 +42,8 @@ class ProximityResult
     {
         return [
             'composite' => round($this->compositeScore(), 1),
+            'safety_score' => round($this->safetyScore, 3),
+            'safety_zone' => $this->safetyZone(),
             'factors' => [
                 $this->school->toArray(),
                 $this->greenSpace->toArray(),
@@ -50,6 +53,20 @@ class ProximityResult
                 $this->positivePoi->toArray(),
             ],
         ];
+    }
+
+    /**
+     * Human-readable safety zone classification.
+     *
+     * @return array{level: string, label: string}
+     */
+    public function safetyZone(): array
+    {
+        return match (true) {
+            $this->safetyScore > 0.65 => ['level' => 'high', 'label' => 'Hög'],
+            $this->safetyScore >= 0.35 => ['level' => 'medium', 'label' => 'Medel'],
+            default => ['level' => 'low', 'label' => 'Låg'],
+        };
     }
 
     /**

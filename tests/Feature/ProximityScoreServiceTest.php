@@ -73,14 +73,15 @@ class ProximityScoreServiceTest extends TestCase
 
     public function test_school_proximity_decays_with_distance(): void
     {
+        // Place school ~800m away (within effective range with safety modulation)
         $school = School::factory()->create([
             'name' => 'Distant School',
             'type_of_schooling' => 'Grundskola',
             'status' => 'active',
-            'lat' => 59.348,
+            'lat' => 59.342,
             'lng' => 18.060,
         ]);
-        $this->setGeom('schools', 59.348, 18.060);
+        $this->setGeom('schools', 59.342, 18.060);
 
         SchoolStatistic::factory()->create([
             'school_unit_code' => $school->school_unit_code,

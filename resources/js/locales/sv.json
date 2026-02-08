@@ -176,7 +176,14 @@
             "positive_poi": "Positiva POI",
             "no_negative": "Inga negativa POI inom 500m",
             "negative_count": "inom 500m",
-            "positive_count": "inom 1 km"
+            "positive_count": "inom 1 km",
+            "effective_distance": "eff. {{distance}}",
+            "safety_zone": "Trygghetszon",
+            "safety_high": "H\u00f6g",
+            "safety_medium": "Medel",
+            "safety_low": "L\u00e5g",
+            "safety_note_medium": "Trygghetspo\u00e4ngen minskar n\u00e4rhetsv\u00e4rdet n\u00e5got",
+            "safety_note_low": "Trygghetspo\u00e4ngen minskar n\u00e4rhetsv\u00e4rdet v\u00e4sentligt"
         },
         "pois": {
             "title": "N\u00e4rliggande faciliteter (3 km)"

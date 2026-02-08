@@ -11,6 +11,7 @@ class PoiCategory extends Model
         'name',
         'indicator_slug',
         'signal',
+        'safety_sensitivity',
         'osm_tags',
         'google_types',
         'catchment_km',
@@ -25,7 +26,7 @@ class PoiCategory extends Model
     ];
 
     /**
-     * @return array{osm_tags: 'array', google_types: 'array', is_active: 'boolean', show_on_map: 'boolean', catchment_km: 'decimal:2'}
+     * @return array{osm_tags: 'array', google_types: 'array', is_active: 'boolean', show_on_map: 'boolean', catchment_km: 'decimal:2', safety_sensitivity: 'decimal:2'}
      */
     protected function casts(): array
     {
@@ -35,6 +36,7 @@ class PoiCategory extends Model
             'is_active' => 'boolean',
             'show_on_map' => 'boolean',
             'catchment_km' => 'decimal:2',
+            'safety_sensitivity' => 'decimal:2',
         ];
     }
 }

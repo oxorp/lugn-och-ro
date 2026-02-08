@@ -177,7 +177,14 @@
             "positive_poi": "Positive POIs",
             "no_negative": "No negative POIs within 500m",
             "negative_count": "within 500m",
-            "positive_count": "within 1 km"
+            "positive_count": "within 1 km",
+            "effective_distance": "eff. {{distance}}",
+            "safety_zone": "Safety zone",
+            "safety_high": "High",
+            "safety_medium": "Medium",
+            "safety_low": "Low",
+            "safety_note_medium": "Safety score moderately reduces proximity value",
+            "safety_note_low": "Safety score substantially reduces proximity value"
         },
         "pois": {
             "title": "Nearby Amenities (3 km)"

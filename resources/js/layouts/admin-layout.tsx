@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils';
 
 const navItems = [
     { label: 'Indicators', href: '/admin/indicators' },
+    { label: 'POI Safety', href: '/admin/poi-categories' },
     { label: 'Pipeline', href: '/admin/pipeline' },
     { label: 'Data Quality', href: '/admin/data-quality' },
 ];
