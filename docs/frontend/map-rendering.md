@@ -87,14 +87,16 @@ An OpenLayers `Overlay` shows tooltips on hover:
 
 ## Color Scale
 
-Five-stop gradient from purple (0) to green (100), consistent across heatmap tiles and UI:
+Red-to-green gradient defined in `config/score_colors.php`, consistent across heatmap tiles and UI:
 
 | Score | Color | Hex |
 |---|---|---|
-| 0 | Deep purple | `#4a0072` |
-| 25 | Red-purple | `#9c1d6e` |
-| 50 | Yellow | `#f0c040` |
-| 75 | Light green | `#6abf4b` |
+| 0 | Deep red | `#c0392b` |
+| 25 | Red | `#e74c3c` |
+| 40 | Amber | `#f39c12` |
+| 50 | Yellow | `#f1c40f` |
+| 60 | Yellow | `#f1c40f` |
+| 75 | Green | `#27ae60` |
 | 100 | Deep green | `#1a7a2e` |
 
 ## Imperative Handle
@@ -117,7 +119,7 @@ The parent `map.tsx` page controls the map via ref:
 
 ## UI Overlays
 
-- **Score Legend**: Bottom-left gradient bar (purple to green) with "High Risk" / "Strong" labels
+- **Score Legend**: Bottom-left gradient bar (red to green) with "High Risk" / "Strong" labels
 - **Basemap Control**: Top-right radio buttons (Clean / Detailed / Satellite)
 
 ## Related

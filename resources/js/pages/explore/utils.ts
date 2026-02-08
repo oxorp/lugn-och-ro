@@ -1,4 +1,4 @@
-import { interpolateScoreColor } from '@/components/deso-map';
+import { scoreToColor } from '@/lib/score-colors';
 
 export function formatIndicatorValue(value: number, unit: string | null): string {
     switch (unit) {
@@ -28,5 +28,5 @@ export function formatDistance(meters: number): string {
 }
 
 export function scoreBgStyle(score: number): React.CSSProperties {
-    return { backgroundColor: interpolateScoreColor(score) };
+    return { backgroundColor: scoreToColor(score) };
 }

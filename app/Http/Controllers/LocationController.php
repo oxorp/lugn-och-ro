@@ -365,12 +365,12 @@ class LocationController extends Controller
 
     private function scoreLabel(float $score): string
     {
-        return match (true) {
-            $score >= 80 => 'Starkt tillväxtområde',
-            $score >= 60 => 'Stabilt / Positivt',
-            $score >= 40 => 'Blandat',
-            $score >= 20 => 'Förhöjd risk',
-            default => 'Hög risk',
-        };
+        foreach (config('score_colors.labels') as $label) {
+            if ($score >= $label['min'] && $score <= $label['max']) {
+                return $label['label_sv'];
+            }
+        }
+
+        return 'Okänt';
     }
 }

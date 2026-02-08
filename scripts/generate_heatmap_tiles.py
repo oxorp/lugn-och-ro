@@ -35,40 +35,47 @@ SWEDEN_BOUNDS = {
 }
 
 
+def hex_to_rgb(hex_color):
+    """Convert a hex color string to an (r, g, b) tuple."""
+    hex_color = hex_color.lstrip('#')
+    return (int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16))
+
+
+# Gradient stops matching config/score_colors.php (red -> green)
+GRADIENT_STOPS = [
+    (0,   hex_to_rgb('#c0392b')),   # Deep red
+    (25,  hex_to_rgb('#e74c3c')),   # Red
+    (40,  hex_to_rgb('#f39c12')),   # Amber/orange
+    (50,  hex_to_rgb('#f1c40f')),   # Yellow
+    (60,  hex_to_rgb('#f1c40f')),   # Yellow
+    (75,  hex_to_rgb('#27ae60')),   # Green
+    (100, hex_to_rgb('#1a7a2e')),   # Deep green
+]
+
+
 def score_to_rgba(score, alpha=180):
     """
     Map a score (0-100) to an RGBA color.
-    Purple (bad, 0) -> Yellow (mixed, 50) -> Green (good, 100).
-    Uses a perceptually smooth gradient.
+    Red (bad, 0) -> Yellow (mixed, 50) -> Green (good, 100).
+    Linearly interpolates between gradient stops defined in GRADIENT_STOPS.
     """
-    t = max(0.0, min(1.0, score / 100.0))
+    t = max(0.0, min(100.0, score))
 
-    if t < 0.25:
-        # Deep purple to magenta (0-25)
-        s = t / 0.25
-        r = int(88 + s * (180 - 88))
-        g = int(24 + s * (40 - 24))
-        b = int(140 + s * (120 - 140))
-    elif t < 0.5:
-        # Magenta to yellow-orange (25-50)
-        s = (t - 0.25) / 0.25
-        r = int(180 + s * (240 - 180))
-        g = int(40 + s * (180 - 40))
-        b = int(120 - s * 120)
-    elif t < 0.75:
-        # Yellow-orange to green-yellow (50-75)
-        s = (t - 0.5) / 0.25
-        r = int(240 - s * (240 - 120))
-        g = int(180 + s * (210 - 180))
-        b = int(0 + s * 30)
-    else:
-        # Green-yellow to deep green (75-100)
-        s = (t - 0.75) / 0.25
-        r = int(120 - s * (120 - 34))
-        g = int(210 - s * (210 - 170))
-        b = int(30 + s * (50 - 30))
+    for i in range(len(GRADIENT_STOPS) - 1):
+        lo_score, lo_rgb = GRADIENT_STOPS[i]
+        hi_score, hi_rgb = GRADIENT_STOPS[i + 1]
+        if t >= lo_score and t <= hi_score:
+            if hi_score == lo_score:
+                s = 0.0
+            else:
+                s = (t - lo_score) / (hi_score - lo_score)
+            r = int(lo_rgb[0] + (hi_rgb[0] - lo_rgb[0]) * s)
+            g = int(lo_rgb[1] + (hi_rgb[1] - lo_rgb[1]) * s)
+            b = int(lo_rgb[2] + (hi_rgb[2] - lo_rgb[2]) * s)
+            return (r, g, b, alpha)
 
-    return (r, g, b, alpha)
+    last_rgb = GRADIENT_STOPS[-1][1]
+    return (last_rgb[0], last_rgb[1], last_rgb[2], alpha)
 
 
 def tile_to_bbox(z, x, y):

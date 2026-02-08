@@ -57,6 +57,7 @@ class HandleInertiaRequests extends Middleware
             'locale' => fn () => app()->getLocale(),
             'appEnv' => config('app.env'),
             'sidebarOpen' => ! $request->hasCookie('sidebar_state') || $request->cookie('sidebar_state') === 'true',
+            'scoreColors' => config('score_colors'),
         ];
     }
 

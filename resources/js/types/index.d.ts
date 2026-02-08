@@ -1,5 +1,6 @@
 import { InertiaLinkProps } from '@inertiajs/react';
 import type { IconDefinition } from '@fortawesome/fontawesome-svg-core';
+import type { ScoreColorConfig } from './score-colors';
 
 export interface Auth {
     user: User;
@@ -35,6 +36,7 @@ export interface SharedData {
     locale: 'en' | 'sv';
     appEnv: string;
     sidebarOpen: boolean;
+    scoreColors: ScoreColorConfig;
     [key: string]: unknown;
 }
 

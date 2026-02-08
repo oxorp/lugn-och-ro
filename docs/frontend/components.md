@@ -18,7 +18,7 @@ Defined within `deso-map.tsx`:
 
 | Component | Purpose |
 |---|---|
-| `ScoreLegend` | Bottom-left gradient bar (purple to green) |
+| `ScoreLegend` | Bottom-left gradient bar (red to green) |
 | `BasemapControl` | Top-right basemap switcher (Clean / Detailed / Satellite) |
 
 ## Sidebar Sub-Components

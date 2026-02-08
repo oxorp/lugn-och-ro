@@ -1,626 +1,529 @@
-# TASK: Indicator Architecture Cleanup — Categories, POI Roles & Per-School Data
+# TASK: Centralize Score Colors — Single Source of Truth + Red→Green Palette
 
-## The Problems
+## Context
 
-### Problem 1: Category Chaos
+Score colors are defined in multiple places right now — scattered across frontend components, backend config references, and documentation. The current palette goes from **deep purple (#4a0072) to green (#1a7a2e)**, which is unconventional. Purple doesn't intuitively mean "bad" to most people. Red does.
 
-We have **11 backend categories** (income, employment, education, demographics, housing, crime, safety, financial_distress, amenities, transport, proximity) trying to collapse into **4 display groups** in the sidebar. The math doesn't add up — the sidebar shows "14 indicators" but some categories are orphaned or invisible. Users see a disjointed experience: the admin has 11 groups, the sidebar has 4, and neither tells a clean story.
+This task:
+1. Creates a single color config that every consumer reads from
+2. Switches the palette from purple→green to **red→green** (universally understood)
+3. Updates every place that references score colors
 
-### Problem 2: POI Double Counting
+## Why Red→Green
 
-POIs currently serve two different purposes with no clear boundary:
+Red = bad, green = good. Everyone knows this. Purple = bad is arbitrary and requires explanation. The legend shouldn't need a legend.
 
-**Role A — Area-level density indicators:** "This DeSO has 15.1 restaurants per km²" → stored as `restaurant_density` in `indicator_values`, feeds the composite area score. Computed per DeSO. 7 indicators (grocery, healthcare, restaurant, fitness, gambling, pawn_shop, fast_food).
-
-**Role B — Pin-level proximity scores:** "The nearest grocery store is 340m from your pin" → computed on-the-fly per address. 6 proximity indicators (school, green_space, transit, grocery, negative_poi, positive_poi).
-
-The problem: `grocery_density` (Role A) and `prox_grocery` (Role B) both measure "grocery access" but at different scales, with different data, contributing to different scores. When a user buys a report for Sveavägen 42, which one matters? Both? How do they interact? Right now, this is undefined.
-
-### Problem 3: School Data is DeSO-Aggregated
-
-The current school indicators (`school_merit_value_avg`, `school_goal_achievement_avg`, `school_teacher_certification_avg`) average all grundskola statistics within a DeSO. For an address-based report, this is wrong:
-
-- A pin at the edge of a DeSO might be 200m from an excellent school in the NEXT DeSO
-- A large DeSO might contain both a great school and a terrible one — the average hides both
-- "Average merit value in this DeSO: 221" is useless compared to "Årstaskolan (450m): 241, Eriksdalsskolan (1.2km): 198"
-
-Reports need per-school data within a radius, not DeSO averages.
-
-### Problem 4: Proximity Indicators Have Zero Coverage
-
-The admin shows 6 proximity indicators (prox_school, prox_green_space, etc.) all with "0 / 6160" coverage. They're defined but never computed. They were designed for a pin-based system that hasn't landed yet. Meanwhile they show up in indicator counts ("33 indicators") inflating the number without delivering value.
+The new palette should still feel modern — not a raw traffic light. We want warm reds through amber/yellow to greens, with enough intermediate stops that the map looks like a proper choropleth, not a Christmas decoration.
 
 ---
 
-## The Solution: Five Clean Categories
+## Step 1: Define the Canonical Color Scale
 
-### New Category Structure
+### 1.1 The Config File
 
-Collapse everything into **5 user-facing categories** that match how people think about neighborhoods:
-
-| # | Display Category | Swedish | What It Covers | Sources |
-|---|---|---|---|---|
-| 1 | **Safety & Crime** | Trygghet & brottslighet | Crime rates, perceived safety, police vulnerability, negative POI density | BRÅ, Polisen, BRÅ NTU, OSM |
-| 2 | **Economy & Employment** | Ekonomi & arbetsmarknad | Income, employment, debt/financial distress, economic standard | SCB, Kronofogden |
-| 3 | **Education & Schools** | Utbildning & skolor | School quality (per-school, not DeSO average), education levels in population | Skolverket, SCB |
-| 4 | **Environment & Services** | Miljö & service | Green space, amenities, healthcare, grocery, restaurant/café density, transport, positive POI | OSM, GTFS, Trafiklab |
-| 5 | **Proximity** | Platsanalys | Pin-specific: nearest school + distance, transit access, grocery access, green space access | Computed per address |
-
-### Key Design Decisions
-
-**Categories 1-4 are area-level.** They describe the DeSO/neighborhood. They feed the Area Score (70% of composite). They're pre-computed and cached. They're the same for everyone standing anywhere in the same DeSO.
-
-**Category 5 is pin-level.** It describes THIS specific address. It feeds the Proximity Score (30% of composite). It's computed on-the-fly per pin drop. It changes every 100 meters.
-
-**This maps to the two-layer scoring model:**
-```
-Area Score (70%) = f(Safety, Economy, Education, Environment)
-Proximity Score (30%) = f(Platsanalys)
-Final Score = Area × 0.70 + Proximity × 0.30
-```
-
-**The sidebar preview shows all 5 categories** — the first 4 describe "this neighborhood" and the 5th describes "this exact spot."
-
----
-
-## Step 1: Reorganize Indicator Categories
-
-### 1.1 Migration: Update Categories
+Create a single source of truth:
 
 ```php
-// Category mapping: old → new
-$mapping = [
-    // Safety & Crime
-    'violent_crime_rate' => 'safety',
-    'property_crime_rate' => 'safety',
-    'total_crime_rate' => 'safety',
-    'vulnerability_flag' => 'safety',
-    'perceived_safety' => 'safety',
-    'gambling_density' => 'safety',      // Was: amenities. Gambling = negative signal
-    'pawn_shop_density' => 'safety',     // Was: amenities. Pawn shops = distress signal
-    'fast_food_density' => 'safety',     // Was: amenities. Late-night clusters = disorder proxy
-
-    // Economy & Employment
-    'median_income' => 'economy',
-    'low_economic_standard_pct' => 'economy',
-    'employment_rate' => 'economy',
-    'debt_rate_pct' => 'economy',         // Was: financial_distress
-    'eviction_rate' => 'economy',         // Was: financial_distress
-    'median_debt_sek' => 'economy',       // Was: financial_distress
-
-    // Education & Schools
-    'education_post_secondary_pct' => 'education',
-    'education_below_secondary_pct' => 'education',
-    'school_merit_value_avg' => 'education',
-    'school_goal_achievement_avg' => 'education',
-    'school_teacher_certification_avg' => 'education',
-
-    // Environment & Services
-    'grocery_density' => 'environment',    // Was: amenities
-    'healthcare_density' => 'environment', // Was: amenities
-    'restaurant_density' => 'environment', // Was: amenities
-    'fitness_density' => 'environment',    // Was: amenities
-    'transit_stop_density' => 'environment', // Was: transport
-
-    // Contextual (no display category — used internally, not shown in sidebar)
-    'foreign_background_pct' => 'contextual',
-    'population' => 'contextual',
-    'rental_tenure_pct' => 'contextual',
-
-    // Proximity (pin-level, separate computation)
-    'prox_school' => 'proximity',
-    'prox_green_space' => 'proximity',
-    'prox_transit' => 'proximity',
-    'prox_grocery' => 'proximity',
-    'prox_negative_poi' => 'proximity',
-    'prox_positive_poi' => 'proximity',
-];
-
-foreach ($mapping as $slug => $category) {
-    Indicator::where('slug', $slug)->update(['category' => $category]);
-}
-```
-
-### 1.2 Display Category Config
-
-```php
-// config/display_categories.php
+// config/score_colors.php
 
 return [
-    'safety' => [
-        'label' => 'Trygghet & brottslighet',
-        'label_short' => 'Trygghet',
-        'emoji' => '🛡️',
-        'icon' => 'shield',
-        'display_order' => 1,
-        'score_layer' => 'area',     // Feeds area score
-        'description' => 'Brottsstatistik, upplevd trygghet och polisens klassificering',
+    /*
+    |--------------------------------------------------------------------------
+    | Score Color Scale
+    |--------------------------------------------------------------------------
+    |
+    | Continuous gradient stops for the 0–100 composite score.
+    | Used by: map polygon fill, sidebar score badge, indicator bars,
+    | school markers, legend, report PDF, admin dashboard.
+    |
+    | Format: score threshold => hex color
+    | The frontend interpolates between these stops.
+    |
+    */
+
+    'gradient_stops' => [
+        0   => '#c0392b',  // Deep red — high risk
+        25  => '#e74c3c',  // Red — elevated risk
+        40  => '#f39c12',  // Amber/orange — mixed signals (low end)
+        50  => '#f1c40f',  // Yellow — mixed signals (mid)
+        60  => '#f1c40f',  // Yellow — mixed signals (high end)
+        75  => '#27ae60',  // Green — positive outlook
+        100 => '#1a7a2e',  // Deep green — strong growth
     ],
-    'economy' => [
-        'label' => 'Ekonomi & arbetsmarknad',
-        'label_short' => 'Ekonomi',
-        'emoji' => '📊',
-        'icon' => 'bar-chart-3',
-        'display_order' => 2,
-        'score_layer' => 'area',
-        'description' => 'Inkomst, sysselsättning, skuldsättning och ekonomisk standard',
+
+    /*
+    |--------------------------------------------------------------------------
+    | Score Labels & Thresholds
+    |--------------------------------------------------------------------------
+    |
+    | Human-readable labels for score ranges.
+    | Swedish labels are the primary display language.
+    |
+    */
+
+    'labels' => [
+        ['min' => 80, 'max' => 100, 'label_sv' => 'Starkt tillväxtområde',  'label_en' => 'Strong Growth Area',      'color' => '#1a7a2e'],
+        ['min' => 60, 'max' => 79,  'label_sv' => 'Stabil / positiv utsikt', 'label_en' => 'Stable / Positive Outlook', 'color' => '#27ae60'],
+        ['min' => 40, 'max' => 59,  'label_sv' => 'Blandade signaler',       'label_en' => 'Mixed Signals',             'color' => '#f1c40f'],
+        ['min' => 20, 'max' => 39,  'label_sv' => 'Förhöjd risk',            'label_en' => 'Elevated Risk',             'color' => '#e74c3c'],
+        ['min' => 0,  'max' => 19,  'label_sv' => 'Hög risk / vikande',      'label_en' => 'High Risk / Declining',     'color' => '#c0392b'],
     ],
-    'education' => [
-        'label' => 'Utbildning & skolor',
-        'label_short' => 'Utbildning',
-        'emoji' => '🎓',
-        'icon' => 'graduation-cap',
-        'display_order' => 3,
-        'score_layer' => 'area',
-        'description' => 'Utbildningsnivå i befolkningen och skolkvalitet',
+
+    /*
+    |--------------------------------------------------------------------------
+    | Special Colors
+    |--------------------------------------------------------------------------
+    */
+
+    'no_data' => '#d5d5d5',           // Gray for DeSOs with no score
+    'no_data_border' => '#bbbbbb',     // Dashed border for no-data areas
+    'selected_border' => '#1e3a5f',    // Border for selected DeSO polygon
+
+    /*
+    |--------------------------------------------------------------------------
+    | School Marker Colors
+    |--------------------------------------------------------------------------
+    |
+    | School markers on the map are colored by meritvärde.
+    | Same red→green logic but with different thresholds.
+    |
+    */
+
+    'school_markers' => [
+        'high'    => '#27ae60',  // Meritvärde > 230
+        'medium'  => '#f1c40f',  // 200–230
+        'low'     => '#e74c3c',  // < 200
+        'no_data' => '#999999',  // No meritvärde available
     ],
-    'environment' => [
-        'label' => 'Miljö & service',
-        'label_short' => 'Service',
-        'emoji' => '🌳',
-        'icon' => 'trees',
-        'display_order' => 4,
-        'score_layer' => 'area',
-        'description' => 'Grönområden, kollektivtrafik, mataffärer, sjukvård och restauranger',
+
+    /*
+    |--------------------------------------------------------------------------
+    | Indicator Bar Colors
+    |--------------------------------------------------------------------------
+    |
+    | Used in sidebar indicator bars and report pages.
+    | "good" = this indicator contributes positively to the score.
+    | "bad" = this indicator pulls the score down.
+    |
+    */
+
+    'indicator_bar' => [
+        'good' => '#27ae60',    // Emerald green
+        'bad'  => '#e74c3c',    // Red
+        'neutral' => '#94a3b8', // Slate gray
     ],
-    'proximity' => [
-        'label' => 'Platsanalys',
-        'label_short' => 'Plats',
-        'emoji' => '📍',
-        'icon' => 'map-pin',
-        'display_order' => 5,
-        'score_layer' => 'proximity',  // Feeds proximity score
-        'description' => 'Avstånd till skolor, hållplatser, parker och service från din exakta adress',
-    ],
-    // 'contextual' is never displayed — internal use only
 ];
 ```
 
-### 1.3 What Moved Where
+### 1.2 Share with Frontend via Inertia
 
-| Indicator | Old Category | New Category | Why |
-|---|---|---|---|
-| gambling_density | amenities | safety | Gambling venues correlate with financial distress and disorder |
-| pawn_shop_density | amenities | safety | Pawn shops are a distress signal, not a service amenity |
-| fast_food_density | amenities | safety | Late-night fast food clusters proxy for disorder/nighttime issues |
-| debt_rate_pct | financial_distress | economy | Debt is an economic indicator, not a separate domain |
-| eviction_rate | financial_distress | economy | Same — economic stress |
-| median_debt_sek | financial_distress | economy | Same |
-| transit_stop_density | transport | environment | Transport is part of the service/infrastructure picture |
-| foreign_background_pct | demographics | contextual | Used internally, never user-facing (legal sensitivity) |
-| population | demographics | contextual | Contextual — not a quality indicator |
-| rental_tenure_pct | housing | contextual | Contextual — tenure type informs the model but isn't a "score" |
-
-### 1.4 Indicator Counts After Reorg
-
-| Category | Count | Weight Budget |
-|---|---|---|
-| Safety | 8 (5 crime/safety + 3 negative POI density) | ~25% |
-| Economy | 6 | ~20% |
-| Education | 5 (2 population education + 3 school quality) | ~15% |
-| Environment | 5 (4 positive amenity density + 1 transit density) | ~10% |
-| Proximity | 6 (pin-level, separate computation) | 30% (proximity score) |
-| Contextual | 3 (weight = 0, not displayed) | 0% |
-| **Total** | **33** | **100%** |
-
-The "33 datapunkter" stays accurate, but now every one of them belongs to a visible category (except the 3 contextual ones, which shouldn't be counted in the user-facing number — so really "30 indikatorer" in the CTA).
-
----
-
-## Step 2: Clarify POI Architecture
-
-### 2.1 The Two Roles, Formally Defined
-
-**Role A: Area Density Indicators (DeSO-level)**
-
-These answer: "What kind of neighborhood is this?"
-
-POIs are counted per DeSO, normalized by area or population, stored as `indicator_values`. They feed the area score. They're the same for every address in the same DeSO.
-
-| Indicator | POI Source | Category | Signal |
-|---|---|---|---|
-| grocery_density | OSM grocery stores | environment | Positive — daily service access |
-| healthcare_density | OSM healthcare + pharmacy | environment | Positive — essential services |
-| restaurant_density | OSM restaurants/cafés | environment | Positive — livability/gentrification |
-| fitness_density | OSM gyms/sports | environment | Positive — active lifestyle |
-| transit_stop_density | OSM/GTFS transit stops | environment | Positive — connectivity |
-| gambling_density | OSM gambling venues | safety | Negative — financial distress marker |
-| pawn_shop_density | OSM pawn shops | safety | Negative — distress marker |
-| fast_food_density | OSM late-night fast food | safety | Negative — disorder proxy |
-
-**Role B: Proximity Scores (Pin-level)**
-
-These answer: "What's near THIS exact address?"
-
-Computed on-the-fly when a pin is dropped. PostGIS distance queries within configurable radii. Feed the proximity score. Different for every address, even within the same DeSO.
-
-| Factor | What It Measures | Radius |
-|---|---|---|
-| prox_school | Quality-weighted distance to nearest grundskola(s) | 2000m |
-| prox_green_space | Distance to nearest park/green space | 1500m |
-| prox_transit | Distance to nearest quality transit stop | 1000m |
-| prox_grocery | Distance to nearest grocery store | 1000m |
-| prox_negative_poi | Inverse density of nearby negative POIs | 500m |
-| prox_positive_poi | Density of nearby positive POIs | 1000m |
-
-### 2.2 No Double Counting
-
-The concern: if `grocery_density` (area score) AND `prox_grocery` (proximity score) both measure grocery access, is the score double-counting?
-
-**Answer: No, because they measure different things.**
-
-- `grocery_density` = "this DeSO has lots of grocery stores relative to its size" (area characteristic)
-- `prox_grocery` = "there's a Hemköp 340m from your front door" (personal convenience)
-
-A DeSO can have high grocery density overall but your specific corner might be 1.2km from the nearest one (far side of a large DeSO). The area score says "good neighborhood for groceries." The proximity score says "but not from YOUR spot."
-
-The weights handle this: area indicators get their weight within the 70% area budget, proximity factors get theirs within the 30% proximity budget. They're scored independently and combined at the end.
-
-### 2.3 Diagram
-
-```
-POI Table (137,170 POIs)
-    │
-    ├──→ Ingestion aggregation (per DeSO, batch job)
-    │       │
-    │       └──→ indicator_values: grocery_density = 15.1/km²
-    │            indicator_values: gambling_density = 0.3/km²
-    │            ... (8 area density indicators)
-    │            │
-    │            └──→ Area Score (70%)
-    │
-    └──→ Proximity query (per pin, on-the-fly)
-            │
-            └──→ ST_DWithin(pin, poi, radius)
-                 nearest grocery: 340m → score 0.66
-                 nearest transit: 180m → score 0.82
-                 ... (6 proximity factors)
-                 │
-                 └──→ Proximity Score (30%)
-
-Area Score × 0.70 + Proximity Score × 0.30 = Final Score
-```
-
----
-
-## Step 3: Per-School Data for Reports
-
-### 3.1 The Problem
-
-Current school indicators are DeSO averages:
-```
-school_merit_value_avg for DeSO 0180C1030 = 221.4
-```
-
-This is useless for an address-based report. The user needs:
-```
-Schools near Sveavägen 42:
-  Årstaskolan (grundskola, kommunal) — 450m — Meritvärde: 241
-  Eriksdalsskolan (grundskola, kommunal) — 1.2km — Meritvärde: 198
-  Södra Latin (grundskola, kommunal) — 1.8km — Meritvärde: 267
-```
-
-### 3.2 What We Already Have
-
-The `schools` table has coordinates and DeSO assignment. The `school_statistics` table has per-school meritvärde, goal achievement, teacher certification, student count. The Skolverket API provides this data. **The data is already there** — we just aggregate it to DeSO level and throw away the per-school detail in the scoring.
-
-### 3.3 What Needs to Change
-
-**For the area score:** Keep the DeSO-level school indicators (`school_merit_value_avg` etc.) — they're valid as area characteristics. "The average school quality in this neighborhood" is a reasonable area-level metric.
-
-**For the proximity score:** Replace the current `prox_school` (which is undefined / 0 coverage) with a real per-school proximity computation:
+Make the colors available to every page without extra API calls:
 
 ```php
-// ProximityScoreService — school factor
+// In HandleInertiaRequests middleware
 
-public function computeSchoolProximity(float $lat, float $lng, float $radiusM = 2000): array
+public function share(Request $request): array
 {
-    // Find all grundskolor within radius, ordered by distance
-    $schools = DB::select("
-        SELECT
-            s.school_unit_code,
-            s.name,
-            s.type_of_schooling,
-            s.operator_type,
-            ST_Distance(s.geom::geography, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography) as distance_m,
-            ss.merit_value_17,
-            ss.goal_achievement_pct,
-            ss.teacher_certification_pct,
-            ss.student_count
-        FROM schools s
-        LEFT JOIN school_statistics ss ON ss.school_unit_code = s.school_unit_code
-            AND ss.academic_year = (
-                SELECT MAX(academic_year) FROM school_statistics
-                WHERE school_unit_code = s.school_unit_code
-            )
-        WHERE s.type_of_schooling LIKE '%Grundskola%'
-          AND s.status = 'active'
-          AND ST_DWithin(s.geom::geography, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)
-        ORDER BY distance_m ASC
-    ", [$lng, $lat, $lng, $lat, $radiusM]);
-
-    if (empty($schools)) {
-        // No schools within radius — find the nearest one regardless of distance
-        $nearest = DB::selectOne("
-            SELECT
-                s.name,
-                ST_Distance(s.geom::geography, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography) as distance_m,
-                ss.merit_value_17
-            FROM schools s
-            LEFT JOIN school_statistics ss ON ss.school_unit_code = s.school_unit_code
-                AND ss.academic_year = (SELECT MAX(academic_year) FROM school_statistics WHERE school_unit_code = s.school_unit_code)
-            WHERE s.type_of_schooling LIKE '%Grundskola%'
-              AND s.status = 'active'
-              AND s.geom IS NOT NULL
-            ORDER BY s.geom::geography <-> ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography
-            LIMIT 1
-        ", [$lng, $lat, $lng, $lat]);
-
-        return [
-            'score' => 0.0,
-            'schools' => [],
-            'nearest' => $nearest,
-        ];
-    }
-
-    // Score: quality-weighted distance
-    // Best nearby school matters most — use the highest-quality school within radius
-    $bestMerit = collect($schools)->max('merit_value_17');
-    $nearestDistance = $schools[0]->distance_m;
-
-    // Distance decay + quality bonus
-    $distanceScore = max(0, 1 - ($nearestDistance / $radiusM));
-    $qualityScore = $bestMerit ? min(1, $bestMerit / 280) : 0.5; // 280 = "excellent"
-
-    $score = ($distanceScore * 0.6) + ($qualityScore * 0.4);
-
     return [
-        'score' => round($score, 3),
-        'schools' => collect($schools)->map(fn($s) => [
-            'name' => $s->name,
-            'type' => $s->type_of_schooling,
-            'operator' => $s->operator_type,
-            'distance_m' => round($s->distance_m),
-            'merit_value' => $s->merit_value_17,
-            'goal_achievement' => $s->goal_achievement_pct,
-            'teacher_certification' => $s->teacher_certification_pct,
-            'student_count' => $s->student_count,
-        ])->values()->all(),
+        ...parent::share($request),
+        'scoreColors' => config('score_colors'),
     ];
 }
 ```
 
-### 3.4 Skolverket Per-School Data Availability
+### 1.3 TypeScript Types
 
-**Can we query per-school statistics from the API?**
+```tsx
+// resources/js/types/score-colors.ts
 
-Yes. Both Skolverket APIs support per-school lookups:
-
-- **Skolenhetsregistret v2:** `GET /v2/school-units/{schoolUnitCode}` — metadata, location, type
-- **Planned Educations v3:** `GET /v3/school-units/{schoolUnitCode}` — statistics including meritvärde
-
-The `school_statistics` table already stores per-school data from these APIs. The ingestion command (`ingest:skolverket-stats`) fetches statistics per school unit code. **The per-school data is already in our database** — we just need to query it per-address instead of averaging it per-DeSO.
-
-**What if a school has no statistics?** Many schools have `merit_value_17 = NULL` (Skolverket suppresses data for small cohorts, <15 students). The report should show "Inga publicerade meritvärden" for these schools. Don't exclude them — a school with no published data is still a school parents might use.
-
-### 3.5 Report School Section
-
-The report should show:
-
+export interface ScoreColorConfig {
+    gradient_stops: Record<number, string>;
+    labels: Array<{
+        min: number;
+        max: number;
+        label_sv: string;
+        label_en: string;
+        color: string;
+    }>;
+    no_data: string;
+    no_data_border: string;
+    selected_border: string;
+    school_markers: {
+        high: string;
+        medium: string;
+        low: string;
+        no_data: string;
+    };
+    indicator_bar: {
+        good: string;
+        bad: string;
+        neutral: string;
+    };
+}
 ```
-🎓 SKOLOR NÄRA DIG
-
-Årstaskolan                                     450 m
-  Grundskola · Kommunal · 342 elever
-  Meritvärde: 241 (82:a percentilen)
-  Måluppfyllelse: 94%  Lärarbehörighet: 78%
-
-Eriksdalsskolan                                1.2 km
-  Grundskola · Kommunal · 289 elever
-  Meritvärde: 198 (34:e percentilen)
-  Måluppfyllelse: 81%  Lärarbehörighet: 85%
-
-Södra Latin                                    1.8 km
-  Grundskola · Kommunal · 521 elever
-  Meritvärde: 267 (96:e percentilen)
-  Måluppfyllelse: 98%  Lärarbehörighet: 92%
-
-Genomsnittligt meritvärde inom 2 km: 235 (72:a percentilen)
-Bästa skolan: Södra Latin (267, 1.8 km)
-```
-
-### 3.6 Keep DeSO Averages for Area Score
-
-Don't remove `school_merit_value_avg` from the area score. It serves a different purpose: "what's the general school quality level in this neighborhood?" It's valid as an area-level indicator and helps areas with many schools vs few schools compare fairly.
-
-The per-school data goes in the **report** and feeds the **proximity score**. The DeSO average stays in the **area score**. Different layers, different roles.
 
 ---
 
-## Step 4: Sidebar Teaser Update
+## Step 2: Frontend Utility — `scoreToColor()`
 
-### 4.1 Five Categories in the Teaser
+### 2.1 Interpolation Function
 
+Create a single utility that everything calls:
+
+```tsx
+// resources/js/lib/score-colors.ts
+
+import { usePage } from '@inertiajs/react';
+
+/**
+ * Linearly interpolate between two hex colors.
+ */
+function lerpColor(a: string, b: string, t: number): string {
+    const parse = (hex: string) => [
+        parseInt(hex.slice(1, 3), 16),
+        parseInt(hex.slice(3, 5), 16),
+        parseInt(hex.slice(5, 7), 16),
+    ];
+
+    const [r1, g1, b1] = parse(a);
+    const [r2, g2, b2] = parse(b);
+
+    const r = Math.round(r1 + (r2 - r1) * t);
+    const g = Math.round(g1 + (g2 - g1) * t);
+    const bl = Math.round(b1 + (b2 - b1) * t);
+
+    return `#${[r, g, bl].map(v => v.toString(16).padStart(2, '0')).join('')}`;
+}
+
+/**
+ * Convert a score (0–100) to a hex color using the config gradient stops.
+ * Falls back to hardcoded defaults if config isn't available.
+ */
+export function scoreToColor(
+    score: number | null | undefined,
+    stops?: Record<number, string>
+): string {
+    if (score == null) return '#d5d5d5'; // no_data gray
+
+    // Default stops if not provided
+    const gradientStops = stops ?? {
+        0: '#c0392b',
+        25: '#e74c3c',
+        40: '#f39c12',
+        50: '#f1c40f',
+        60: '#f1c40f',
+        75: '#27ae60',
+        100: '#1a7a2e',
+    };
+
+    const thresholds = Object.keys(gradientStops)
+        .map(Number)
+        .sort((a, b) => a - b);
+
+    const clamped = Math.max(0, Math.min(100, score));
+
+    // Find the two stops we're between
+    for (let i = 0; i < thresholds.length - 1; i++) {
+        const lo = thresholds[i];
+        const hi = thresholds[i + 1];
+        if (clamped >= lo && clamped <= hi) {
+            const t = (clamped - lo) / (hi - lo);
+            return lerpColor(gradientStops[lo], gradientStops[hi], t);
+        }
+    }
+
+    // Edge case: return last color
+    return gradientStops[thresholds[thresholds.length - 1]];
+}
+
+/**
+ * Get the score label for a given score.
+ */
+export function scoreToLabel(
+    score: number,
+    labels?: ScoreColorConfig['labels']
+): string {
+    const defaultLabels = [
+        { min: 80, max: 100, label_sv: 'Starkt tillväxtområde' },
+        { min: 60, max: 79,  label_sv: 'Stabil / positiv utsikt' },
+        { min: 40, max: 59,  label_sv: 'Blandade signaler' },
+        { min: 20, max: 39,  label_sv: 'Förhöjd risk' },
+        { min: 0,  max: 19,  label_sv: 'Hög risk / vikande' },
+    ];
+
+    const list = labels ?? defaultLabels;
+    const match = list.find(l => score >= l.min && score <= l.max);
+    return match?.label_sv ?? 'Okänt';
+}
+
+/**
+ * Get the color for a school marker based on meritvärde.
+ */
+export function meritToColor(
+    merit: number | null,
+    schoolColors?: ScoreColorConfig['school_markers']
+): string {
+    const colors = schoolColors ?? {
+        high: '#27ae60',
+        medium: '#f1c40f',
+        low: '#e74c3c',
+        no_data: '#999999',
+    };
+
+    if (merit == null) return colors.no_data;
+    if (merit > 230) return colors.high;
+    if (merit >= 200) return colors.medium;
+    return colors.low;
+}
+
+/**
+ * Get indicator bar color based on whether this indicator is helping or hurting.
+ */
+export function indicatorBarColor(
+    percentile: number,
+    direction: 'positive' | 'negative' | 'neutral',
+    barColors?: ScoreColorConfig['indicator_bar']
+): string {
+    const colors = barColors ?? {
+        good: '#27ae60',
+        bad: '#e74c3c',
+        neutral: '#94a3b8',
+    };
+
+    if (direction === 'neutral') return colors.neutral;
+
+    const isGood = direction === 'positive'
+        ? percentile >= 50
+        : percentile < 50;
+
+    return isGood ? colors.good : colors.bad;
+}
+
+/**
+ * Generate CSS gradient string for the legend bar.
+ */
+export function scoreGradientCSS(stops?: Record<number, string>): string {
+    const gradientStops = stops ?? {
+        0: '#c0392b',
+        25: '#e74c3c',
+        40: '#f39c12',
+        50: '#f1c40f',
+        60: '#f1c40f',
+        75: '#27ae60',
+        100: '#1a7a2e',
+    };
+
+    const parts = Object.entries(gradientStops)
+        .sort(([a], [b]) => Number(a) - Number(b))
+        .map(([pct, color]) => `${color} ${pct}%`);
+
+    return `linear-gradient(to right, ${parts.join(', ')})`;
+}
 ```
-🛡️ TRYGGHET & BROTTSLIGHET
 
-Upplevd trygghet           ▓▓▓▓▓▓▓▓░░  42:a
-Våldsbrott                 ▓▓░░░░░░░░  18:e
-████████                   ░░░░░░░░░░  ███
-████████████               ░░░░░░░░░░  ███
-🔒 + 6 indikatorer i rapporten
+### 2.2 React Hook for Easy Access
 
-Trygghetsbetyg baserat på brottsstatistik
-och polisens klassificering av utsatta områden.
+```tsx
+// resources/js/hooks/useScoreColors.ts
 
+import { usePage } from '@inertiajs/react';
+import type { ScoreColorConfig } from '@/types/score-colors';
 
-📊 EKONOMI & ARBETSMARKNAD
-
-Medianinkomst              ▓▓▓▓▓▓▓▓▓░  78:e
-Sysselsättningsgrad        ▓▓▓▓▓▓░░░░  61:a
-████████████████           ░░░░░░░░░░  ███
-████████████               ░░░░░░░░░░  ███
-🔒 + 4 indikatorer i rapporten
-
-Ekonomisk analys av inkomst, sysselsättning,
-skuldsättning och ekonomisk standard.
-
-
-🎓 UTBILDNING & SKOLOR
-
-Meritvärde (skolor)        ▓▓▓▓▓▓▓▓▓░  91:a
-Lärarbehörighet            ▓▓▓▓▓▓▓░░░  68:e
-████████████████████       ░░░░░░░░░░  ███
-🔒 + 3 indikatorer i rapporten
-🏫 3 skolor inom 2 km — detaljer i rapporten
-
-Skolanalys baserad på 7 507 grundskolor.
-
-
-🌳 MILJÖ & SERVICE
-
-Mataffärer                 ▓▓▓▓▓▓▓▓░░  71:a
-Kollektivtrafik            ▓▓▓▓▓▓▓▓▓░  82:a
-████████████               ░░░░░░░░░░  ███
-████████████████           ░░░░░░░░░░  ███
-🔒 + 3 indikatorer i rapporten
-
-Baserat på 137 170 kartlagda servicepunkter.
-
-
-📍 PLATSANALYS
-
-Din exakta adress analyserad — avstånd till
-närmaste skola, hållplats, park och mataffär.
-🔒 6 platsspecifika analyser i rapporten
+export function useScoreColors(): ScoreColorConfig {
+    const { scoreColors } = usePage().props as { scoreColors: ScoreColorConfig };
+    return scoreColors;
+}
 ```
 
-### 4.2 Free Preview Indicators — Updated Selection
+---
 
-| Category | Free 1 | Free 2 |
+## Step 3: Find and Replace All Color Consumers
+
+### 3.1 Map Polygon Styling (OpenLayers)
+
+The `DesoMap.tsx` component (or equivalent) currently has a `scoreToColor` function or inline color logic. Replace with the centralized import:
+
+```tsx
+// BEFORE (scattered, hardcoded purple-green)
+const fill = someLocalScoreToColor(score); // or inline hex interpolation
+
+// AFTER
+import { scoreToColor } from '@/lib/score-colors';
+const fill = scoreToColor(score);
+```
+
+### 3.2 Score Card / Badge in Sidebar
+
+The sidebar score number is colored by the same scale. Currently may have its own color logic:
+
+```tsx
+// BEFORE
+<span style={{ color: getScoreColor(score) }}>38</span>
+
+// AFTER
+import { scoreToColor } from '@/lib/score-colors';
+<span style={{ color: scoreToColor(score) }}>38</span>
+```
+
+### 3.3 Score Labels
+
+```tsx
+// BEFORE
+function getLabel(score) { /* hardcoded ranges */ }
+
+// AFTER
+import { scoreToLabel } from '@/lib/score-colors';
+const label = scoreToLabel(score);
+```
+
+### 3.4 School Markers
+
+```tsx
+// BEFORE
+const markerColor = merit > 230 ? 'green' : merit > 200 ? 'yellow' : 'orange';
+
+// AFTER
+import { meritToColor } from '@/lib/score-colors';
+const markerColor = meritToColor(merit);
+```
+
+### 3.5 Indicator Bars (Sidebar + Report)
+
+```tsx
+// BEFORE
+const barColor = isGood ? 'bg-emerald-500' : 'bg-amber-500';
+
+// AFTER
+import { indicatorBarColor } from '@/lib/score-colors';
+const barColor = indicatorBarColor(percentile, direction);
+// Use as inline style: style={{ backgroundColor: barColor }}
+```
+
+### 3.6 Legend Component
+
+```tsx
+// BEFORE
+<div style={{ background: 'linear-gradient(to right, #4a0072, #9c1d6e, #f0c040, #6abf4b, #1a7a2e)' }} />
+
+// AFTER
+import { scoreGradientCSS } from '@/lib/score-colors';
+<div style={{ background: scoreGradientCSS() }} />
+```
+
+Legend labels update too:
+```tsx
+// BEFORE
+<span>High Risk</span> [purple] ———— [yellow] ———— [green] <span>Strong Growth</span>
+
+// AFTER
+<span>Hög risk</span> [red] ———— [yellow] ———— [green] <span>Stark tillväxt</span>
+```
+
+### 3.7 Backend: ScoringService / Score Labels
+
+If the PHP backend generates score labels (e.g., for API responses):
+
+```php
+// BEFORE (hardcoded somewhere in ScoringService or a helper)
+function scoreLabel(float $score): string {
+    return match(true) {
+        $score >= 80 => 'Strong Growth Area',
+        // ...
+    };
+}
+
+// AFTER — read from config
+function scoreLabel(float $score): string {
+    $labels = config('score_colors.labels');
+    foreach ($labels as $label) {
+        if ($score >= $label['min'] && $score <= $label['max']) {
+            return $label['label_sv'];
+        }
+    }
+    return 'Okänt';
+}
+```
+
+### 3.8 Admin Dashboard
+
+If the admin page shows score previews or indicator colors, update to use the same config. The weight allocation bar and any color previews should read from `scoreColors` shared prop.
+
+---
+
+## Step 4: Update Documentation
+
+### 4.1 project-context.md
+
+Replace the Client-Facing Labels table:
+
+```markdown
+| Score | Label | Color |
 |---|---|---|
-| Safety | Upplevd trygghet (NTU) | Våldsbrott |
-| Economy | Medianinkomst | Sysselsättningsgrad |
-| Education | Meritvärde (skolor) | Lärarbehörighet |
-| Environment | Mataffärer | Kollektivtrafik |
-| Proximity | *(No free values — the whole point is pin-specific detail)* | |
-
-Proximity gets no free values because the entire category is the upsell — "we analyzed YOUR exact address." Showing a proximity value for free undermines the report's unique selling point.
-
-### 4.3 CTA Summary — Updated
-
-```
-🔒 Se alla värden
-
-30 indikatorer med exakta värden och percentiler
-6 platsspecifika närhetsanalyser
-3 skolor med meritvärden och avstånd
-
-Lås upp — 79 kr
-Engångsköp · Ingen prenumeration
+| 80–100 | Starkt tillväxtområde | Deep Green (#1a7a2e) |
+| 60–79 | Stabil / positiv utsikt | Green (#27ae60) |
+| 40–59 | Blandade signaler | Yellow (#f1c40f) |
+| 20–39 | Förhöjd risk | Red (#e74c3c) |
+| 0–19 | Hög risk / vikande | Deep Red (#c0392b) |
 ```
 
-Note: "30 indikatorer" not "33" — the 3 contextual ones (foreign_background, population, rental_tenure) are excluded from the user-facing count.
+### 4.2 CLAUDE.md
+
+Add to best practices:
+
+```markdown
+## Score Colors
+
+All score colors are defined in `config/score_colors.php` — the single source of truth.
+Frontend reads from Inertia shared props. Use `scoreToColor()` from `@/lib/score-colors.ts`.
+Never hardcode hex values for score-related colors in components.
+Palette: red (#c0392b) → amber (#f39c12) → yellow (#f1c40f) → green (#1a7a2e).
+```
 
 ---
 
-## Step 5: Admin Dashboard Updates
+## Step 5: Grep Audit
 
-### 5.1 Group Indicators by New Categories
+Run this to find any remaining hardcoded purple-green colors:
 
-The admin indicator table should group by the 5 display categories + contextual. Each group shows:
+```bash
+# Old palette hex codes that should no longer appear in source files
+grep -rn '#4a0072\|#9c1d6e\|#f0c040\|#6abf4b' resources/js/ app/ --include='*.tsx' --include='*.ts' --include='*.php' --include='*.vue'
 
+# Also search for any local scoreToColor/getScoreColor that isn't the centralized one
+grep -rn 'scoreToColor\|getScoreColor\|score.*color\|color.*score' resources/js/ --include='*.tsx' --include='*.ts'
 ```
-🛡️ Trygghet & brottslighet  8 indicators · 5 active · weight: 25%
-▼ Economy & arbetsmarknad   6 indicators · 6 active · weight: 20%
-  ...
-▼ Kontextuell              3 indicators · weight: 0% (ej visad)
-```
 
-### 5.2 Category Summary Row
-
-Each category header shows total weight allocation for that category. This replaces the old single weight bar with a per-category breakdown.
-
----
-
-## Step 6: Weight Rebalancing
-
-With the new categories, suggested weights:
-
-| Category | Indicators | Total Weight | Notes |
-|---|---|---|---|
-| **Safety** | violent_crime (0.06), property_crime (0.045), total_crime (0.025), vulnerability (0.095), perceived_safety (0.045), gambling (0.02), pawn_shop (0.01), fast_food (0.01) | **25%** | Biggest driver of "would I live here?" |
-| **Economy** | median_income (0.065), low_economic_standard (0.04), employment (0.055), debt_rate (0.05), eviction_rate (0.03), median_debt (0.02) | **20%** | Financial health of the area |
-| **Education** | post_secondary (0.038), below_secondary (0.022), merit_value (0.07), goal_achievement (0.045), teacher_certification (0.035) | **15%** | School quality + education level |
-| **Environment** | grocery (0.04), healthcare (0.03), restaurant (0.02), fitness (0.02), transit_stop (0.04) | **10%** | Service level of the area |
-| **Proximity** | school (0.10), green_space (0.04), transit (0.05), grocery (0.03), negative_poi (0.04), positive_poi (0.04) | **30%** | Pin-specific. This IS the product differentiator |
-| **Contextual** | foreign_background, population, rental_tenure | **0%** | Internal model inputs, not scored |
-
-Total: 100%
-
----
-
-## Implementation Order
-
-This task is a specification. Implementation should happen in this order:
-
-### Phase A: Category Reorganization (Backend)
-1. Run the category migration (update all indicator categories)
-2. Update `config/display_categories.php`
-3. Update admin dashboard to use new groupings
-4. Update free preview indicator selection
-5. Update sidebar teaser to show 5 categories
-
-### Phase B: POI Architecture Clarification (Backend)
-1. Document the dual role clearly in code comments and CLAUDE.md
-2. Verify area density indicators are computed correctly per DeSO
-3. Verify proximity indicators reference the same POI table
-4. No structural code change needed — the architecture is sound, it just needs documentation
-
-### Phase C: Per-School Proximity (Backend + Frontend)
-1. Implement `ProximityScoreService::computeSchoolProximity()`
-2. Update the report data structure to include per-school details
-3. Update the proximity score computation to use real school data
-4. Test: schools near pin should include schools from neighboring DeSOs
-
-### Phase D: Weight Rebalancing
-1. Update indicator weights via seeder/migration
-2. Recompute all scores
-3. Verify sanity (Danderyd green, Rinkeby purple)
+Every match should either be the centralized utility or an import of it. Nothing else.
 
 ---
 
 ## Verification
 
-### Category Reorg
-- [ ] All 33 indicators assigned to one of 6 categories (safety, economy, education, environment, proximity, contextual)
-- [ ] No orphaned indicators (every slug in the mapping)
-- [ ] Admin dashboard groups by new categories
-- [ ] Sidebar teaser shows 5 categories (not contextual)
-- [ ] CTA says "30 indikatorer" (excluding 3 contextual)
+### Visual
+- [ ] Map uses red→yellow→green gradient (no purple anywhere)
+- [ ] Legend shows red→green with Swedish labels
+- [ ] Sidebar score badge colored by the same scale
+- [ ] School markers use red/yellow/green (not orange)
+- [ ] Indicator bars use green (good) / red (bad) / gray (neutral)
+- [ ] No-data DeSOs are gray with dashed border (unchanged)
 
-### POI Architecture
-- [ ] Area density indicators (grocery_density etc.) are computed per DeSO — same value for all pins in a DeSO
-- [ ] Proximity factors (prox_grocery etc.) are computed per pin — different values for different addresses
-- [ ] No double-counting in the composite score (area 70% + proximity 30%)
+### Code
+- [ ] `config/score_colors.php` exists and is the only place colors are defined
+- [ ] `scoreColors` available in Inertia shared props on every page
+- [ ] `@/lib/score-colors.ts` exports: `scoreToColor`, `scoreToLabel`, `meritToColor`, `indicatorBarColor`, `scoreGradientCSS`
+- [ ] No old purple hex codes (#4a0072, #9c1d6e) remain in any source file
+- [ ] Backend `scoreLabel()` reads from config, not hardcoded match
 
-### Per-School Data
-- [ ] Report includes individual schools within radius, not DeSO averages
-- [ ] Schools from neighboring DeSOs appear if within radius
-- [ ] Schools with no meritvärde data show "Inga publicerade meritvärden"
-- [ ] "No schools within 2km" case shows nearest school with distance
-
-### Weights
-- [ ] Total active weights = 1.0
-- [ ] Per-category totals match the table above (±0.01)
-- [ ] Score recomputation passes sanity checks
+### Consistency
+- [ ] Same score produces same color everywhere: map, sidebar, legend, report, admin
+- [ ] Changing a color in `config/score_colors.php` propagates to all consumers after refresh
 
 ---
 
 ## What NOT to Do
 
-- **DO NOT delete the DeSO-level school indicators.** They're valid area-level metrics. Add per-school proximity ON TOP, don't replace.
-- **DO NOT expose `foreign_background_pct` in any user-facing category.** It stays `contextual` with weight 0. Used internally for the disaggregation model, never shown to users.
-- **DO NOT count contextual indicators in user-facing numbers.** "30 indikatorer" not "33". The user doesn't care about population count.
-- **DO NOT create a "Social" or "Demographics" display category.** Mixing foreign background + debt + income under a social label is legally and ethically fraught in Sweden. Economy handles the financial indicators. Demographics stays internal.
-- **DO NOT rename `category` column values in a way that breaks existing code.** Check all references to old category names (income, employment, financial_distress, amenities, transport, demographics, housing, crime) before running the migration.
+- **DO NOT use pure red (#ff0000) and pure green (#00ff00).** Those are ugly and inaccessible to colorblind users. Use warm reds and muted greens.
+- **DO NOT keep any score color hex values outside the config file.** If a component needs a score color, it imports from the utility. No exceptions.
+- **DO NOT forget the backend.** PHP helpers that generate labels or colors for API responses must also read from the config.
+- **DO NOT add Tailwind color classes for score colors.** Score colors are dynamic (interpolated), so they must use inline `style={{ color: ... }}` or CSS custom properties, not static Tailwind classes like `bg-red-500`.
+- **DO NOT make the yellow band too wide.** A map that's mostly yellow is uninformative. The gradient should transition smoothly so you can visually distinguish a 35 from a 55.

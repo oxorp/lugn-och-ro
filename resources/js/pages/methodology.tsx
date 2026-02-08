@@ -97,28 +97,28 @@ const SCORE_RANGES = [
     {
         range: '60\u201379',
         label: 'Stable / Positive Outlook',
-        color: '#6abf4b',
+        color: '#27ae60',
         description:
             'Solid fundamentals with some areas of strength. Generally desirable and trending in a positive direction.',
     },
     {
         range: '40\u201359',
         label: 'Mixed Signals',
-        color: '#f0c040',
+        color: '#f1c40f',
         description:
             'Some strengths, some concerns. These areas may be transitioning \u2014 either improving or facing early signs of decline. Worth investigating closely.',
     },
     {
         range: '20\u201339',
         label: 'Elevated Risk',
-        color: '#9c1d6e',
+        color: '#e74c3c',
         description:
             'Multiple concerning signals across several factors. These areas may face declining demand or structural challenges.',
     },
     {
         range: '0\u201319',
         label: 'High Risk / Declining',
-        color: '#4a0072',
+        color: '#c0392b',
         description:
             'Significant challenges across most measured factors. High uncertainty about the area\u2019s near-term trajectory.',
     },
@@ -247,7 +247,7 @@ export default function Methodology() {
                                 className="my-2 rounded-xl px-8 py-4 text-center text-white"
                                 style={{
                                     background:
-                                        'linear-gradient(135deg, #4a0072, #9c1d6e, #f0c040, #6abf4b, #1a7a2e)',
+                                        'linear-gradient(135deg, #c0392b, #e74c3c, #f39c12, #f1c40f, #27ae60, #1a7a2e)',
                                 }}
                             >
                                 <p className="text-2xl font-bold">0 &ndash; 100</p>

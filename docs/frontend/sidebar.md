@@ -47,7 +47,7 @@ The main score card shows:
 └──────────────────────────────────────┘
 ```
 
-- Score badge is color-matched to the purple→green gradient
+- Score badge is color-matched to the red→green gradient (`config/score_colors.php`)
 - Trend arrow shows 1-year change (if available)
 - Area vs proximity sub-scores shown below the label
 

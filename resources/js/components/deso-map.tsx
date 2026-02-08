@@ -25,48 +25,10 @@ import {
 } from 'react';
 
 import { useTranslation } from '@/hooks/use-translation';
+import { meritToColor, scoreGradientCSS } from '@/lib/score-colors';
 import { getPoiMarkerDataUrl, hasIcon } from '@/lib/poi-icons';
 
 import 'ol/ol.css';
-
-// Color stops: purple(0) -> red-purple(25) -> yellow(50) -> light-green(75) -> deep-green(100)
-const COLOR_STOPS = [
-    { score: 0, r: 74, g: 0, b: 114 },
-    { score: 25, r: 156, g: 29, b: 110 },
-    { score: 50, r: 240, g: 192, b: 64 },
-    { score: 75, r: 106, g: 191, b: 75 },
-    { score: 100, r: 26, g: 122, b: 46 },
-];
-
-function interpolateColor(score: number): [number, number, number] {
-    const s = Math.max(0, Math.min(100, score));
-    let lower = COLOR_STOPS[0];
-    let upper = COLOR_STOPS[COLOR_STOPS.length - 1];
-
-    for (let i = 0; i < COLOR_STOPS.length - 1; i++) {
-        if (s >= COLOR_STOPS[i].score && s <= COLOR_STOPS[i + 1].score) {
-            lower = COLOR_STOPS[i];
-            upper = COLOR_STOPS[i + 1];
-            break;
-        }
-    }
-
-    const t =
-        upper.score === lower.score
-            ? 0
-            : (s - lower.score) / (upper.score - lower.score);
-
-    return [
-        Math.round(lower.r + (upper.r - lower.r) * t),
-        Math.round(lower.g + (upper.g - lower.g) * t),
-        Math.round(lower.b + (upper.b - lower.b) * t),
-    ];
-}
-
-export function interpolateScoreColor(score: number): string {
-    const [r, g, b] = interpolateColor(score);
-    return `rgb(${r}, ${g}, ${b})`;
-}
 
 export interface SchoolMarker {
     name: string;
@@ -134,13 +96,6 @@ function createBasemapSource(type: BasemapType): OSM | XYZ {
     }
 }
 
-function schoolMarkerColor(merit: number | null): string {
-    if (merit === null) return '#94a3b8';
-    if (merit > 230) return '#22c55e';
-    if (merit >= 200) return '#eab308';
-    return '#f97316';
-}
-
 function ScoreLegend() {
     const { t } = useTranslation();
 
@@ -148,10 +103,7 @@ function ScoreLegend() {
         <div className="absolute bottom-6 left-6 z-10 rounded-lg border border-border bg-background/90 px-3 py-2 backdrop-blur-sm">
             <div
                 className="mb-1 h-2 w-48 rounded-sm"
-                style={{
-                    background:
-                        'linear-gradient(to right, #4a0072, #9c1d6e, #f0c040, #6abf4b, #1a7a2e)',
-                }}
+                style={{ background: scoreGradientCSS() }}
             />
             <div className="flex justify-between text-[11px] text-muted-foreground">
                 <span>{t('map.legend.high_risk')}</span>
@@ -274,7 +226,7 @@ const HeatmapMap = forwardRef<HeatmapMapHandle, HeatmapMapProps>(function Heatma
                         merit_value: s.merit_value,
                     });
 
-                    const fillColor = schoolMarkerColor(s.merit_value);
+                    const fillColor = meritToColor(s.merit_value);
 
                     const dataUrl = getPoiMarkerDataUrl('graduation-cap', fillColor, iconSize);
                     if (dataUrl) {

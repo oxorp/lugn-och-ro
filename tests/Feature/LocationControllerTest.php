@@ -199,12 +199,13 @@ class LocationControllerTest extends TestCase
         // Blended = area * 0.70 + proximity * 0.30
         // With no POIs/schools, proximity ≈ 0 (negative POI gives 100, but weighted low)
         // So we need area scores high enough that blended still crosses thresholds.
-        // Labels: <20 Hög risk, 20-39 Förhöjd risk, 40-59 Blandat, 60-79 Stabilt, 80+ Starkt
+        // Labels from config/score_colors.php:
+        // <20 Hög risk / vikande, 20-39 Förhöjd risk, 40-59 Blandade signaler, 60-79 Stabil / positiv utsikt, 80+ Starkt tillväxtområde
         $cases = [
-            [5.0, 'Hög risk'],         // blended ≈ 5*0.70 + ~5*0.30 ≈ 5
-            [35.0, 'Förhöjd risk'],     // blended ≈ 35*0.70 + ~5*0.30 ≈ 26
-            [65.0, 'Blandat'],          // blended ≈ 65*0.70 + ~5*0.30 ≈ 47
-            [90.0, 'Stabilt / Positivt'], // blended ≈ 90*0.70 + ~5*0.30 ≈ 65
+            [5.0, 'Hög risk / vikande'],           // blended ≈ 5*0.70 + ~5*0.30 ≈ 5
+            [35.0, 'Förhöjd risk'],                 // blended ≈ 35*0.70 + ~5*0.30 ≈ 26
+            [65.0, 'Blandade signaler'],             // blended ≈ 65*0.70 + ~5*0.30 ≈ 47
+            [90.0, 'Stabil / positiv utsikt'],       // blended ≈ 90*0.70 + ~5*0.30 ≈ 65
         ];
 
         foreach ($cases as [$score, $expectedLabel]) {

@@ -74,15 +74,16 @@ Gaussian blur creates a smooth continuous gradient:
 
 ### Color Scale
 
-Same purple→green gradient as the interactive map:
+Same red→green gradient as the interactive map (defined in `config/score_colors.php`):
 
-| Score | Color Description |
-|---|---|
-| 0 | Deep purple |
-| 25 | Magenta |
-| 50 | Yellow-orange |
-| 75 | Green-yellow |
-| 100 | Deep green |
+| Score | Color Description | Hex |
+|---|---|---|
+| 0 | Deep red | `#c0392b` |
+| 25 | Red | `#e74c3c` |
+| 40 | Amber | `#f39c12` |
+| 50 | Yellow | `#f1c40f` |
+| 75 | Green | `#27ae60` |
+| 100 | Deep green | `#1a7a2e` |
 
 ### Coverage
 

@@ -211,12 +211,12 @@ class CompareController extends Controller
 
     private function scoreLabel(float $score): string
     {
-        return match (true) {
-            $score >= 80 => 'Strong Growth',
-            $score >= 60 => 'Positive Outlook',
-            $score >= 40 => 'Mixed Signals',
-            $score >= 20 => 'Challenging',
-            default => 'High Risk',
-        };
+        foreach (config('score_colors.labels') as $label) {
+            if ($score >= $label['min'] && $score <= $label['max']) {
+                return $label['label_sv'];
+            }
+        }
+
+        return 'Okänt';
     }
 }

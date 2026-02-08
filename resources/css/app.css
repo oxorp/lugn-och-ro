@@ -60,9 +60,10 @@
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-ring: var(--sidebar-ring);
 
-    /* Score gradient — the most important colors in the system */
+    /* Score gradient — canonical colors in config/score_colors.php */
     --color-score-0: var(--score-0);
     --color-score-25: var(--score-25);
+    --color-score-40: var(--score-40);
     --color-score-50: var(--score-50);
     --color-score-75: var(--score-75);
     --color-score-100: var(--score-100);
@@ -125,11 +126,12 @@
     --sidebar-border: hsl(215 16% 90%);
     --sidebar-ring: hsl(217 91% 60%);
 
-    /* Score gradient — identical everywhere (map, sidebar, legend) */
-    --score-0: hsl(280 100% 22%);           /* #4a0072 — Deep purple */
-    --score-25: hsl(330 70% 36%);           /* #9c1d6e — Red-purple */
-    --score-50: hsl(45 85% 60%);            /* #f0c040 — Warm yellow */
-    --score-75: hsl(100 50% 52%);           /* #6abf4b — Light green */
+    /* Score gradient — canonical colors in config/score_colors.php */
+    --score-0: hsl(6 63% 46%);              /* #c0392b — Deep red */
+    --score-25: hsl(6 78% 57%);             /* #e74c3c — Red */
+    --score-40: hsl(36 90% 51%);            /* #f39c12 — Amber */
+    --score-50: hsl(48 89% 50%);            /* #f1c40f — Yellow */
+    --score-75: hsl(145 63% 42%);           /* #27ae60 — Green */
     --score-100: hsl(140 65% 29%);          /* #1a7a2e — Deep green */
 
     /* Trend indicators */

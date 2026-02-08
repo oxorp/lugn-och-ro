@@ -136,6 +136,13 @@ Read `data_pipeline_specification.md` for full business context, data sources, a
 - `/admin/indicators/{indicator}` — Update indicator weight/direction
 - `/admin/recompute` — Re-normalize and recompute all scores
 
+## Score Colors
+
+All score colors are defined in `config/score_colors.php` — the single source of truth.
+Frontend reads from Inertia shared props (`scoreColors`). Use `scoreToColor()` from `@/lib/score-colors.ts`.
+Never hardcode hex values for score-related colors in components.
+Palette: red (#c0392b) -> amber (#f39c12) -> yellow (#f1c40f) -> green (#1a7a2e).
+
 ## Normalization Rules
 - Socioeconomic indicators (income, employment, education, crime, debt): **national** percentile rank
 - Amenity/access indicators (POI density, transit, healthcare): **urbanity-stratified** percentile rank
