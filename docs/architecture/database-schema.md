@@ -270,6 +270,8 @@ Category definitions for POI types.
 | `slug` | varchar, unique | Category identifier |
 | `name` | varchar | Display name |
 | `signal` | varchar | `positive`, `negative`, `neutral` |
+| `safety_sensitivity` | decimal(4,2) | Safety modulation strength (0.0–1.5, default 1.0) |
+| `catchment_km` | decimal | Scoring radius in km |
 | `icon` | varchar | Icon identifier |
 | `color` | varchar | Display color |
 | `indicator_slug` | varchar | Associated indicator |

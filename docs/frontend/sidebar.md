@@ -29,10 +29,10 @@ Shown after a pin drop or search result selection. Fetches data from `GET /api/l
 1. **Location header** — Reverse-geocoded address name (via Photon/Komoot), kommun, close button
 2. **Blended score card** — Large colored score badge (0–100), trend arrow, score label
 3. **Score breakdown** — Area score vs proximity score as sub-values
-4. **Proximity Analysis** — Per-factor bars with icons (paid tiers only)
+4. **Proximity Analysis** — Safety zone badge + per-factor bars with icons (paid tiers only)
 5. **Indicator Breakdown** — All area-level indicators with percentile bars (paid tiers only)
-6. **Schools** — Nearby schools within 1.5 km with merit values and distance (paid tiers only)
-7. **POIs** — Nearby POI counts by category with color dots (paid tiers only)
+6. **Schools** — Nearby schools within urbanity-tiered radius (1.5–3.5 km) with merit values and distance (paid tiers only)
+7. **POIs** — Nearby POI counts by category with color dots, urbanity-tiered radius (1–2.5 km) (paid tiers only)
 
 ### Score Card
 
@@ -75,6 +75,20 @@ Each factor shows an icon, name, 0–100 score bar, and detail line:
 | Positive POIs | Sparkles | Count of nearby positive amenities |
 
 For negative POI factor, score 100 = good (no negatives nearby). The detail shows "No negative POIs nearby" or "3 within 500m".
+
+### Safety Zone Badge
+
+Next to the "Proximity Analysis" heading, a colored badge shows the area's safety context:
+
+| Level | Badge Color | Meaning |
+|---|---|---|
+| High (> 0.65) | Green | No safety penalty on distances |
+| Medium (0.35–0.65) | Yellow | Moderate distance inflation |
+| Low (< 0.35) | Red | Significant distance inflation |
+
+When safety is medium or low, an orange warning note explains that effective distances are longer than physical distances due to safety concerns.
+
+Each factor's distance display shows both physical and effective distance when they differ (e.g., "320m (eff. 378m)").
 
 ### Indicator Bars
 

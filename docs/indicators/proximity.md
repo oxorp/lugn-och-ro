@@ -16,51 +16,147 @@ Proximity indicators are fundamentally different from area-level indicators:
 
 Two addresses in the same DeSO can have different proximity scores based on what's walkable from each location.
 
-## Service
+## Services
 
-**File**: `app/Services/ProximityScoreService.php`
+**`ProximityScoreService`** (`app/Services/ProximityScoreService.php`) — Computes 6 proximity factors for any `(lat, lng)` coordinate using PostGIS spatial queries, with safety-modulated distance decay.
 
-The service computes 6 proximity factors for any `(lat, lng)` coordinate using PostGIS spatial queries.
+**`SafetyScoreService`** (`app/Services/SafetyScoreService.php`) — Computes a 0.0–1.0 safety score per DeSO from crime/safety indicators and socioeconomic proxies. Used to modulate proximity distances.
+
+## Safety-Modulated Distance Decay
+
+Physical distance alone doesn't capture walkability. A park 500m away in a high-crime area provides less real value than the same park in a safe neighborhood. The proximity system handles this through **safety modulation**.
+
+### How It Works
+
+1. `SafetyScoreService` computes a 0.0 (worst) to 1.0 (safest) score for the pin's DeSO
+2. Each POI category has a `safety_sensitivity` value (0.0–1.5) controlling how much safety affects its score
+3. Physical distance is inflated into an "effective distance" before decay:
+
+```
+risk_penalty = (1.0 - safety_score) × safety_sensitivity
+effective_distance = physical_distance × (1.0 + risk_penalty)
+decay = max(0, 1 - effective_distance / max_distance)
+```
+
+### Example
+
+A park 500m away with `safety_sensitivity = 1.0`:
+- **Safe area** (safety = 0.90): effective = 500 × 1.10 = **550m** → decay 0.45
+- **Unsafe area** (safety = 0.15): effective = 500 × 1.85 = **925m** → decay 0.08
+
+### Safety Sensitivity by Category
+
+| Sensitivity | Categories | Rationale |
+|---|---|---|
+| 0.0 | All negative-signal POIs | Badness doesn't increase with area risk |
+| 0.3 | Grocery, pharmacy, healthcare | Necessities — people go regardless |
+| 0.5 | Public transport | Fixed schedule, other passengers around |
+| 0.8 | Schools, libraries, swimming | Medium — kids walk there daily |
+| 1.0 | Parks, fitness, nature reserves | Standard discretionary outdoor |
+| 1.2 | Restaurants | Discretionary, often evening visits |
+| 1.5 | Cultural venues, nightclubs | Highest — nightlife is most safety-sensitive |
+
+### Safety Score Signals
+
+The `SafetyScoreService` uses 7 indicators with weight redistribution:
+
+| Indicator | Weight | Inverted | Type |
+|---|---|---|---|
+| `crime_violent_rate` | 0.25 | Yes | Direct crime |
+| `perceived_safety` | 0.20 | No | Direct safety |
+| `vulnerability_flag` | 0.20 | Yes | Direct crime |
+| `crime_total_rate` | 0.10 | Yes | Direct crime |
+| `employment_rate` | 0.10 | No | Socioeconomic proxy |
+| `low_economic_standard_pct` | 0.10 | Yes | Socioeconomic proxy |
+| `education_below_secondary_pct` | 0.05 | Yes | Socioeconomic proxy |
+
+Direct crime/safety signals account for 75%, socioeconomic proxies 25%. Cached for 10 minutes per DeSO.
+
+### Safety Zones
+
+The API response includes a human-readable safety zone:
+
+| Safety Score | Level | Label |
+|---|---|---|
+| > 0.65 | `high` | Hög |
+| 0.35–0.65 | `medium` | Medel |
+| < 0.35 | `low` | Låg |
+
+## Urbanity-Tiered Radii
+
+All scoring radii adapt to the DeSO's urbanity tier. Urban areas use stricter (shorter) radii because amenities are expected to be closer. Rural areas use wider radii to avoid penalizing inherently sparse settlement patterns.
+
+**Config file**: `config/proximity.php`
+
+### Scoring Radii
+
+| Factor | Urban | Semi-Urban | Rural |
+|---|---|---|---|
+| School | 1,500 m | 2,000 m | 3,500 m |
+| Green Space | 1,000 m | 1,500 m | 2,500 m |
+| Transit | 800 m | 1,200 m | 2,500 m |
+| Grocery | 800 m | 1,200 m | 2,000 m |
+| Negative POI | 400 m | 500 m | 500 m |
+| Positive POI | 800 m | 1,000 m | 1,500 m |
+
+### Query Radii (LocationController)
+
+Used for fetching nearby schools and POIs to display in the sidebar (separate from scoring):
+
+| Data | Urban | Semi-Urban | Rural |
+|---|---|---|---|
+| Schools | 1,500 m | 2,000 m | 3,500 m |
+| POIs | 1,000 m | 1,500 m | 2,500 m |
+
+### Display Radius
+
+The visual circle drawn on the map around the pin:
+
+| Tier | Radius |
+|---|---|
+| Urban | 1,500 m |
+| Semi-Urban | 2,000 m |
+| Rural | 3,500 m |
 
 ## Factors
 
 ### `prox_school` — School Proximity & Quality
 
-**Weight**: 0.10 | **Radius**: 2 km | **Direction**: positive
+**Weight**: 0.10 | **Direction**: positive
+**Radius**: 1,500 m (urban) / 2,000 m (semi-urban) / 3,500 m (rural)
 
-Finds up to 5 grundskolor within 2 km and scores the best school by quality × distance decay.
+Finds up to 5 grundskolor within the tier-appropriate radius and scores the best school by quality × safety-modulated distance decay.
 
 **Scoring**:
 ```
-quality = (merit_value - 150) / 130   # normalized 0-1
-decay = 1 - (distance_m / 2000)       # linear decay
-score = quality × decay × 100         # 0-100
+quality = (merit_value - 150) / 130                               # normalized 0-1
+decay = decayWithSafety(distance, maxDistance, safety, 0.80)      # safety-modulated
+score = quality × decay × 100                                     # 0-100
 ```
 
 - If no schools have merit data, half credit (50 × decay) is given for proximity alone
 - Only grundskolor are considered (ILIKE `'%grundskola%'`)
+- Safety sensitivity: 0.80 (from `school_grundskola` category)
 
-**Details returned**: nearest school name, merit value, distance, count within 2 km
+**Details returned**: nearest school name, merit value, distance, effective distance, schools found
 
 ### `prox_green_space` — Green Space Access
 
-**Weight**: 0.04 | **Radius**: 1 km | **Direction**: positive
+**Weight**: 0.04 | **Direction**: positive
+**Radius**: 1,000 m (urban) / 1,500 m (semi-urban) / 2,500 m (rural)
 
-Distance to nearest park or nature reserve.
+Distance to nearest park or nature reserve, safety-modulated (sensitivity 1.0).
 
-**Scoring**:
-```
-decay = 1 - (distance_m / 1000)
-score = decay × 100
-```
+**Scoring**: Safety-modulated linear decay against tier-appropriate radius.
 
 **Source**: POIs with category `park` or `nature_reserve`
 
 ### `prox_transit` — Transit Access
 
-**Weight**: 0.05 | **Radius**: 1 km | **Direction**: positive
+**Weight**: 0.05 | **Direction**: positive
+**Radius**: 800 m (urban) / 1,200 m (semi-urban) / 2,500 m (rural)
 
-Nearest transit stop with mode weighting and count bonus.
+Nearest transit stop with mode weighting, safety-modulated decay (sensitivity 0.50), and count bonus.
 
 **Scoring**:
 ```
@@ -69,8 +165,8 @@ rail/station: 1.5×
 tram_stop: 1.2×
 bus/default: 1.0×
 
-# Best stop score
-base = (1 - distance_m / 1000) × mode_weight
+# Best stop score (safety-modulated decay)
+base = decayWithSafety(distance, maxDistance, safety, 0.50) × mode_weight
 
 # Count bonus (max 20%)
 bonus = min(0.20, stop_count × 0.02)
@@ -78,46 +174,49 @@ bonus = min(0.20, stop_count × 0.02)
 score = min(100, (base + bonus) × 100)
 ```
 
-**Details returned**: nearest stop name, type, distance, count within 1 km
+**Details returned**: nearest stop name, type, distance, effective distance, count within radius
 
 ### `prox_grocery` — Grocery Access
 
-**Weight**: 0.03 | **Radius**: 1 km | **Direction**: positive
+**Weight**: 0.03 | **Direction**: positive
+**Radius**: 800 m (urban) / 1,200 m (semi-urban) / 2,000 m (rural)
 
-Distance to nearest grocery store.
+Distance to nearest grocery store, safety-modulated (sensitivity 0.30).
 
-**Scoring**: Same linear decay as green space.
+**Scoring**: Safety-modulated linear decay against tier-appropriate radius.
 
-**Details returned**: nearest store name, distance
+**Details returned**: nearest store name, distance, effective distance
 
 ### `prox_negative_poi` — Negative POI Proximity
 
-**Weight**: 0.04 | **Radius**: 500 m | **Direction**: negative
+**Weight**: 0.04 | **Direction**: negative
+**Radius**: 400 m (urban) / 500 m (semi-urban) / 500 m (rural)
 
-Penalty from nearby negative-signal POIs (gambling, pawn shops, etc.).
+Penalty from nearby negative-signal POIs (gambling, pawn shops, etc.). No safety modulation — negative POIs don't become worse in unsafe areas.
 
 **Scoring**:
 ```
 # Starts at 100 (no negatives nearby = perfect score)
 # Each negative POI subtracts up to 20 points, distance-weighted
-penalty_per_poi = (1 - distance_m / 500) × 20
+penalty_per_poi = (1 - distance_m / maxDistance) × 20
 score = max(0, 100 - Σ penalties)
 ```
 
-**Note**: Uses a shorter 500 m radius since negative POIs only matter if very close.
+**Note**: Uses a shorter radius since negative POIs only matter if very close. Urban areas use a tighter 400 m radius.
 
 **Details returned**: count, nearest name and distance
 
 ### `prox_positive_poi` — Positive POI Density
 
-**Weight**: 0.04 | **Radius**: 1 km | **Direction**: positive
+**Weight**: 0.04 | **Direction**: positive
+**Radius**: 800 m (urban) / 1,000 m (semi-urban) / 1,500 m (rural)
 
-Bonus from nearby positive-signal POIs (restaurants, fitness, cafes, etc.), excluding categories already scored separately (grocery, transit, parks).
+Bonus from nearby positive-signal POIs (restaurants, fitness, cafes, etc.), excluding categories already scored separately (grocery, transit, parks). Each POI uses its own category's `safety_sensitivity` for decay.
 
 **Scoring**:
 ```
-# Diminishing returns per POI
-bonus_per_poi = (1 - distance_m / 1000) × 15 × (1 / (rank + 1))
+# Diminishing returns per POI, safety-modulated per category
+bonus_per_poi = decayWithSafety(distance, maxDistance, safety, poi_sensitivity) × 15 × (1 / (rank + 1))
 score = min(100, Σ bonuses)
 ```
 
@@ -161,7 +260,10 @@ Creates the 6 proximity indicators and rebalances area-level weights:
 
 **`ProximityResult`** (`app/DataTransferObjects/ProximityResult.php`):
 - Contains all 6 `ProximityFactor` instances
+- `safetyScore`: 0.0–1.0 safety value for the DeSO
+- `urbanityTier`: `urban`, `semi_urban`, or `rural`
 - `compositeScore()`: Weighted average of all factors
+- `safetyZone()`: Human-readable safety classification
 - `toArray()`: Serializes for API response
 
 ## Related

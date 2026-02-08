@@ -87,16 +87,18 @@ The `ProximityScoreService` (`app/Services/ProximityScoreService.php`) computes 
 
 ### Proximity Factors
 
-| Factor | Slug | Radius | Default Weight | Scoring Logic |
-|---|---|---|---|---|
-| School Quality | `prox_school` | 2 km | 0.10 | Best school's merit × distance decay |
-| Green Space | `prox_green_space` | 1 km | 0.04 | Distance to nearest park/nature reserve |
-| Transit Access | `prox_transit` | 1 km | 0.05 | Nearest stop distance + mode bonus (rail 1.5×, tram 1.2×) + count bonus |
-| Grocery Access | `prox_grocery` | 1 km | 0.03 | Distance to nearest grocery store |
-| Negative POIs | `prox_negative_poi` | 500 m | 0.04 | Penalty per nearby negative POI (gambling, pawn shops) |
-| Positive POIs | `prox_positive_poi` | 1 km | 0.04 | Bonus from amenities with diminishing returns |
+All scoring radii adapt to the DeSO's **urbanity tier** (urban / semi-urban / rural). Urban areas use stricter radii because amenities are expected to be closer; rural areas use wider radii to avoid penalizing sparse settlement.
 
-All factors use **linear distance decay**: `score = 1 - (distance / maxDistance)`.
+| Factor | Slug | Weight | Urban | Semi-Urban | Rural |
+|---|---|---|---|---|---|
+| School Quality | `prox_school` | 0.10 | 1,500 m | 2,000 m | 3,500 m |
+| Green Space | `prox_green_space` | 0.04 | 1,000 m | 1,500 m | 2,500 m |
+| Transit Access | `prox_transit` | 0.05 | 800 m | 1,200 m | 2,500 m |
+| Grocery Access | `prox_grocery` | 0.03 | 800 m | 1,200 m | 2,000 m |
+| Negative POIs | `prox_negative_poi` | 0.04 | 400 m | 500 m | 500 m |
+| Positive POIs | `prox_positive_poi` | 0.04 | 800 m | 1,000 m | 1,500 m |
+
+Radii are configured in `config/proximity.php`. All factors use **linear distance decay**: `score = 1 - (distance / maxDistance)`.
 
 ### Distance Decay
 
@@ -105,6 +107,16 @@ Each factor computes a 0–100 sub-score using PostGIS `ST_DWithin` for candidat
 ```sql
 ST_DWithin(geom::geography, ST_SetSRID(ST_MakePoint(lng, lat), 4326)::geography, radius_meters)
 ```
+
+### Safety-Modulated Distance Decay
+
+Proximity scores are adjusted by area safety. The `SafetyScoreService` computes a 0.0–1.0 safety score per DeSO from crime indicators (75%) and socioeconomic proxies (25%). Each POI category has a `safety_sensitivity` value (0.0–1.5) that controls how much safety context affects its proximity score.
+
+```
+effective_distance = physical_distance × (1.0 + (1.0 - safety_score) × sensitivity)
+```
+
+This means a park 500m away in an unsafe area (safety 0.15) feels much further than the same park in a safe area (safety 0.90). Necessities like grocery (sensitivity 0.3) are barely affected; nightlife (sensitivity 1.5) is strongly affected.
 
 ### Weight Source
 
