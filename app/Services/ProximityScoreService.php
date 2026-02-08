@@ -81,7 +81,7 @@ class ProximityScoreService
 
     private function scoreSchool(float $lat, float $lng, float $safetyScore, Collection $settings): ProximityFactor
     {
-        $maxDistance = 2000; // 2km
+        $maxDistance = (int) config('proximity.scoring_radii.school', 2000);
         $sensitivity = (float) ($settings->get('school_grundskola')?->safety_sensitivity ?? 0.80);
 
         $schools = DB::select("
@@ -171,7 +171,7 @@ class ProximityScoreService
 
     private function scoreGreenSpace(float $lat, float $lng, float $safetyScore, Collection $settings): ProximityFactor
     {
-        $maxDistance = 1000; // 1km
+        $maxDistance = (int) config('proximity.scoring_radii.green_space', 1500);
         $sensitivity = (float) ($settings->get('park')?->safety_sensitivity ?? 1.00);
 
         $nearest = DB::selectOne("
@@ -190,7 +190,7 @@ class ProximityScoreService
             return new ProximityFactor(
                 slug: 'prox_green_space',
                 score: 0,
-                details: ['message' => 'No park within 1km'],
+                details: ['message' => 'No park within 1.5km'],
             );
         }
 
@@ -209,7 +209,7 @@ class ProximityScoreService
 
     private function scoreTransit(float $lat, float $lng, float $safetyScore, Collection $settings): ProximityFactor
     {
-        $maxDistance = 1000; // 1km
+        $maxDistance = (int) config('proximity.scoring_radii.transit', 1000);
         $sensitivity = (float) ($settings->get('public_transport_stop')?->safety_sensitivity ?? 0.50);
 
         $stops = DB::select("
@@ -264,7 +264,7 @@ class ProximityScoreService
 
     private function scoreGrocery(float $lat, float $lng, float $safetyScore, Collection $settings): ProximityFactor
     {
-        $maxDistance = 1000; // 1km
+        $maxDistance = (int) config('proximity.scoring_radii.grocery', 1000);
         $sensitivity = (float) ($settings->get('grocery')?->safety_sensitivity ?? 0.30);
 
         $nearest = DB::selectOne("
@@ -302,7 +302,7 @@ class ProximityScoreService
 
     private function scoreNegativePois(float $lat, float $lng): ProximityFactor
     {
-        $maxDistance = 500; // 500m — negative POIs only matter if very close
+        $maxDistance = (int) config('proximity.scoring_radii.negative_poi', 500);
 
         $pois = DB::select("
             SELECT p.name, p.category, p.subcategory,
@@ -345,7 +345,7 @@ class ProximityScoreService
 
     private function scorePositivePois(float $lat, float $lng, float $safetyScore, Collection $settings): ProximityFactor
     {
-        $maxDistance = 1000; // 1km
+        $maxDistance = (int) config('proximity.scoring_radii.positive_poi', 1000);
 
         $excludeCategories = "'grocery', 'public_transport_stop', 'park', 'nature_reserve'";
 

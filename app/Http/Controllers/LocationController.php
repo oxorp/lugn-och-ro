@@ -73,6 +73,8 @@ class LocationController extends Controller
             'factor_scores' => null,
         ];
 
+        $displayRadius = (int) config('proximity.display_radius', 2000);
+
         // Public tier: location + score only, no detail data
         if ($tier === DataTier::Public) {
             return response()->json([
@@ -87,6 +89,7 @@ class LocationController extends Controller
                 ],
                 'score' => $scoreData,
                 'tier' => $tier->value,
+                'display_radius' => $displayRadius,
                 'proximity' => null,
                 'indicators' => [],
                 'schools' => [],
@@ -103,7 +106,8 @@ class LocationController extends Controller
             ->get()
             ->unique('indicator_id');
 
-        // 6. Get nearby schools (within 1.5km radius)
+        // 6. Get nearby schools
+        $schoolRadius = (int) config('proximity.school_query_radius', 2000);
         $schools = DB::select('
             SELECT s.name, s.type_of_schooling, s.operator_type, s.lat, s.lng,
                    ss.merit_value_17, ss.goal_achievement_pct,
@@ -123,13 +127,14 @@ class LocationController extends Controller
               AND ST_DWithin(
                   s.geom::geography,
                   ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography,
-                  1500
+                  ?
               )
             ORDER BY distance_m
             LIMIT 10
-        ', [$lng, $lat, $lng, $lat]);
+        ', [$lng, $lat, $lng, $lat, $schoolRadius]);
 
-        // 7. Get POIs within 3km radius
+        // 7. Get POIs within radius
+        $poiRadius = (int) config('proximity.poi_query_radius', 1500);
         $pois = DB::select('
             SELECT p.name, p.category, p.lat, p.lng, p.subcategory,
                    ST_Distance(
@@ -142,10 +147,10 @@ class LocationController extends Controller
               AND ST_DWithin(
                   p.geom::geography,
                   ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography,
-                  3000
+                  ?
               )
             ORDER BY p.category, distance_m
-        ', [$lng, $lat, $lng, $lat]);
+        ', [$lng, $lat, $lng, $lat, $poiRadius]);
 
         // 8. Get POI category metadata for rendering (all categories for icon/color mapping)
         $poiCategories = PoiCategory::all()
@@ -170,6 +175,7 @@ class LocationController extends Controller
             ],
             'score' => $scoreData,
             'tier' => $tier->value,
+            'display_radius' => $displayRadius,
             'proximity' => $proximity->toArray(),
             'indicators' => $indicators->map(fn ($iv) => [
                 'slug' => $iv->indicator->slug,

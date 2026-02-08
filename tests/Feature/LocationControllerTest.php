@@ -84,12 +84,14 @@ class LocationControllerTest extends TestCase
                 'location' => ['lat', 'lng', 'deso_code', 'kommun', 'lan_code', 'area_km2', 'urbanity_tier'],
                 'score' => ['value', 'area_score', 'proximity_score', 'trend_1y', 'label', 'top_positive', 'top_negative', 'factor_scores'],
                 'tier',
+                'display_radius',
                 'proximity' => ['composite', 'factors'],
                 'indicators',
                 'schools',
                 'pois',
                 'poi_categories',
             ])
+            ->assertJsonPath('display_radius', (int) config('proximity.display_radius'))
             ->assertJsonFragment([
                 'kommun' => 'Stockholm',
                 'deso_code' => '0180C1090',
