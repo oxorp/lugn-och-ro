@@ -50,10 +50,10 @@ interface Props {
 
 function coverageColor(pct: number, hasData: boolean): string {
     if (!hasData) return 'bg-muted text-muted-foreground';
-    if (pct >= 95) return 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300';
-    if (pct >= 80) return 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300';
-    if (pct >= 50) return 'bg-yellow-50 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300';
-    if (pct >= 1) return 'bg-orange-50 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300';
+    if (pct >= 95) return 'bg-green-600 text-white dark:bg-green-700 dark:text-green-50';
+    if (pct >= 80) return 'bg-emerald-400 text-emerald-950 dark:bg-emerald-600 dark:text-emerald-50';
+    if (pct >= 50) return 'bg-yellow-400 text-yellow-950 dark:bg-yellow-600 dark:text-yellow-50';
+    if (pct >= 1) return 'bg-orange-500 text-white dark:bg-orange-600 dark:text-orange-50';
     return 'bg-muted text-muted-foreground';
 }
 
@@ -143,19 +143,19 @@ export default function DataCompletenessPage({ matrix, years, summary }: Props) 
             <div className="mb-4 flex flex-wrap items-center gap-3 text-xs">
                 <span className="text-muted-foreground font-medium">Coverage:</span>
                 <span className="inline-flex items-center gap-1">
-                    <span className="inline-block h-3 w-5 rounded bg-green-100 dark:bg-green-900/40" />
+                    <span className="inline-block h-3 w-5 rounded bg-green-600 dark:bg-green-700" />
                     95-100%
                 </span>
                 <span className="inline-flex items-center gap-1">
-                    <span className="inline-block h-3 w-5 rounded bg-emerald-50 dark:bg-emerald-900/30" />
+                    <span className="inline-block h-3 w-5 rounded bg-emerald-400 dark:bg-emerald-600" />
                     80-94%
                 </span>
                 <span className="inline-flex items-center gap-1">
-                    <span className="inline-block h-3 w-5 rounded bg-yellow-50 dark:bg-yellow-900/30" />
+                    <span className="inline-block h-3 w-5 rounded bg-yellow-400 dark:bg-yellow-600" />
                     50-79%
                 </span>
                 <span className="inline-flex items-center gap-1">
-                    <span className="inline-block h-3 w-5 rounded bg-orange-50 dark:bg-orange-900/30" />
+                    <span className="inline-block h-3 w-5 rounded bg-orange-500 dark:bg-orange-600" />
                     1-49%
                 </span>
                 <span className="inline-flex items-center gap-1">
