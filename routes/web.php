@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\AdminDataCompletenessController;
 use App\Http\Controllers\AdminDataQualityController;
 use App\Http\Controllers\AdminIndicatorController;
 use App\Http\Controllers\AdminPipelineController;
@@ -106,6 +107,8 @@ $webRoutes = function () {
         Route::get('/data-quality', [AdminDataQualityController::class, 'index'])->name('admin.data-quality');
         Route::post('/data-quality/publish/{versionId}', [AdminDataQualityController::class, 'publish'])->name('admin.data-quality.publish');
         Route::post('/data-quality/rollback/{versionId}', [AdminDataQualityController::class, 'rollback'])->name('admin.data-quality.rollback');
+
+        Route::get('/data-completeness', [AdminDataCompletenessController::class, 'index'])->name('admin.data-completeness');
 
         Route::get('/pipeline', [AdminPipelineController::class, 'index'])->name('admin.pipeline');
         Route::get('/pipeline/logs/{log}', [AdminPipelineController::class, 'log'])->name('admin.pipeline.log');

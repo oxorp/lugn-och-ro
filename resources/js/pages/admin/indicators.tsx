@@ -54,6 +54,7 @@ interface Indicator {
     latest_year: number | null;
     coverage: number;
     total_desos: number;
+    years_with_data: number[];
     description_short: string | null;
     description_long: string | null;
     methodology_note: string | null;
@@ -419,6 +420,7 @@ export default function IndicatorsPage({ indicators, poiCategories }: Props) {
                             <TableHead><Tip label="Free" tip="Show this indicator value in the free preview (max 2 per category)" /></TableHead>
                             <TableHead><Tip label="Year" tip="Most recent data year available" /></TableHead>
                             <TableHead><Tip label="Coverage" tip="Number of DeSOs with data out of 6,160 total" /></TableHead>
+                            <TableHead><Tip label="Years" tip="Years with data available" /></TableHead>
                             <TableHead></TableHead>
                         </TableRow>
                     </TableHeader>
@@ -663,6 +665,11 @@ export default function IndicatorsPage({ indicators, poiCategories }: Props) {
                                                         </TableCell>
                                                         <TableCell className="text-sm text-muted-foreground">
                                                             {indicator.coverage} / {indicator.total_desos}
+                                                        </TableCell>
+                                                        <TableCell className="text-xs text-muted-foreground">
+                                                            {indicator.years_with_data.length > 0
+                                                                ? `${indicator.years_with_data[0]}-${indicator.years_with_data[indicator.years_with_data.length - 1]} (${indicator.years_with_data.length}y)`
+                                                                : '\u2014'}
                                                         </TableCell>
                                                         <TableCell>
                                                             <Button

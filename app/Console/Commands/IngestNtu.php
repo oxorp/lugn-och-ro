@@ -12,7 +12,9 @@ class IngestNtu extends Command
     use LogsIngestion;
 
     protected $signature = 'ingest:ntu
-        {--year=2025 : NTU survey year to focus on}
+        {--year=2025 : NTU survey year to focus on (legacy, ignored when --from/--to used)}
+        {--from= : Start year for ingestion (defaults to all years in file)}
+        {--to= : End year for ingestion (defaults to all years in file)}
         {--file= : Path to NTU län Excel file}';
 
     protected $description = 'Ingest NTU (Nationella trygghetsundersökningen) survey data at län level';
@@ -63,10 +65,16 @@ class IngestNtu extends Command
 
     public function handle(): int
     {
-        $targetYear = (int) $this->option('year');
+        $fromYear = $this->option('from') ? (int) $this->option('from') : null;
+        $toYear = $this->option('to') ? (int) $this->option('to') : null;
 
         $this->startIngestionLog('vulnerability', 'ingest:ntu');
-        $this->addStat('year', $targetYear);
+        if ($fromYear && $toYear) {
+            $this->addStat('from_year', $fromYear);
+            $this->addStat('to_year', $toYear);
+        } else {
+            $this->addStat('year', (int) $this->option('year'));
+        }
 
         $filePath = $this->option('file') ?: storage_path('app/'.self::DEFAULT_FILE);
         if (! file_exists($filePath)) {
@@ -92,8 +100,11 @@ class IngestNtu extends Command
 
             $this->info("Processing sheet {$sheetName} ({$config['slug']})...");
 
-            // Find year columns from row 3
+            // Find year columns from row 3, optionally filtered by --from/--to
             $yearColumns = $this->findYearColumns($sheet);
+            if ($fromYear && $toYear) {
+                $yearColumns = array_filter($yearColumns, fn (string $col, int $y) => $y >= $fromYear && $y <= $toYear, ARRAY_FILTER_USE_BOTH);
+            }
             if (empty($yearColumns)) {
                 $this->warn("No year columns found in {$sheetName}.");
 
