@@ -25,6 +25,8 @@ import {
     useState,
 } from 'react';
 
+import { usePage } from '@inertiajs/react';
+import type { SharedData } from '@/types';
 import { useTranslation } from '@/hooks/use-translation';
 import { meritToColor, scoreGradientCSS } from '@/lib/score-colors';
 import { getPoiMarkerDataUrl, hasIcon } from '@/lib/poi-icons';
@@ -198,6 +200,7 @@ const HeatmapMap = forwardRef<HeatmapMapHandle, HeatmapMapProps>(function Heatma
     const heatmapLayerRef = useRef<TileLayer | null>(null);
     const [basemapType, setBasemapType] = useState<BasemapType>('clean');
     const [showVulnAreas, setShowVulnAreas] = useState(true);
+    const isAdmin = !!usePage<SharedData>().props.auth?.user?.is_admin;
     const onPinDropRef = useRef(onPinDrop);
     const onPinClearRef = useRef(onPinClear);
 
@@ -483,8 +486,8 @@ const HeatmapMap = forwardRef<HeatmapMapHandle, HeatmapMapProps>(function Heatma
                 // Scale stroke with zoom: thin at low zoom, thicker when close
                 // resolution ~20 ≈ z13, ~80 ≈ z11, ~300 ≈ z9
                 const zoom = resolution < 30 ? 13 : resolution < 100 ? 11 : 9;
-                const width = zoom >= 13 ? 2.5 : zoom >= 11 ? 1.5 : 1;
-                const dash = zoom >= 13 ? [8, 5] : zoom >= 11 ? [6, 4] : [4, 3];
+                const width = zoom >= 13 ? 1.2 : zoom >= 11 ? 0.8 : 0.5;
+                const dash = zoom >= 13 ? [4, 8] : zoom >= 11 ? [3, 6] : [2, 5];
                 const fillOpacity = zoom >= 13 ? (props.opacity ?? 0.15) : zoom >= 11 ? 0.10 : 0.06;
                 return new Style({
                     fill: new Fill({
@@ -686,7 +689,7 @@ const HeatmapMap = forwardRef<HeatmapMapHandle, HeatmapMapProps>(function Heatma
                         let html = `<strong>${name}</strong>`;
                         html += `<br><span style="opacity:0.8">${tierLabel}</span>`;
                         if (region) html += `<br><span style="opacity:0.7">${region}</span>`;
-                        if (penalty !== null) html += `<br><span style="opacity:0.8">Avdrag: ${penalty} poäng</span>`;
+                        if (isAdmin && penalty !== null) html += `<br><span style="color:#991b1b;font-weight:600">Avdrag: ${penalty} poäng</span>`;
                         html += `<br><span style="opacity:0.5;font-size:10px">Polismyndigheten 2025</span>`;
                         el.innerHTML = html;
                         el.style.display = 'block';

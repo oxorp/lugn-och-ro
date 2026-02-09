@@ -3,6 +3,8 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faGraduationCap, faSpinnerThird, faTriangleExclamation, faXmark } from '@/icons';
+import { usePage } from '@inertiajs/react';
+import type { SharedData } from '@/types';
 import { useTranslation } from '@/hooks/use-translation';
 import { useEffect, useRef, useState } from 'react';
 
@@ -32,6 +34,7 @@ export function ActiveSidebar({
     onClose: () => void;
 }) {
     const { t } = useTranslation();
+    const isAdmin = !!usePage<SharedData>().props.auth?.user?.is_admin;
     const [showStickyBar, setShowStickyBar] = useState(false);
     const firstCtaRef = useRef<HTMLDivElement>(null);
 
@@ -100,16 +103,16 @@ export function ActiveSidebar({
                     />
                 )}
 
-                {/* Penalty notice */}
-                {score?.penalties_applied && score.penalties_applied.length > 0 && (
-                    <div className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3">
+                {/* Penalty notice (admin only) */}
+                {isAdmin && score?.penalties_applied && score.penalties_applied.length > 0 && (
+                    <div className="mb-3 rounded-lg border border-red-900/20 bg-red-950/5 p-3">
                         <div className="flex items-center gap-2">
-                            <FontAwesomeIcon icon={faTriangleExclamation} className="h-4 w-4 text-red-600" />
-                            <span className="text-sm font-semibold text-red-800">
+                            <FontAwesomeIcon icon={faTriangleExclamation} className="h-4 w-4 text-red-900" />
+                            <span className="text-sm font-semibold text-red-900">
                                 {score.penalties_applied[0].name}
                             </span>
                         </div>
-                        <div className="mt-2 space-y-1 text-xs text-red-700">
+                        <div className="mt-2 space-y-1 text-xs text-red-900">
                             {score.raw_score_before_penalties !== null && (
                                 <>
                                     <div className="flex justify-between">
@@ -122,15 +125,15 @@ export function ActiveSidebar({
                                             <span className="font-medium tabular-nums">{p.amount} poäng</span>
                                         </div>
                                     ))}
-                                    <div className="flex justify-between border-t border-red-200 pt-1">
+                                    <div className="flex justify-between border-t border-red-900/20 pt-1">
                                         <span>Poäng efter avdrag</span>
                                         <span className="font-medium tabular-nums">{score.area_score}</span>
                                     </div>
                                 </>
                             )}
                         </div>
-                        <p className="mt-2 text-[10px] text-red-500">
-                            Polismyndigheten 2025
+                        <p className="mt-2 text-[10px] text-red-900/50">
+                            Admin · Polismyndigheten 2025
                         </p>
                     </div>
                 )}

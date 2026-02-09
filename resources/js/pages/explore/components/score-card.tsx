@@ -75,7 +75,7 @@ export function ScoreCard({
                         values={history.scores.map(Math.round)}
                         years={history.years}
                         width={260}
-                        height={32}
+                        height={48}
                     />
                 </div>
             )}
