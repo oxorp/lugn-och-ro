@@ -41,4 +41,8 @@ return [
         'redirect' => env('GOOGLE_REDIRECT_URI', '/auth/google/callback'),
     ],
 
+    'trafiklab' => [
+        'gtfs_key' => env('TRAFIKLAB_GTFS_KEY'),
+    ],
+
 ];

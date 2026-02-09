@@ -294,17 +294,32 @@ class ProximityScoreService
         $maxDistance = $this->getRadius('transit', $urbanityTier);
         $sensitivity = (float) ($settings->get('public_transport_stop')?->safety_sensitivity ?? 0.50);
 
-        $stops = DB::select("
-            SELECT name, subcategory,
+        // Query transit_stops table (GTFS-sourced) with frequency data
+        // Falls back to pois table if transit_stops is empty (backward compat)
+        $stops = DB::select('
+            SELECT name, stop_type, weekly_departures,
                    ST_Distance(geom::geography, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography) as distance_m
-            FROM pois
-            WHERE category = 'public_transport_stop'
-              AND status = 'active'
-              AND geom IS NOT NULL
+            FROM transit_stops
+            WHERE geom IS NOT NULL
               AND ST_DWithin(geom::geography, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)
             ORDER BY geom <-> ST_SetSRID(ST_MakePoint(?, ?), 4326)
             LIMIT 10
-        ", [$lng, $lat, $lng, $lat, $maxDistance, $lng, $lat]);
+        ', [$lng, $lat, $lng, $lat, $maxDistance, $lng, $lat]);
+
+        // Fallback to pois table if transit_stops is empty
+        if (empty($stops)) {
+            $stops = DB::select("
+                SELECT name, subcategory as stop_type, NULL as weekly_departures,
+                       ST_Distance(geom::geography, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography) as distance_m
+                FROM pois
+                WHERE category = 'public_transport_stop'
+                  AND status = 'active'
+                  AND geom IS NOT NULL
+                  AND ST_DWithin(geom::geography, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)
+                ORDER BY geom <-> ST_SetSRID(ST_MakePoint(?, ?), 4326)
+                LIMIT 10
+            ", [$lng, $lat, $lng, $lat, $maxDistance, $lng, $lat]);
+        }
 
         if (empty($stops)) {
             return new ProximityFactor(
@@ -314,32 +329,44 @@ class ProximityScoreService
             );
         }
 
-        $score = 0;
+        $bestScore = 0;
+        $bestStop = $stops[0];
+
         foreach ($stops as $stop) {
             $decay = $this->decayWithSafety($stop->distance_m, $maxDistance, $safetyScore, $sensitivity);
 
-            $modeWeight = match ($stop->subcategory) {
-                'station', 'train' => 1.5,
-                'tram_stop' => 1.2,
+            $modeWeight = match ($stop->stop_type) {
+                'rail', 'subway', 'station', 'train' => 1.5,
+                'tram', 'tram_stop' => 1.2,
                 default => 1.0,
             };
 
-            $stopScore = $decay * $modeWeight;
-            $score = max($score, $stopScore);
+            // Frequency bonus: a stop with 200 departures/day is much better than 5
+            $freqBonus = $stop->weekly_departures
+                ? min(1.5, 0.5 + log10(max(1, $stop->weekly_departures / 7)) / 3)
+                : 1.0;
+
+            $stopScore = $decay * $modeWeight * $freqBonus;
+
+            if ($stopScore > $bestScore) {
+                $bestScore = $stopScore;
+                $bestStop = $stop;
+            }
         }
 
         $countBonus = min(0.2, count($stops) * 0.02);
-        $score = min(1.0, $score + $countBonus);
+        $finalScore = min(1.0, $bestScore + $countBonus);
 
         return new ProximityFactor(
             slug: 'prox_transit',
-            score: (int) round(min(100, $score * 100)),
+            score: (int) round(min(100, $finalScore * 100)),
             details: [
                 'nearest_stop' => $stops[0]->name,
-                'nearest_type' => $stops[0]->subcategory,
+                'nearest_type' => $stops[0]->stop_type ?? 'bus',
                 'nearest_distance_m' => (int) round($stops[0]->distance_m),
                 'effective_distance_m' => (int) round($this->effectiveDistance($stops[0]->distance_m, $safetyScore, $sensitivity)),
                 'stops_found' => count($stops),
+                'weekly_departures' => $bestStop->weekly_departures,
             ],
         );
     }
