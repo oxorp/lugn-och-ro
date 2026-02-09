@@ -1,488 +1,272 @@
-# TASK: Fix Map Performance — Pin-Drop Hot Path
+# TASK: Build DeSO 2018→2025 Crosswalk Table
 
 ## Context
 
-A performance audit revealed the map tiles themselves are fine (heatmap PNGs, 60fps). The lag users feel is the **pin-drop interaction flow** — clicking the map triggers 10-12 sequential PostGIS queries that take 300-600ms in Stockholm, returns 3,767 unbounded POI markers, and runs duplicate spatial work across two services.
+SCB switched from DeSO 2018 (5,984 areas) to DeSO 2025 (6,160 areas). All historical data (2019-2023) uses old codes. Our database uses new codes. Without a mapping between them, 5 years of SCB data is unusable.
 
-This task fixes the five issues found, in priority order.
+This is a **blocker** for all historical data ingestion. Build it first.
 
 ---
 
-## P0: Split POIs into "Render on Map" vs "Count in Sidebar"
+## Step 1: Load DeSO 2018 Boundaries
 
-### The Problem
+### 1.1 Fetch from SCB WFS
 
-`LocationController` queries POIs with no `LIMIT`. In central Stockholm this returns 3,767 rows, all serialized to JSON, all rendered as individual OpenLayers features with icons and hit-testing. This is the single biggest cause of perceived lag.
+SCB serves both boundary sets via WFS. We already have DeSO 2025 in `deso_areas`. Now load DeSO 2018:
 
-But hard-capping at 200 is wrong — it could cut the one school or transit stop that matters. The real issue is that **most POI types don't need map markers at all.** Nobody needs to see 847 individual café pins. They need to see "23 cafés nearby" in the sidebar and the 3 nearest schools as markers.
+```bash
+php artisan import:deso-2018-boundaries
+```
 
-### The Fix: Render Tiers
+The command should:
 
-Add a `render_on_map` boolean to `poi_categories` (or use a config). POI types are split into two tiers:
+1. Fetch DeSO 2018 geometries from SCB WFS:
+```
+https://geodata.scb.se/geoserver/stat/wfs?service=WFS&version=1.1.0&request=GetFeature&typeName=stat:DeSO&outputFormat=application/json&srsName=EPSG:4326
+```
 
-**Tier 1 — Render as map markers** (things users navigate to, need to see location of):
-- Schools (grundskola, gymnasie)
-- Transit stops (major only — rail, subway, high-frequency bus)
-- Grocery stores
-- Healthcare (vårdcentral, hospital)
-- Negative POIs (gambling, pawn shops) — user needs to see WHERE they are
+Note: The layer name might be `stat:DeSO` (the 2018 version) vs `stat:DeSO_2025` or similar. Check what's available:
+```
+https://geodata.scb.se/geoserver/stat/wfs?service=WFS&version=1.1.0&request=GetCapabilities
+```
 
-**Tier 2 — Count only, show in sidebar/report** (ambient neighborhood character):
-- Restaurants & cafés
-- Gyms & fitness
-- Parks & green spaces (the area score already captures this; exact pin less useful)
-- Pharmacies
-- Retail / specialty shops
-- Cultural venues
-- Any other "nice to have" category
-
-**Implementation:**
+2. Store in a new table `deso_areas_2018`:
 
 ```php
-// Migration: add render tier to poi_categories
-Schema::table('poi_categories', function (Blueprint $table) {
-    $table->boolean('render_on_map')->default(false);
+Schema::create('deso_areas_2018', function (Blueprint $table) {
+    $table->id();
+    $table->string('deso_code', 10)->unique()->index();
+    $table->string('deso_name')->nullable();
+    $table->string('kommun_code', 4)->nullable();
+    $table->string('kommun_name')->nullable();
+    $table->timestamps();
 });
 
-// Seed the tiers
-DB::table('poi_categories')
-    ->whereIn('slug', [
-        'school', 'grundskola', 'gymnasieskola',
-        'transit_stop', 'rail_station', 'subway_station',
-        'grocery', 'supermarket',
-        'healthcare', 'hospital', 'vardcentral',
-        'gambling', 'pawn_shop', 'fast_food_cluster',
-    ])
-    ->update(['render_on_map' => true]);
+DB::statement("SELECT AddGeometryColumn('public', 'deso_areas_2018', 'geom', 4326, 'MULTIPOLYGON', 2)");
+DB::statement("CREATE INDEX deso_areas_2018_geom_idx ON deso_areas_2018 USING GIST (geom)");
 ```
 
-**API response changes:**
+3. Verify: should get exactly 5,984 areas.
 
-The endpoint returns two sections:
+### 1.2 Alternative: SCB May Publish Both in the Same WFS
 
-```php
-public function show(Request $request)
-{
-    // ... existing DeSO/score logic ...
+Check if the WFS has separate layers for 2018 and 2025. If not, check:
+- https://www.scb.se/hitta-statistik/regional-statistik-och-kartor/regionala-indelningar/deso---demografiska-statistikomraden/
+- SCB geodata portal: https://www.scb.se/vara-tjanster/oppna-data/oppna-geodata/
 
-    // Tier 1: Full details + coordinates (for map markers)
-    $mapPois = Poi::query()
-        ->join('poi_categories', 'poi_categories.id', '=', 'pois.poi_category_id')
-        ->where('poi_categories.render_on_map', true)
-        ->where(DB::raw("ST_DWithin(pois.geom::geography, ..., {$radius})"))
-        ->orderByRaw("pois.geom::geography <-> ...")
-        ->select('pois.*', 'poi_categories.name as category_name', 'poi_categories.slug as category_slug')
-        ->limit(100) // Safety cap — Tier 1 categories won't hit this in practice
-        ->get();
-
-    // Tier 2: Counts only (for sidebar stats)
-    $sidebarCounts = Poi::query()
-        ->join('poi_categories', 'poi_categories.id', '=', 'pois.poi_category_id')
-        ->where('poi_categories.render_on_map', false)
-        ->where(DB::raw("ST_DWithin(pois.geom::geography, ..., {$radius})"))
-        ->groupBy('poi_categories.slug', 'poi_categories.name')
-        ->select(
-            'poi_categories.slug',
-            'poi_categories.name',
-            DB::raw('COUNT(*) as count'),
-            DB::raw('MIN(ST_Distance(pois.geom::geography, ...)) as nearest_m')
-        )
-        ->get();
-
-    return response()->json([
-        'map_pois' => $mapPois,       // ~30-60 features with coordinates
-        'sidebar_counts' => $sidebarCounts,  // ~10-15 rows, no coordinates
-        // ... scores, schools, indicators ...
-    ]);
-}
-```
-
-**Frontend changes:**
-
-```tsx
-// Only map_pois become OpenLayers features
-mapPois.forEach(poi => addMarkerToLayer(poi));
-
-// sidebar_counts render as text in the sidebar
-<div className="space-y-2">
-    <h4>Nearby</h4>
-    {sidebarCounts.map(cat => (
-        <div key={cat.slug} className="flex justify-between text-sm">
-            <span>{cat.name}</span>
-            <span className="text-muted-foreground">
-                {cat.count} ({Math.round(cat.nearest_m)}m)
-            </span>
-        </div>
-    ))}
-</div>
-```
-
-### Why This Works
-
-- Stockholm central drops from 3,767 markers to ~30-60 (schools + transit + grocery + healthcare + negative POIs)
-- Zero data loss — every café and gym is still counted and shown in the sidebar
-- The categories that users actually click on (schools, transit) keep full markers with tooltips
-- Ambient categories (cafés, restaurants) become neighborhood character stats — which is what they really are
-- The `render_on_map` boolean is admin-configurable — if a category becomes important later, flip the flag
-
-### Verify
-
-```sql
--- Count Tier 1 POIs within 1km of Stockholm central
-SELECT pc.slug, COUNT(*)
-FROM pois p
-JOIN poi_categories pc ON pc.id = p.poi_category_id
-WHERE pc.render_on_map = true
-  AND ST_DWithin(p.geom::geography, ST_SetSRID(ST_MakePoint(18.0586, 59.3308), 4326)::geography, 1000)
-GROUP BY pc.slug;
--- Should total 30-80 features — manageable
-
--- Verify nothing important is missing from Tier 1
-SELECT pc.slug, pc.render_on_map, COUNT(*) as within_1km
-FROM pois p
-JOIN poi_categories pc ON pc.id = p.poi_category_id
-WHERE ST_DWithin(p.geom::geography, ST_SetSRID(ST_MakePoint(18.0586, 59.3308), 4326)::geography, 1000)
-GROUP BY pc.slug, pc.render_on_map
-ORDER BY count DESC;
--- Restaurants/cafés should be Tier 2 (render_on_map=false) — that's where the bulk is
-```
+If the 2018 boundaries aren't available via WFS anymore, check if they're downloadable as a shapefile/GeoPackage.
 
 ---
 
-## P1: Deduplicate and Combine Spatial Queries
+## Step 2: Compute the Crosswalk
 
-### The Problem
-
-Two services query the same data for the same point:
-
-1. **`ProximityScoreService::score()`** runs 7 sequential `ST_DWithin` queries to compute proximity scores (schools, green space, transit, grocery, negative POIs, positive POIs, plus DeSO lookup + safety)
-2. **`LocationController::show()`** then runs 3+ more `ST_DWithin` queries for schools, POIs, and categories — fetching the same nearby features again with different parameters
-
-That's 10-12 spatial queries hitting the same PostGIS indexes for the same coordinates. Most of this is duplicate work.
-
-### The Fix
-
-**Option A: Share query results (simpler)**
-
-Refactor `LocationController::show()` to call `ProximityScoreService` once and reuse the intermediate results:
+### 2.1 Migration
 
 ```php
-public function show(Request $request)
-{
-    $lat = $request->float('lat');
-    $lng = $request->float('lng');
+Schema::create('deso_crosswalk', function (Blueprint $table) {
+    $table->id();
+    $table->string('old_code', 10)->index();       // DeSO 2018 code
+    $table->string('new_code', 10)->index();        // DeSO 2025 code
+    $table->decimal('overlap_fraction', 8, 6);      // 0.000000 to 1.000000 — what % of the OLD area falls in this NEW area
+    $table->decimal('reverse_fraction', 8, 6);      // What % of the NEW area comes from this OLD area
+    $table->string('mapping_type', 20);             // '1:1', 'split', 'merge', 'partial'
+    $table->timestamps();
 
-    // One service call that returns BOTH scores AND the raw nearby features
-    $proximity = $this->proximityService->scoreWithDetails($lat, $lng);
-
-    // $proximity now contains:
-    // - score (the composite proximity score)
-    // - factor_scores (per-category scores)
-    // - nearby_schools (the actual school records, already fetched)
-    // - nearby_pois (the actual POI records, already fetched)
-    // - nearby_transit (the actual transit stops, already fetched)
-
-    // No need to re-query — just format for the frontend
-    $schools = $proximity->nearby_schools->map(fn ($s) => [...]);
-    $pois = $proximity->nearby_pois->map(fn ($p) => [...]);
-
-    // ... build response using shared data
-}
-```
-
-**Option B: Single CTE query (more effort, bigger win)**
-
-Combine all spatial lookups into one round-trip using a CTE:
-
-```sql
-WITH pin AS (
-    SELECT ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography AS geog
-),
-nearby_deso AS (
-    SELECT deso_code, geom
-    FROM deso_areas, pin
-    WHERE ST_Contains(deso_areas.geom, pin.geog::geometry)
-    LIMIT 1
-),
-nearby_schools AS (
-    SELECT s.*, ss.merit_value_17, ss.goal_achievement_pct,
-           ST_Distance(s.geom::geography, pin.geog) AS distance_m
-    FROM schools s
-    CROSS JOIN pin
-    LEFT JOIN school_statistics ss ON ss.school_unit_code = s.school_unit_code
-        AND ss.academic_year = (SELECT MAX(academic_year) FROM school_statistics WHERE school_unit_code = s.school_unit_code)
-    WHERE ST_DWithin(s.geom::geography, pin.geog, 2000)
-      AND s.status = 'active'
-    ORDER BY distance_m
-    LIMIT 15
-),
-nearby_pois AS (
-    SELECT p.*, pc.name as category_name, pc.sentiment,
-           ST_Distance(p.geom::geography, pin.geog) AS distance_m
-    FROM pois p
-    CROSS JOIN pin
-    JOIN poi_categories pc ON pc.id = p.poi_category_id
-    WHERE ST_DWithin(p.geom::geography, pin.geog, 1000)
-    ORDER BY distance_m
-    LIMIT 200
-)
-SELECT 'deso' AS result_type, nearby_deso.deso_code AS id, NULL AS data FROM nearby_deso
-UNION ALL
-SELECT 'school', school_unit_code, row_to_json(nearby_schools.*)::text FROM nearby_schools
-UNION ALL
-SELECT 'poi', id::text, row_to_json(nearby_pois.*)::text FROM nearby_pois;
-```
-
-This is one query, one round-trip, one index scan sweep. PostGIS is extremely efficient at batching spatial operations in a single query plan.
-
-**Recommendation:** Start with Option A (30 minutes, immediate dedup). Do Option B later if latency is still >200ms.
-
-### Verify
-
-Add timing to the controller:
-
-```php
-$start = microtime(true);
-// ... all queries ...
-$elapsed = (microtime(true) - $start) * 1000;
-Log::info("Pin-drop response: {$elapsed}ms", ['lat' => $lat, 'lng' => $lng]);
-```
-
-Test with Stockholm coordinates (59.33, 18.07). Should drop from 300-600ms to 100-200ms.
-
----
-
-## P2: Throttle the Hover Handler
-
-### The Problem
-
-`deso-map.tsx` line ~563 registers a `pointermove` handler that calls `forEachFeatureAtPixel` on every mouse movement. With 200 POI markers loaded (3,767 before the P0 fix), this is expensive hit-testing running at 60Hz.
-
-### The Fix
-
-Debounce or throttle to 50ms:
-
-```tsx
-// BEFORE
-map.on('pointermove', (evt) => {
-    const feature = map.forEachFeatureAtPixel(evt.pixel, (f) => f);
-    // ... tooltip logic
+    $table->unique(['old_code', 'new_code']);
 });
-
-// AFTER
-import { throttle } from 'lodash'; // or a simple manual throttle
-
-const handlePointerMove = throttle((evt: MapBrowserEvent<UIEvent>) => {
-    const feature = map.forEachFeatureAtPixel(evt.pixel, (f) => f);
-    // ... tooltip logic
-}, 50);
-
-map.on('pointermove', handlePointerMove);
-
-// IMPORTANT: Clean up on unmount
-return () => {
-    map.un('pointermove', handlePointerMove);
-    handlePointerMove.cancel();
-};
 ```
 
-**Alternative:** Use `pointerInteractionOptions` on the layer to restrict which layers participate in hit-testing. If tooltips only apply to POI/school markers, exclude the heatmap tile layer from hit-testing.
+### 2.2 Spatial Overlap Computation
 
-```tsx
-const poiLayer = new VectorLayer({
-    source: poiSource,
-    // Only this layer responds to hover
-});
-
-map.on('pointermove', throttle((evt) => {
-    // Only check the POI layer, not all layers
-    const hit = map.forEachFeatureAtPixel(evt.pixel, (f) => f, {
-        layerFilter: (layer) => layer === poiLayer || layer === schoolLayer,
-    });
-}, 50));
+```bash
+php artisan build:deso-crosswalk
 ```
 
-### Verify
-
-Open DevTools Performance tab, mouse around the map quickly in Stockholm. Frame times should stay under 16ms (60fps). No long `pointermove` handler tasks in the flame chart.
-
----
-
-## P3: Cache Proximity Scores by Grid Cell
-
-### The Problem
-
-Every pin-drop runs the full `ProximityScoreService::score()` computation — 7 spatial queries. Two clicks 50 meters apart produce nearly identical results but cost the same computation.
-
-### The Fix
-
-Round coordinates to a ~100m grid and cache results:
-
-```php
-// In ProximityScoreService or LocationController
-
-public function getCachedScore(float $lat, float $lng): ProximityResult
-{
-    // Round to ~100m precision (3 decimal places ≈ 111m lat, ~55-80m lng in Sweden)
-    $gridLat = round($lat, 3);
-    $gridLng = round($lng, 3);
-    $cacheKey = "proximity:{$gridLat},{$gridLng}";
-
-    return Cache::remember($cacheKey, now()->addHour(), function () use ($lat, $lng) {
-        return $this->score($lat, $lng);
-    });
-}
-```
-
-**Cache invalidation:** Proximity data changes when:
-- New POIs are ingested (monthly) → flush all `proximity:*` keys after POI ingestion
-- School data updates (monthly) → same
-- Score recomputation → same
-
-For simplicity, just flush the entire proximity cache after any data pipeline run:
-
-```php
-// In any ingestion command, after completion
-Cache::flush(); // or more targeted: clear keys with 'proximity:' prefix
-```
-
-**Trade-off:** First click on a new grid cell is still slow. Subsequent clicks within ~100m are instant. In practice, users click nearby points when exploring an area, so the cache hit rate will be high.
-
-### Verify
-
-```php
-// Click the same area twice, check logs
-Log::info("Proximity cache", ['hit' => Cache::has($cacheKey)]);
-// Second click should show cache hit
-```
-
----
-
-## P4: Verify Spatial Indexes
-
-### The Problem
-
-If any table is missing its GIST index, every `ST_DWithin` and `ST_Contains` query is a full table scan. With 3,767 POIs and 6,160 DeSO polygons, this would be catastrophic but might not be obvious during development with small datasets.
-
-### The Fix
-
-Run this check and create any missing indexes:
+The command runs a PostGIS spatial join:
 
 ```sql
--- Check existing spatial indexes
+INSERT INTO deso_crosswalk (old_code, new_code, overlap_fraction, reverse_fraction, mapping_type)
 SELECT
-    tablename,
-    indexname,
-    indexdef
-FROM pg_indexes
-WHERE indexdef LIKE '%gist%'
-ORDER BY tablename;
-
--- These MUST exist:
--- deso_areas: GIST index on geom
--- schools: GIST index on geom
--- pois: GIST index on geom
--- (any transit/green_space tables): GIST index on geom
-
--- If ANY are missing, create them:
-CREATE INDEX IF NOT EXISTS deso_areas_geom_idx ON deso_areas USING GIST (geom);
-CREATE INDEX IF NOT EXISTS schools_geom_idx ON schools USING GIST (geom);
-CREATE INDEX IF NOT EXISTS pois_geom_idx ON pois USING GIST (geom);
+    old.deso_code as old_code,
+    new.deso_code as new_code,
+    -- What fraction of the OLD area overlaps with this NEW area
+    ST_Area(ST_Intersection(old.geom, new.geom)) / NULLIF(ST_Area(old.geom), 0) as overlap_fraction,
+    -- What fraction of the NEW area comes from this OLD area
+    ST_Area(ST_Intersection(old.geom, new.geom)) / NULLIF(ST_Area(new.geom), 0) as reverse_fraction,
+    CASE
+        -- 1:1 if >95% overlap in both directions
+        WHEN ST_Area(ST_Intersection(old.geom, new.geom)) / NULLIF(ST_Area(old.geom), 0) > 0.95
+         AND ST_Area(ST_Intersection(old.geom, new.geom)) / NULLIF(ST_Area(new.geom), 0) > 0.95
+        THEN '1:1'
+        -- Split if one old area maps to multiple new areas
+        WHEN ST_Area(ST_Intersection(old.geom, new.geom)) / NULLIF(ST_Area(old.geom), 0) < 0.95
+        THEN 'split'
+        -- Merge if multiple old areas map to one new area
+        WHEN ST_Area(ST_Intersection(old.geom, new.geom)) / NULLIF(ST_Area(new.geom), 0) < 0.95
+        THEN 'merge'
+        ELSE 'partial'
+    END as mapping_type
+FROM deso_areas_2018 old
+JOIN deso_areas new ON ST_Intersects(old.geom, new.geom)
+WHERE ST_Area(ST_Intersection(old.geom, new.geom)) / NULLIF(ST_Area(old.geom), 0) > 0.01;
+-- Filter out trivial overlaps (<1%) from edge touching
 ```
 
-Also check that the `geography` cast in `ST_DWithin` queries can use the index. If queries cast `geom::geography` and the index is on `geom` (geometry type), PostGIS may not use the index. Options:
-- Store a separate `geog` column of type `geography` with its own GIST index
-- Or ensure queries use `geom` with `ST_DWithin` in geometry mode (with appropriate SRID transforms)
-
-### Verify
+### 2.3 Verify the Crosswalk
 
 ```sql
-EXPLAIN ANALYZE
-SELECT * FROM pois
-WHERE ST_DWithin(geom::geography, ST_SetSRID(ST_MakePoint(18.0586, 59.3308), 4326)::geography, 1000);
--- Look for "Index Scan" or "Bitmap Index Scan" — NOT "Seq Scan"
+-- Total mappings
+SELECT mapping_type, COUNT(*) FROM deso_crosswalk GROUP BY mapping_type;
+-- Expect: ~5,800+ are 1:1, ~150-300 are split/merge/partial
+
+-- Every old code should map to at least one new code
+SELECT COUNT(DISTINCT old_code) FROM deso_crosswalk;
+-- Should be 5,984
+
+-- Every new code should map from at least one old code
+SELECT COUNT(DISTINCT new_code) FROM deso_crosswalk;
+-- Should be 6,160
+
+-- Overlap fractions for old codes should sum to ~1.0
+SELECT old_code, SUM(overlap_fraction) as total
+FROM deso_crosswalk
+GROUP BY old_code
+HAVING ABS(SUM(overlap_fraction) - 1.0) > 0.05
+ORDER BY ABS(SUM(overlap_fraction) - 1.0) DESC;
+-- Should return very few rows (edge cases only)
+
+-- Check a known split area (find one)
+SELECT * FROM deso_crosswalk WHERE mapping_type = 'split' LIMIT 10;
 ```
 
 ---
 
-## P5: Clean Up the 115MB Ghost File
+## Step 3: Value Redistribution Functions
 
-### The Problem
+### 3.1 Service Class
 
-`public/data/deso.geojson` is 115MB, never used by the frontend (heatmap tiles replaced it), but sits in the public directory. It inflates Docker images, git repos, and backups.
+Create `app/Services/CrosswalkService.php`:
 
-### The Fix
-
-1. **Verify nothing references it:**
-```bash
-grep -rn "deso.geojson" resources/js/ app/ routes/ --include='*.tsx' --include='*.ts' --include='*.php' --include='*.vue'
-```
-
-2. **If nothing references it:** Delete it.
-```bash
-rm public/data/deso.geojson
-```
-
-3. **If the fallback GeoJSON endpoint (`DesoController.php:46`) still exists** and someone might call it via API:
-   - Either delete the endpoint too (if the tile approach fully replaces it)
-   - Or fix it to use `ST_SimplifyPreserveTopology` instead of `ST_Buffer` and add aggressive caching:
 ```php
-public function geojson()
+class CrosswalkService
 {
-    return Cache::rememberForever('deso_geojson_simplified', function () {
-        $features = DB::table('deso_areas')
-            ->select(
-                'deso_code',
-                DB::raw("ST_AsGeoJSON(ST_SimplifyPreserveTopology(geom, 0.001)) as geometry")
-            )
-            ->get();
-        // ... build FeatureCollection
-    });
+    /**
+     * Map a historical value from an old DeSO code to new DeSO code(s).
+     *
+     * For rate/percentage indicators (income, employment rate, education %):
+     *   - 1:1 mappings: use the value directly
+     *   - Split mappings: assign the same rate to all child areas
+     *     (A DeSO with 75% employment that splits in two → both children get 75%)
+     *
+     * For count indicators (population):
+     *   - 1:1 mappings: use the value directly
+     *   - Split mappings: distribute proportionally by overlap area
+     *     (A DeSO with 2,000 people that splits 60/40 → 1,200 + 800)
+     */
+    public function mapOldToNew(string $oldCode, float $rawValue, string $unit): array
+    {
+        $mappings = DeSoCrosswalk::where('old_code', $oldCode)->get();
+
+        if ($mappings->isEmpty()) {
+            Log::warning("No crosswalk mapping for old DeSO: {$oldCode}");
+            return [];
+        }
+
+        $results = [];
+        foreach ($mappings as $mapping) {
+            if ($unit === 'percent' || $unit === 'SEK' || $unit === 'per_1000') {
+                // Rates: same value for all children
+                $results[$mapping->new_code] = $rawValue;
+            } else {
+                // Counts: distribute by area overlap
+                $results[$mapping->new_code] = $rawValue * $mapping->overlap_fraction;
+            }
+        }
+
+        return $results; // [new_code => value, ...]
+    }
+
+    /**
+     * Bulk map: given [old_code => value], return [new_code => value].
+     * For split areas with rates, all children get the parent's rate.
+     * For split areas with counts, children get proportional shares.
+     */
+    public function bulkMapOldToNew(array $oldValues, string $unit): array
+    {
+        $crosswalk = DeSoCrosswalk::whereIn('old_code', array_keys($oldValues))
+            ->get()
+            ->groupBy('old_code');
+
+        $newValues = [];
+        foreach ($oldValues as $oldCode => $rawValue) {
+            $mappings = $crosswalk->get($oldCode, collect());
+
+            if ($mappings->isEmpty()) {
+                continue; // Skip unmapped codes
+            }
+
+            foreach ($mappings as $mapping) {
+                $newCode = $mapping->new_code;
+                $mappedValue = ($unit === 'percent' || $unit === 'SEK' || $unit === 'per_1000')
+                    ? $rawValue
+                    : $rawValue * $mapping->overlap_fraction;
+
+                // If multiple old areas contribute to one new area (merge case),
+                // use area-weighted average for rates, or sum for counts
+                if (isset($newValues[$newCode])) {
+                    if ($unit === 'percent' || $unit === 'SEK' || $unit === 'per_1000') {
+                        // Weighted average by reverse_fraction
+                        $newValues[$newCode] = $newValues[$newCode] + $mappedValue * $mapping->reverse_fraction;
+                    } else {
+                        $newValues[$newCode] += $mappedValue;
+                    }
+                } else {
+                    $newValues[$newCode] = $mappedValue;
+                }
+            }
+        }
+
+        return $newValues;
+    }
 }
 ```
 
-4. **Add to `.gitignore`** if large generated files shouldn't be tracked:
-```
-public/data/deso.geojson
-```
+**Note:** The weighted average for merged rates is an approximation. Ideally we'd use population-weighted averaging, but population itself is one of the indicators we're backfilling. For the first pass, area-weighted is good enough — the merge cases are few (~1-3% of areas).
 
 ---
 
-## Execution Order
+## Step 4: Verify with Real Data
 
-| Priority | Fix | Effort | Expected Impact |
-|---|---|---|---|
-| P0 | Render tiers — map markers vs sidebar counts | 45 min | 3,767 → ~50 markers in Stockholm |
-| P1 | Deduplicate spatial queries (Option A) | 30-60 min | Cuts query count from 12 to 5-6 |
-| P2 | Throttle hover handler | 10 min | Smooth hovering in dense areas |
-| P3 | Cache proximity by grid cell | 30 min | Instant repeat lookups |
-| P4 | Verify spatial indexes | 10 min | Prevents catastrophic slow queries |
-| P5 | Delete 115MB ghost file | 5 min | Housekeeping |
+Pull one historical indicator through the crosswalk and sanity check:
 
-Total: ~2.5-3 hours. P0 + P2 alone (55 minutes) will fix the most visible lag.
+```bash
+# 1. Fetch 2022 median_income using old DeSO codes from SCB
+php artisan ingest:scb --indicator=median_income --year=2022 --use-old-deso
+
+# 2. Check: Danderyd old DeSO codes should show high income
+SELECT old_code, raw_value FROM temp_old_values WHERE old_code LIKE '0162%' ORDER BY raw_value DESC LIMIT 5;
+
+# 3. Map through crosswalk
+# 4. Check: corresponding new DeSO codes should have the same values
+SELECT new_code, mapped_value FROM mapped_values WHERE new_code LIKE '0162%' ORDER BY mapped_value DESC LIMIT 5;
+```
 
 ---
 
 ## Verification
 
-After all fixes, test with Stockholm central (59.3308, 18.0586):
-
-- [ ] Pin-drop API responds in **< 200ms** (check Network tab)
-- [ ] Map markers are **only Tier 1 categories** — schools, transit, grocery, healthcare, negative POIs
-- [ ] Sidebar shows **counts for Tier 2 categories** — restaurants, cafés, gyms, parks with nearest distance
-- [ ] Stockholm central pin-drop renders **< 80 markers** (not 3,767)
-- [ ] Zero data loss — every POI type appears somewhere (either as marker or sidebar count)
-- [ ] Hovering over markers is smooth, **no frame drops** (check Performance tab)
-- [ ] Second click nearby (within ~100m) is **< 50ms** (cache hit)
-- [ ] `EXPLAIN ANALYZE` on spatial queries shows **index scans**, not seq scans
-- [ ] `public/data/deso.geojson` is **gone** (or simplified + cached if endpoint kept)
-- [ ] `poi_categories.render_on_map` column exists and is configurable in admin
+- [ ] `deso_areas_2018` table has exactly **5,984** rows with geometries
+- [ ] `deso_crosswalk` table has mappings for all 5,984 old codes and all 6,160 new codes
+- [ ] ~90%+ of mappings are type `1:1`
+- [ ] Overlap fractions per old code sum to ~1.0 (within 5% tolerance)
+- [ ] `CrosswalkService::bulkMapOldToNew()` correctly handles rate indicators (same value) and count indicators (proportional split)
+- [ ] A test run with 2022 median_income produces sensible values for known areas (Danderyd high, etc.)
 
 ---
 
 ## What NOT to Do
 
-- **DO NOT touch the heatmap tile rendering.** It's already performant at 60fps. The problem was never the map tiles.
-- **DO NOT implement vector tiles or WebGL rendering.** Overkill for this feature count. The bottleneck is server-side queries and response size, not client-side rendering.
-- **DO NOT remove the `pointermove` handler entirely.** Hover tooltips are good UX. Just throttle them.
-- **DO NOT cache with infinite TTL.** Proximity data changes when POIs/schools update. 1-hour cache with flush-on-ingest is the right balance.
+- **DO NOT delete the 2018 boundary table after building the crosswalk.** Keep it for debugging and potential re-computation.
+- **DO NOT use population weighting for the first version.** Area-weighted is good enough for the ~5-10% of areas that aren't 1:1. We can refine later.
+- **DO NOT assume code format similarity means geographic similarity.** Two codes that look alike might map to completely different areas after the reform. Trust the geometry, not the code pattern.
+- **DO NOT filter out small overlaps too aggressively.** The 1% threshold in the query filters edge-touching artifacts, but some legitimate narrow areas might have 5-10% overlaps that matter.
