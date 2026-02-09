@@ -14,9 +14,53 @@ class ScbApiService
     private const RETRY_DELAY_MS = 2000;
 
     /**
+     * Historical table overrides for indicators where old tables differ from new DeSO 2025 tables.
+     * Only needed for indicators whose current tables don't contain historical years.
+     *
+     * @var array<string, array<string, mixed>>
+     */
+    private array $historicalOverrides = [
+        'education_post_secondary_pct' => [
+            'path' => 'UF/UF0506/UF0506D/UtbSUNBefDesoRegso',
+            'contents_code' => '000005MO',
+            'years' => [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023],
+            'series_notes' => 'Age range 25-64 (vs 25-65 in 2024+ table). May cause ~0.5pp discontinuity.',
+        ],
+        'education_below_secondary_pct' => [
+            'path' => 'UF/UF0506/UF0506D/UtbSUNBefDesoRegso',
+            'contents_code' => '000005MO',
+            'years' => [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023],
+            'series_notes' => 'Age range 25-64 (vs 25-65 in 2024+ table). May cause ~0.5pp discontinuity.',
+        ],
+        'rental_tenure_pct' => [
+            'path' => 'BO/BO0104/BO0104X/BO0104T10N',
+            'contents_code' => '000006OC',
+            'years' => [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023],
+        ],
+    ];
+
+    /**
+     * Employment rate config for AM0210 table (2022-2023).
+     * Uses two contents codes: employed / total.
+     *
+     * @var array<string, mixed>
+     */
+    private array $employmentAm0210Config = [
+        'path' => 'AM/AM0210/AM0210G/ArRegDesoStatusN',
+        'contents_code' => ['0000089X', '0000089Y'],
+        'extra_query' => [
+            ['code' => 'Kon', 'selection' => ['filter' => 'item', 'values' => ['1+2']]],
+            ['code' => 'Alder', 'selection' => ['filter' => 'item', 'values' => ['20-64']]],
+        ],
+        'value_transform' => 'ratio_first_over_last',
+        'years' => [2020, 2021, 2022, 2023],
+        'series_notes' => 'AM0210 register-based annual labour market. Series break from AM0207 at 2019→2020 may cause 1-2pp discontinuity.',
+    ];
+
+    /**
      * Indicator slug => SCB API configuration.
      *
-     * @var array<string, array{path: string, contents_code: string, extra_query: array<int, array{code: string, selection: array{filter: string, values: string[]}}>, value_transform: string}>
+     * @var array<string, array{path: string, contents_code: string|string[], extra_query: array<int, array{code: string, selection: array{filter: string, values: string[]}}>, value_transform: string}>
      */
     private array $indicatorConfig = [
         'median_income' => [
@@ -52,11 +96,11 @@ class ScbApiService
             'value_transform' => 'none',
         ],
         'employment_rate' => [
-            'path' => 'AM/AM0207/AM0207I/BefDeSoSyssN',
-            'contents_code' => '00000569',
+            'path' => 'AM/AM0210/AM0210G/ArRegDesoStatusN',
+            'contents_code' => ['0000089X', '0000089Y'],
             'extra_query' => [
-                ['code' => 'Sysselsattning', 'selection' => ['filter' => 'item', 'values' => ['FÖRV', 'total']]],
                 ['code' => 'Kon', 'selection' => ['filter' => 'item', 'values' => ['1+2']]],
+                ['code' => 'Alder', 'selection' => ['filter' => 'item', 'values' => ['20-64']]],
             ],
             'value_transform' => 'ratio_first_over_last', // employed / total
         ],
@@ -124,6 +168,121 @@ class ScbApiService
     }
 
     /**
+     * Fetch historical DeSO-level data using old tables where needed.
+     * Returns values keyed by old DeSO codes (caller must map through crosswalk).
+     *
+     * @return array<string, float|null> Map of old_deso_code => value
+     */
+    public function fetchHistorical(string $slug, int $year): array
+    {
+        $config = $this->getHistoricalConfig($slug, $year);
+        if (! $config) {
+            throw new \InvalidArgumentException("No historical configuration for {$slug} year {$year}");
+        }
+
+        $query = $this->buildQuery($config, $year);
+        $url = self::BASE_URL.'/'.$config['path'];
+
+        $response = $this->postWithRetry($url, $query);
+        $data = $response->json();
+
+        return $this->parseResponse($data, $config['value_transform']);
+    }
+
+    /**
+     * Get the available historical years for an indicator.
+     *
+     * @return int[]
+     */
+    public function getHistoricalYears(string $slug): array
+    {
+        if ($slug === 'employment_rate') {
+            return array_unique(array_merge(
+                $this->employmentAm0210Config['years'],
+                [2019, 2020, 2021], // AM0207I years
+            ));
+        }
+
+        $override = $this->historicalOverrides[$slug] ?? null;
+        if ($override) {
+            return $override['years'];
+        }
+
+        // For indicators using the current table (income, low_econ, foreign_bg, population)
+        // they support years going back to 2010/2011
+        $yearRanges = [
+            'median_income' => range(2011, 2023),
+            'low_economic_standard_pct' => range(2011, 2023),
+            'foreign_background_pct' => range(2010, 2023),
+            'population' => range(2010, 2023),
+        ];
+
+        return $yearRanges[$slug] ?? [];
+    }
+
+    /**
+     * Resolve the correct SCB API config for a historical indicator+year.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function getHistoricalConfig(string $slug, int $year): ?array
+    {
+        // Employment rate: special handling for two different table series
+        if ($slug === 'employment_rate') {
+            return $this->getEmploymentHistoricalConfig($year);
+        }
+
+        // Check for historical overrides (education, rental)
+        $override = $this->historicalOverrides[$slug] ?? null;
+        if ($override && in_array($year, $override['years'])) {
+            $baseConfig = $this->indicatorConfig[$slug] ?? null;
+            if (! $baseConfig) {
+                return null;
+            }
+
+            return array_merge($baseConfig, [
+                'path' => $override['path'],
+                'contents_code' => $override['contents_code'],
+            ]);
+        }
+
+        // For indicators using current tables with historical years
+        $config = $this->indicatorConfig[$slug] ?? null;
+        if ($config && in_array($year, $this->getHistoricalYears($slug))) {
+            return $config;
+        }
+
+        return null;
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function getEmploymentHistoricalConfig(int $year): ?array
+    {
+        // 2020-2023: use AM0210 table (preferred for consistency with 2024)
+        if (in_array($year, $this->employmentAm0210Config['years'])) {
+            return $this->employmentAm0210Config;
+        }
+
+        // 2019: use AM0207 (older methodology, only year not in AM0210)
+        if ($year === 2019) {
+            return [
+                'path' => 'AM/AM0207/AM0207I/BefDeSoSyssN',
+                'contents_code' => '00000569',
+                'extra_query' => [
+                    ['code' => 'Sysselsattning', 'selection' => ['filter' => 'item', 'values' => ['FÖRV', 'total']]],
+                    ['code' => 'Kon', 'selection' => ['filter' => 'item', 'values' => ['1+2']]],
+                ],
+                'value_transform' => 'ratio_first_over_last',
+                'series_notes' => 'AM0207 admin-based labour statistics. Series break at 2019→2020 (switch to AM0210).',
+            ];
+        }
+
+        return null;
+    }
+
+    /**
      * Find the most recent year with data for an indicator.
      */
     public function findLatestYear(string $slug): ?int
@@ -152,9 +311,13 @@ class ScbApiService
      */
     private function buildQuery(array $config, int $year): array
     {
+        $contentsValues = is_array($config['contents_code'])
+            ? $config['contents_code']
+            : [$config['contents_code']];
+
         $query = [
             ['code' => 'Region', 'selection' => ['filter' => 'all', 'values' => ['*']]],
-            ['code' => 'ContentsCode', 'selection' => ['filter' => 'item', 'values' => [$config['contents_code']]]],
+            ['code' => 'ContentsCode', 'selection' => ['filter' => 'item', 'values' => $contentsValues]],
             ...$config['extra_query'],
             ['code' => 'Tid', 'selection' => ['filter' => 'item', 'values' => [(string) $year]]],
         ];

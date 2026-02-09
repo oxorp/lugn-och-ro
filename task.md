@@ -1,272 +1,358 @@
-# TASK: Build DeSO 2018→2025 Crosswalk Table
+# TASK: Ingest Historical SCB Data (2019-2023)
 
 ## Context
 
-SCB switched from DeSO 2018 (5,984 areas) to DeSO 2025 (6,160 areas). All historical data (2019-2023) uses old codes. Our database uses new codes. Without a mapping between them, 5 years of SCB data is unusable.
+The DeSO crosswalk is built (Phase 1). Now we can ingest 5 years of historical SCB data for all demographic/economic indicators. This gives us the time series depth needed for trend computation (1y, 3y, 5y changes).
 
-This is a **blocker** for all historical data ingestion. Build it first.
+**Depends on:** `task-historical-phase1-crosswalk.md` — the crosswalk table must exist.
 
 ---
 
-## Step 1: Load DeSO 2018 Boundaries
+## Step 1: Extend the Ingestion Command
 
-### 1.1 Fetch from SCB WFS
+### 1.1 Add Historical Mode to `ingest:scb`
 
-SCB serves both boundary sets via WFS. We already have DeSO 2025 in `deso_areas`. Now load DeSO 2018:
+The existing command fetches 2024 data from new DeSO tables. Add a `--historical` flag that uses old tables + crosswalk:
 
 ```bash
-php artisan import:deso-2018-boundaries
+# Current: fetches 2024 from new tables with DeSO 2025 codes
+php artisan ingest:scb --year=2024
+
+# New: fetches historical year from old tables with DeSO 2018 codes, maps through crosswalk
+php artisan ingest:scb --year=2022 --historical
+
+# Batch: all years
+php artisan ingest:scb-historical --from=2019 --to=2023
 ```
 
-The command should:
+### 1.2 Table Mapping Config
 
-1. Fetch DeSO 2018 geometries from SCB WFS:
-```
-https://geodata.scb.se/geoserver/stat/wfs?service=WFS&version=1.1.0&request=GetFeature&typeName=stat:DeSO&outputFormat=application/json&srsName=EPSG:4326
-```
-
-Note: The layer name might be `stat:DeSO` (the 2018 version) vs `stat:DeSO_2025` or similar. Check what's available:
-```
-https://geodata.scb.se/geoserver/stat/wfs?service=WFS&version=1.1.0&request=GetCapabilities
-```
-
-2. Store in a new table `deso_areas_2018`:
+The research report identified old vs new table names. Add this to the SCB service or config:
 
 ```php
-Schema::create('deso_areas_2018', function (Blueprint $table) {
-    $table->id();
-    $table->string('deso_code', 10)->unique()->index();
-    $table->string('deso_name')->nullable();
-    $table->string('kommun_code', 4)->nullable();
-    $table->string('kommun_name')->nullable();
-    $table->timestamps();
-});
+// In ScbApiService.php or config/scb_tables.php
 
-DB::statement("SELECT AddGeometryColumn('public', 'deso_areas_2018', 'geom', 4326, 'MULTIPOLYGON', 2)");
-DB::statement("CREATE INDEX deso_areas_2018_geom_idx ON deso_areas_2018 USING GIST (geom)");
+private array $historicalTables = [
+    'median_income' => [
+        'table' => 'HE/HE0110/HE0110A/Tab3InkDesoRegso',
+        'contents_code' => '000008AB',
+        'years' => [2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023],
+        'multiply' => 1000,  // SCB returns thousands
+        'unit' => 'SEK',
+        'notes' => 'Old DeSO codes. Values in thousands — multiply by 1000.',
+    ],
+    'low_economic_standard_pct' => [
+        'table' => 'HE/HE0110/HE0110A/Tab4InkDesoRegso',
+        'contents_code' => '000008AC',
+        'years' => [2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023],
+        'unit' => 'percent',
+    ],
+    'population' => [
+        'table' => 'BE/BE0101/BE0101A/FolkmDesoAldKon',
+        'contents_code' => '000007Y7',
+        'filter' => ['Alder' => 'totalt', 'Kon' => ['1', '2']],  // Sum both sexes, all ages
+        'years' => [2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023],
+        'unit' => 'number',
+        'notes' => 'Need to sum male+female (Kon=1 + Kon=2) for total.',
+    ],
+    'foreign_background_pct' => [
+        'table' => 'BE/BE0101/BE0101Q/FolkmDesoBakgrKon',
+        'contents_code' => '000007Y4',
+        'filter' => ['Bakgrund' => 'utlandskBakgrund'],  // Foreign background
+        'years' => [2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023],
+        'unit' => 'percent',
+        'notes' => 'Compute as foreign_background_count / total_population.',
+    ],
+    'education_post_secondary_pct' => [
+        'table' => 'UF/UF0506/UF0506B/UtbSUNBefDesoRegso',
+        'contents_code' => '000007Z6',
+        'years' => [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023],
+        'unit' => 'percent',
+        'notes' => 'OLD table. Ages 25-64 (vs 25-65 in new table). 1-year age range discontinuity at 2024.',
+    ],
+    'education_below_secondary_pct' => [
+        'table' => 'UF/UF0506/UF0506B/UtbSUNBefDesoRegso',
+        'contents_code' => '000007Z6',  // Same table, different filter
+        'years' => [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023],
+        'unit' => 'percent',
+        'notes' => 'Same table as post_secondary. Different education level filter.',
+    ],
+    'employment_rate' => [
+        // Two tables covering different year ranges
+        'table_old' => 'AM/AM0207/AM0207Z/BefDeSoSyssN',  // 2019-2021
+        'table_new' => 'AM/AM0210/AM0210G/ArRegDesoStatusN',  // 2020-2024
+        'contents_code_old' => '00000569',
+        'contents_code_employed_new' => '0000089X',
+        'contents_code_total_new' => '0000089Y',
+        'years_old' => [2019, 2020, 2021],
+        'years_new' => [2020, 2021, 2022, 2023],  // 2024 already ingested from DeSO 2025
+        'unit' => 'percent',
+        'notes' => 'AM0207 for 2019. AM0210 for 2020-2023 (preferred when both available). Compute rate = employed/total.',
+    ],
+    'rental_tenure_pct' => [
+        'table' => 'BO/BO0104/BO0104T10N',
+        'contents_code' => '00000864',
+        'years' => [2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023],
+        'unit' => 'percent',
+    ],
+];
 ```
 
-3. Verify: should get exactly 5,984 areas.
+### 1.3 Ingestion Flow (Historical)
 
-### 1.2 Alternative: SCB May Publish Both in the Same WFS
+For each indicator × year:
 
-Check if the WFS has separate layers for 2018 and 2025. If not, check:
-- https://www.scb.se/hitta-statistik/regional-statistik-och-kartor/regionala-indelningar/deso---demografiska-statistikomraden/
-- SCB geodata portal: https://www.scb.se/vara-tjanster/oppna-data/oppna-geodata/
-
-If the 2018 boundaries aren't available via WFS anymore, check if they're downloadable as a shapefile/GeoPackage.
-
----
-
-## Step 2: Compute the Crosswalk
-
-### 2.1 Migration
+1. Fetch from SCB using the **old table** and **old DeSO codes** (no `_DeSO2025` suffix)
+2. Parse JSON-stat2 response → `[old_deso_code => raw_value]`
+3. Map through crosswalk: `CrosswalkService::bulkMapOldToNew(values, unit)` → `[new_deso_code => mapped_value]`
+4. Upsert into `indicator_values` with the new DeSO code and correct year
+5. Log how many values were fetched, mapped, and stored
 
 ```php
-Schema::create('deso_crosswalk', function (Blueprint $table) {
-    $table->id();
-    $table->string('old_code', 10)->index();       // DeSO 2018 code
-    $table->string('new_code', 10)->index();        // DeSO 2025 code
-    $table->decimal('overlap_fraction', 8, 6);      // 0.000000 to 1.000000 — what % of the OLD area falls in this NEW area
-    $table->decimal('reverse_fraction', 8, 6);      // What % of the NEW area comes from this OLD area
-    $table->string('mapping_type', 20);             // '1:1', 'split', 'merge', 'partial'
-    $table->timestamps();
-
-    $table->unique(['old_code', 'new_code']);
-});
-```
-
-### 2.2 Spatial Overlap Computation
-
-```bash
-php artisan build:deso-crosswalk
-```
-
-The command runs a PostGIS spatial join:
-
-```sql
-INSERT INTO deso_crosswalk (old_code, new_code, overlap_fraction, reverse_fraction, mapping_type)
-SELECT
-    old.deso_code as old_code,
-    new.deso_code as new_code,
-    -- What fraction of the OLD area overlaps with this NEW area
-    ST_Area(ST_Intersection(old.geom, new.geom)) / NULLIF(ST_Area(old.geom), 0) as overlap_fraction,
-    -- What fraction of the NEW area comes from this OLD area
-    ST_Area(ST_Intersection(old.geom, new.geom)) / NULLIF(ST_Area(new.geom), 0) as reverse_fraction,
-    CASE
-        -- 1:1 if >95% overlap in both directions
-        WHEN ST_Area(ST_Intersection(old.geom, new.geom)) / NULLIF(ST_Area(old.geom), 0) > 0.95
-         AND ST_Area(ST_Intersection(old.geom, new.geom)) / NULLIF(ST_Area(new.geom), 0) > 0.95
-        THEN '1:1'
-        -- Split if one old area maps to multiple new areas
-        WHEN ST_Area(ST_Intersection(old.geom, new.geom)) / NULLIF(ST_Area(old.geom), 0) < 0.95
-        THEN 'split'
-        -- Merge if multiple old areas map to one new area
-        WHEN ST_Area(ST_Intersection(old.geom, new.geom)) / NULLIF(ST_Area(new.geom), 0) < 0.95
-        THEN 'merge'
-        ELSE 'partial'
-    END as mapping_type
-FROM deso_areas_2018 old
-JOIN deso_areas new ON ST_Intersects(old.geom, new.geom)
-WHERE ST_Area(ST_Intersection(old.geom, new.geom)) / NULLIF(ST_Area(old.geom), 0) > 0.01;
--- Filter out trivial overlaps (<1%) from edge touching
-```
-
-### 2.3 Verify the Crosswalk
-
-```sql
--- Total mappings
-SELECT mapping_type, COUNT(*) FROM deso_crosswalk GROUP BY mapping_type;
--- Expect: ~5,800+ are 1:1, ~150-300 are split/merge/partial
-
--- Every old code should map to at least one new code
-SELECT COUNT(DISTINCT old_code) FROM deso_crosswalk;
--- Should be 5,984
-
--- Every new code should map from at least one old code
-SELECT COUNT(DISTINCT new_code) FROM deso_crosswalk;
--- Should be 6,160
-
--- Overlap fractions for old codes should sum to ~1.0
-SELECT old_code, SUM(overlap_fraction) as total
-FROM deso_crosswalk
-GROUP BY old_code
-HAVING ABS(SUM(overlap_fraction) - 1.0) > 0.05
-ORDER BY ABS(SUM(overlap_fraction) - 1.0) DESC;
--- Should return very few rows (edge cases only)
-
--- Check a known split area (find one)
-SELECT * FROM deso_crosswalk WHERE mapping_type = 'split' LIMIT 10;
-```
-
----
-
-## Step 3: Value Redistribution Functions
-
-### 3.1 Service Class
-
-Create `app/Services/CrosswalkService.php`:
-
-```php
-class CrosswalkService
+public function ingestHistorical(string $indicatorSlug, int $year): void
 {
-    /**
-     * Map a historical value from an old DeSO code to new DeSO code(s).
-     *
-     * For rate/percentage indicators (income, employment rate, education %):
-     *   - 1:1 mappings: use the value directly
-     *   - Split mappings: assign the same rate to all child areas
-     *     (A DeSO with 75% employment that splits in two → both children get 75%)
-     *
-     * For count indicators (population):
-     *   - 1:1 mappings: use the value directly
-     *   - Split mappings: distribute proportionally by overlap area
-     *     (A DeSO with 2,000 people that splits 60/40 → 1,200 + 800)
-     */
-    public function mapOldToNew(string $oldCode, float $rawValue, string $unit): array
-    {
-        $mappings = DeSoCrosswalk::where('old_code', $oldCode)->get();
+    $config = $this->historicalTables[$indicatorSlug];
+    $indicator = Indicator::where('slug', $indicatorSlug)->firstOrFail();
 
-        if ($mappings->isEmpty()) {
-            Log::warning("No crosswalk mapping for old DeSO: {$oldCode}");
-            return [];
+    // 1. Fetch from SCB
+    $oldValues = $this->scbService->fetchHistorical($config, $year);
+    // Returns: ['0114A0010' => 287000, '0114A0020' => 265000, ...]
+
+    $this->info("Fetched {$count($oldValues)} values for {$indicatorSlug} year {$year} (old DeSO codes)");
+
+    // 2. Map through crosswalk
+    $newValues = $this->crosswalkService->bulkMapOldToNew($oldValues, $config['unit']);
+
+    $this->info("Mapped to {$count($newValues)} new DeSO codes");
+
+    // 3. Upsert
+    $chunks = collect($newValues)->chunk(500);
+    foreach ($chunks as $chunk) {
+        foreach ($chunk as $desoCode => $value) {
+            IndicatorValue::updateOrCreate(
+                ['deso_code' => $desoCode, 'indicator_id' => $indicator->id, 'year' => $year],
+                ['raw_value' => $value]
+            );
         }
-
-        $results = [];
-        foreach ($mappings as $mapping) {
-            if ($unit === 'percent' || $unit === 'SEK' || $unit === 'per_1000') {
-                // Rates: same value for all children
-                $results[$mapping->new_code] = $rawValue;
-            } else {
-                // Counts: distribute by area overlap
-                $results[$mapping->new_code] = $rawValue * $mapping->overlap_fraction;
-            }
-        }
-
-        return $results; // [new_code => value, ...]
     }
 
-    /**
-     * Bulk map: given [old_code => value], return [new_code => value].
-     * For split areas with rates, all children get the parent's rate.
-     * For split areas with counts, children get proportional shares.
-     */
-    public function bulkMapOldToNew(array $oldValues, string $unit): array
+    // 4. Log
+    $this->info("Stored {$count($newValues)} indicator_values for {$indicatorSlug} year {$year}");
+}
+```
+
+---
+
+## Step 2: Batch Historical Command
+
+```bash
+php artisan ingest:scb-historical [--from=2019] [--to=2023] [--indicator=median_income]
+```
+
+```php
+class IngestScbHistorical extends Command
+{
+    protected $signature = 'ingest:scb-historical
+        {--from=2019 : Start year}
+        {--to=2023 : End year}
+        {--indicator= : Specific indicator slug, or all if omitted}';
+
+    public function handle()
     {
-        $crosswalk = DeSoCrosswalk::whereIn('old_code', array_keys($oldValues))
-            ->get()
-            ->groupBy('old_code');
+        $from = $this->option('from');
+        $to = $this->option('to');
+        $slug = $this->option('indicator');
 
-        $newValues = [];
-        foreach ($oldValues as $oldCode => $rawValue) {
-            $mappings = $crosswalk->get($oldCode, collect());
+        $indicators = $slug
+            ? [$slug]
+            : array_keys($this->historicalTables);
 
-            if ($mappings->isEmpty()) {
-                continue; // Skip unmapped codes
-            }
+        foreach ($indicators as $indicatorSlug) {
+            $config = $this->historicalTables[$indicatorSlug];
+            $availableYears = $config['years'] ?? [];
 
-            foreach ($mappings as $mapping) {
-                $newCode = $mapping->new_code;
-                $mappedValue = ($unit === 'percent' || $unit === 'SEK' || $unit === 'per_1000')
-                    ? $rawValue
-                    : $rawValue * $mapping->overlap_fraction;
-
-                // If multiple old areas contribute to one new area (merge case),
-                // use area-weighted average for rates, or sum for counts
-                if (isset($newValues[$newCode])) {
-                    if ($unit === 'percent' || $unit === 'SEK' || $unit === 'per_1000') {
-                        // Weighted average by reverse_fraction
-                        $newValues[$newCode] = $newValues[$newCode] + $mappedValue * $mapping->reverse_fraction;
-                    } else {
-                        $newValues[$newCode] += $mappedValue;
-                    }
-                } else {
-                    $newValues[$newCode] = $mappedValue;
+            for ($year = $from; $year <= $to; $year++) {
+                if (!in_array($year, $availableYears)) {
+                    $this->warn("⏭  {$indicatorSlug} year {$year} — not available, skipping");
+                    continue;
                 }
+
+                $this->info("📥 Ingesting {$indicatorSlug} for {$year}...");
+                $this->ingestHistorical($indicatorSlug, $year);
             }
         }
 
-        return $newValues;
+        // Normalize all years after ingestion
+        for ($year = $from; $year <= $to; $year++) {
+            $this->call('normalize:indicators', ['--year' => $year]);
+        }
+
+        $this->info('✅ Historical ingestion complete');
     }
 }
 ```
 
-**Note:** The weighted average for merged rates is an approximation. Ideally we'd use population-weighted averaging, but population itself is one of the indicators we're backfilling. For the first pass, area-weighted is good enough — the merge cases are few (~1-3% of areas).
+**Rate limiting:** SCB allows 30 requests per 10 seconds. With 8 indicators × 5 years = 40 requests, add 400ms delay between calls.
 
 ---
 
-## Step 4: Verify with Real Data
+## Step 3: Employment Rate — Special Handling
 
-Pull one historical indicator through the crosswalk and sanity check:
+Employment uses two different SCB tables with different methodologies:
+
+| Year | Table | Method |
+|---|---|---|
+| 2019 | AM0207 (BefDeSoSyssN) | Admin-based labour statistics |
+| 2020-2023 | AM0210 (ArRegDesoStatusN) | Register-based annual labour market |
+| 2024 | AM0210 (ArRegDesoStatusN, DeSO 2025) | Already ingested |
+
+**For 2020-2021 where both tables overlap:** Use AM0210 for consistency with 2022-2024. Only fall back to AM0207 for 2019.
+
+**Employment rate computation from AM0210:**
+```
+employment_rate = employed (0000089X) / total (0000089Y) × 100
+```
+Filter: ages 20-64, both sexes, old DeSO codes (for 2020-2023).
+
+**Flag the series break:** The jump from AM0207 (2019) to AM0210 (2020+) may cause a 1-2pp discontinuity. Store a metadata note so trend computation knows about it. Don't smooth it — just document it.
+
+---
+
+## Step 4: Normalize Historical Years
+
+After all historical data is ingested, normalize each year independently:
 
 ```bash
-# 1. Fetch 2022 median_income using old DeSO codes from SCB
-php artisan ingest:scb --indicator=median_income --year=2022 --use-old-deso
+for year in 2019 2020 2021 2022 2023; do
+    php artisan normalize:indicators --year=$year
+done
+```
 
-# 2. Check: Danderyd old DeSO codes should show high income
-SELECT old_code, raw_value FROM temp_old_values WHERE old_code LIKE '0162%' ORDER BY raw_value DESC LIMIT 5;
+Each year gets its own percentile ranking. This is correct — we want to know "where did this DeSO rank in 2019?" not "where would 2019 values rank against 2024 peers?"
 
-# 3. Map through crosswalk
-# 4. Check: corresponding new DeSO codes should have the same values
-SELECT new_code, mapped_value FROM mapped_values WHERE new_code LIKE '0162%' ORDER BY mapped_value DESC LIMIT 5;
+---
+
+## Step 5: Recompute Scores for All Years
+
+```bash
+for year in 2019 2020 2021 2022 2023 2024; do
+    php artisan compute:scores --year=$year
+done
+```
+
+Now we have composite scores for 6 years. Trend computation becomes real:
+- `trend_1y = score_2024 - score_2023`
+- `trend_3y = score_2024 - score_2021`
+- `trend_5y = score_2024 - score_2019`
+
+---
+
+## Step 6: Handle Edge Cases
+
+### 6.1 Missing Values
+
+Not every DeSO will have data for every year (especially after crosswalk mapping for split areas). Leave `raw_value` as NULL for missing entries. The normalization and scoring already handle NULLs.
+
+### 6.2 Education Age Range Discontinuity
+
+Old education table: ages 25-64. New table: ages 25-65. This creates a tiny bump at 2024. Add a note to the indicator metadata:
+
+```php
+// In indicators table or config
+'education_post_secondary_pct' => [
+    'series_notes' => 'Age range changed from 25-64 to 25-65 starting 2024. May cause ~0.5pp discontinuity.',
+]
+```
+
+### 6.3 Income Multiplication
+
+The historical income table returns values in thousands. The current ingestion may or may not multiply. **Verify consistency:**
+
+```sql
+-- After historical ingestion, compare 2023 (old table) vs 2024 (new table)
+SELECT year, AVG(raw_value), MIN(raw_value), MAX(raw_value)
+FROM indicator_values iv
+JOIN indicators i ON i.id = iv.indicator_id
+WHERE i.slug = 'median_income'
+  AND year IN (2023, 2024)
+GROUP BY year;
+-- Both years should be in the same order of magnitude (200,000-400,000 SEK range)
+-- If 2023 shows 200-400 and 2024 shows 200,000-400,000, the ×1000 multiplier is missing
 ```
 
 ---
 
 ## Verification
 
-- [ ] `deso_areas_2018` table has exactly **5,984** rows with geometries
-- [ ] `deso_crosswalk` table has mappings for all 5,984 old codes and all 6,160 new codes
-- [ ] ~90%+ of mappings are type `1:1`
-- [ ] Overlap fractions per old code sum to ~1.0 (within 5% tolerance)
-- [ ] `CrosswalkService::bulkMapOldToNew()` correctly handles rate indicators (same value) and count indicators (proportional split)
-- [ ] A test run with 2022 median_income produces sensible values for known areas (Danderyd high, etc.)
+### Data Completeness
+
+```sql
+-- Coverage matrix: indicators × years
+SELECT
+    i.slug,
+    iv.year,
+    COUNT(iv.id) as deso_count,
+    ROUND(AVG(iv.raw_value)::numeric, 1) as avg_value,
+    COUNT(iv.id)::float / 6160 * 100 as coverage_pct
+FROM indicator_values iv
+JOIN indicators i ON i.id = iv.indicator_id
+WHERE i.source = 'scb'
+GROUP BY i.slug, iv.year
+ORDER BY i.slug, iv.year;
+```
+
+**Expected:**
+- 2019-2023: ~5,900-6,100 DeSOs per indicator (some loss from crosswalk edge cases)
+- 2024: ~6,100-6,160 DeSOs (already ingested, no crosswalk needed)
+
+### Trend Sanity
+
+```sql
+-- Danderyd income should increase over time
+SELECT year, raw_value
+FROM indicator_values iv
+JOIN indicators i ON i.id = iv.indicator_id
+WHERE i.slug = 'median_income'
+  AND iv.deso_code IN (SELECT deso_code FROM deso_areas WHERE kommun_name = 'Danderyd')
+ORDER BY year;
+-- Expect: steady increase from ~350K (2019) to ~430K (2024)
+
+-- National median should also trend upward
+SELECT year, PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY raw_value) as national_median
+FROM indicator_values iv
+JOIN indicators i ON i.id = iv.indicator_id
+WHERE i.slug = 'median_income'
+  AND iv.raw_value IS NOT NULL
+GROUP BY year
+ORDER BY year;
+```
+
+### Composite Score Trends
+
+```sql
+-- After score recomputation: check that trends make sense
+SELECT cs.deso_code, da.kommun_name, cs.year, cs.score
+FROM composite_scores cs
+JOIN deso_areas da ON da.deso_code = cs.deso_code
+WHERE da.kommun_name = 'Danderyd'
+  AND cs.deso_code = (SELECT deso_code FROM deso_areas WHERE kommun_name = 'Danderyd' LIMIT 1)
+ORDER BY cs.year;
+-- Score should be relatively stable (high-scoring area stays high)
+```
+
+- [ ] All 8 SCB indicators have data for years 2019-2024 (6 years each)
+- [ ] Coverage is >95% for each indicator × year combination
+- [ ] Values are in the correct unit/scale (income in SEK not thousands, percentages 0-100 not 0-1)
+- [ ] Normalization works per-year (each year has its own 0-1 distribution)
+- [ ] Composite scores exist for all 6 years
+- [ ] Trends (trend_1y, trend_3y, trend_5y) compute correctly
+- [ ] No wild jumps at the 2023→2024 boundary (crosswalk mapping works smoothly)
 
 ---
 
 ## What NOT to Do
 
-- **DO NOT delete the 2018 boundary table after building the crosswalk.** Keep it for debugging and potential re-computation.
-- **DO NOT use population weighting for the first version.** Area-weighted is good enough for the ~5-10% of areas that aren't 1:1. We can refine later.
-- **DO NOT assume code format similarity means geographic similarity.** Two codes that look alike might map to completely different areas after the reform. Trust the geometry, not the code pattern.
-- **DO NOT filter out small overlaps too aggressively.** The 1% threshold in the query filters edge-touching artifacts, but some legitimate narrow areas might have 5-10% overlaps that matter.
+- **DO NOT re-ingest 2024 data.** It's already correct with DeSO 2025 codes. Only ingest 2019-2023.
+- **DO NOT normalize across years.** Each year gets its own independent percentile ranking.
+- **DO NOT ignore the income multiplication factor.** Verify 2023 values are in the same scale as 2024 before proceeding.
+- **DO NOT fetch all years in a single SCB API call.** The 150K cell limit could be exceeded. Fetch one year at a time.
