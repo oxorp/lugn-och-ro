@@ -5,6 +5,9 @@ import { PercentileBar } from '@/components/percentile-bar';
 import type { LocationData } from '../types';
 import { formatIndicatorValue } from '../utils';
 
+import { Sparkline } from './sparkline';
+import { TrendArrow } from './trend-arrow';
+
 export function IndicatorBar({
     indicator,
     scope,
@@ -20,22 +23,45 @@ export function IndicatorBar({
     const effectivePct =
         indicator.direction === 'negative' ? 100 - rawPct : rawPct;
 
+    const trend = indicator.trend;
+    const hasTrend = trend && trend.percentiles.length >= 2;
+
     return (
         <div className="space-y-1">
             <div className="flex items-center justify-between text-xs">
                 <span className="flex items-center gap-1 font-medium text-foreground">
                     {indicator.name}
-                    {meta && <InfoTooltip indicator={meta} />}
+                    {meta && (
+                        <InfoTooltip
+                            indicator={meta}
+                            sparkline={
+                                hasTrend ? (
+                                    <Sparkline
+                                        values={trend.percentiles}
+                                        years={trend.years}
+                                        width={220}
+                                        height={36}
+                                    />
+                                ) : undefined
+                            }
+                        />
+                    )}
                 </span>
-                <PercentileBadge
-                    percentile={rawPct}
-                    direction={indicator.direction}
-                    rawValue={indicator.raw_value}
-                    unit={indicator.unit}
-                    name={indicator.name}
-                    scope={scope}
-                    urbanityTier={urbanityTier}
-                />
+                <div className="flex items-center gap-1.5">
+                    <PercentileBadge
+                        percentile={rawPct}
+                        direction={indicator.direction}
+                        rawValue={indicator.raw_value}
+                        unit={indicator.unit}
+                        name={indicator.name}
+                        scope={scope}
+                        urbanityTier={urbanityTier}
+                    />
+                    <TrendArrow
+                        change={trend?.change_1y ?? null}
+                        direction={indicator.direction}
+                    />
+                </div>
             </div>
             <PercentileBar effectivePct={effectivePct} />
             <div className="text-[11px] text-muted-foreground">

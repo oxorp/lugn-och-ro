@@ -83,6 +83,10 @@ export interface LocationData {
         top_positive: string[] | null;
         top_negative: string[] | null;
         factor_scores: Record<string, number> | null;
+        history: {
+            years: number[];
+            scores: number[];
+        } | null;
     } | null;
     tier: number;
     display_radius: number;
@@ -97,6 +101,14 @@ export interface LocationData {
         direction: 'positive' | 'negative' | 'neutral';
         category: string | null;
         normalization_scope: 'national' | 'urbanity_stratified';
+        trend: {
+            years: number[];
+            percentiles: number[];
+            raw_values: number[];
+            change_1y: number | null;
+            change_3y: number | null;
+            change_5y: number | null;
+        };
     }>;
     schools: SchoolMarker[];
     pois: PoiMarker[];

@@ -1,452 +1,497 @@
-# TASK: Ingest Historical Data — Skolverket, Kolada, BRÅ, NTU + Data Completeness Dashboard
+# TASK: Indicator Trend Arrows + Tooltip Sparklines
 
 ## Context
 
-Phase 1 (crosswalk) and Phase 2 (SCB historical) give us 6 years of demographic/economic data. This phase adds the remaining sources and builds an admin UI to see completeness across all indicators × years.
+We now have 6 years of historical data (2019-2024) for most indicators. The sidebar currently shows a static snapshot — "Median Income: 78th percentile (287,000 SEK)". There's no indication of whether this is improving, declining, or flat.
 
-**Depends on:** Phase 1 (crosswalk) and Phase 2 (SCB) should be done first, but these can be done in parallel if the crosswalk is ready.
+Add two things:
+1. **Trend arrow** next to the percentile — small colored arrow with the year-over-year percentile change
+2. **Sparkline in the tooltip** — tiny line chart showing the indicator's trajectory over all available years
 
 ---
 
-## Part A: Skolverket Historical (2020/21 — 2024/25)
+## What It Looks Like
 
-### The Finding
+### Sidebar Indicator Row (Current)
 
-The Planned Educations API v3 already returns 5 academic years per school. The current parser only extracts the latest year. Fix the parser, re-ingest, and we get 5 years of school data for free.
+```
+Median Income          ████████░░  78:e percentilen
+                                   (287 000 kr)
+```
 
-### A.1 Fix the Stats Parser
+### Sidebar Indicator Row (After)
 
-The current `parseGrundskolaStatsResponse()` only grabs the latest `valueType=EXISTS` entry per field. Modify it to return all years:
+```
+Median Income          ████████░░  78:e percentilen  ↑ +3
+                                   (287 000 kr)
+```
 
-```php
-// In SkolverketApiService.php
+The `↑ +3` means: this DeSO moved from the 75th to the 78th percentile in the last year. Green arrow, green text.
 
-/**
- * Parse statistics from Planned Educations API response.
- * Returns: [academic_year => [field => value, ...], ...]
- */
-public function parseAllYearsStats(array $response): array
+### Arrow Rules
+
+| Change | Arrow | Color | Example |
+|---|---|---|---|
+| +3 or more percentile points | ↑ | Green (#27ae60) | ↑ +5 |
+| +1 to +2 | ↗ | Light green (#6abf4b) | ↗ +2 |
+| -1 to +1 (flat) | → | Gray (#94a3b8) | → 0 |
+| -1 to -2 | ↘ | Light red (#e57373) | ↘ -2 |
+| -3 or more | ↓ | Red (#e74c3c) | ↓ -7 |
+| No previous year data | — | Gray | — |
+
+**Important:** The arrow direction reflects whether this is **good or bad for the area**, not just whether the number went up. For `negative` direction indicators (crime rate, debt rate), a *decrease* in percentile is actually good — but we already store normalized values where higher = better. So:
+
+- Use the **normalized_value** (already direction-corrected) for trend comparison, not raw_value
+- Or simpler: use the raw percentile rank, and let the arrow color follow the indicator's `direction`:
+  - `positive` indicator: percentile went up → green. Down → red.
+  - `negative` indicator: percentile went up → red (higher crime rank = worse). Down → green.
+  - `neutral` indicator: always gray arrow.
+
+Actually — the cleanest approach: always compare **directed percentile** (the value after direction is applied in scoring). If the system already computes `directed_value = direction === 'negative' ? 1 - normalized : normalized`, compare those. Then ↑ always means "better for the area" regardless of indicator type.
+
+### Tooltip (Current)
+
+```
+┌─────────────────────────────────────┐
+│ Median Income                       │
+│                                     │
+│ Description text about what this    │
+│ indicator measures...               │
+│                                     │
+│ National average: ~265 000 kr       │
+│ Source: SCB   Data from: 2024       │
+└─────────────────────────────────────┘
+```
+
+### Tooltip (After)
+
+```
+┌─────────────────────────────────────┐
+│ Median Income                       │
+│                                     │
+│ Description text about what this    │
+│ indicator measures...               │
+│                                     │
+│ ╭───────────────────────────╮       │
+│ │  ▁▂▃▃▄▅▆█                │       │
+│ │ '19 '20 '21 '22 '23 '24  │       │
+│ ╰───────────────────────────╯       │
+│ 68→71→73→74→75→78:e percentilen     │
+│                                     │
+│ National average: ~265 000 kr       │
+│ Source: SCB   Data from: 2024       │
+└─────────────────────────────────────┘
+```
+
+The sparkline shows the percentile trajectory. Below it, the actual percentile values per year. This gives full context: "the area has been steadily climbing in income rank for 6 years" vs "it jumped this year but was flat before."
+
+---
+
+## Step 1: Backend — Serve Historical Percentiles
+
+### 1.1 Extend the Location/DeSO API Response
+
+The API that serves indicator data for the sidebar needs to include historical values. Currently it returns something like:
+
+```json
 {
-    $yearlyStats = [];
-
-    // Navigate to the statistics section of the response
-    // The exact path depends on the API response structure — check Swagger
-    $statistics = $response['_embedded']['statistics'] ?? $response['statistics'] ?? [];
-
-    foreach ($statistics as $stat) {
-        $year = $stat['academicYear'] ?? $stat['timePeriod'] ?? null;
-        $field = $stat['typeOfValue'] ?? $stat['name'] ?? null;
-        $valueType = $stat['valueType'] ?? null;
-        $value = $stat['value'] ?? null;
-
-        if ($year && $field && $valueType === 'EXISTS' && $value !== null) {
-            $yearlyStats[$year][$field] = (float) $value;
-        }
-    }
-
-    return $yearlyStats;
-    // Example output:
-    // [
-    //   '2020/21' => ['certifiedTeachersQuota' => 85.2, 'averageGradesMeritRating9thGrade' => 241.3],
-    //   '2021/22' => ['certifiedTeachersQuota' => 87.1, 'averageGradesMeritRating9thGrade' => 238.7],
-    //   ...
-    // ]
+  "slug": "median_income",
+  "raw_value": 287000,
+  "normalized_value": 0.78,
+  "percentile": 78
 }
 ```
 
-### A.2 Update the Stats Ingestion Command
+Extend to:
 
-```bash
-php artisan ingest:skolverket-stats --all-years
+```json
+{
+  "slug": "median_income",
+  "raw_value": 287000,
+  "normalized_value": 0.78,
+  "percentile": 78,
+  "direction": "positive",
+  "trend": {
+    "years": [2019, 2020, 2021, 2022, 2023, 2024],
+    "percentiles": [68, 71, 73, 74, 75, 78],
+    "raw_values": [241000, 251000, 259000, 268000, 275000, 287000],
+    "change_1y": 3,
+    "change_3y": 5,
+    "change_5y": 10
+  }
+}
 ```
 
-Modify `ingest:skolverket-stats` to:
-
-1. For each active school, fetch from Planned Educations API v3 (same as current)
-2. Parse ALL years from the response (not just the latest)
-3. Upsert into `school_statistics` for each academic year found
-4. Map academic year to calendar year: `2020/21` → 2021, `2023/24` → 2024
+### 1.2 Query
 
 ```php
-foreach ($allYearsStats as $academicYear => $stats) {
-    $calendarYear = (int) substr($academicYear, -2) + 2000; // "2020/21" → 2021
+// In whatever service builds the indicator response for a DeSO
 
-    SchoolStatistic::updateOrCreate(
-        ['school_unit_code' => $school->school_unit_code, 'academic_year' => $academicYear],
-        [
-            'merit_value_17' => $stats['averageGradesMeritRating9thGrade'] ?? null,
-            'goal_achievement_pct' => $stats['ratioOfPupilsIn9thGradeWithAllSubjectsPassed'] ?? null,
-            'teacher_certification_pct' => $stats['certifiedTeachersQuota'] ?? null,
-            'eligibility_pct' => $stats['ratioOfPupils9thGradeEligibleForNationalProgramYR'] ?? null,
-            // student_count only available for current year — leave null for historical
-        ]
+private function getIndicatorWithTrend(string $desoCode, Indicator $indicator, int $currentYear): array
+{
+    // Fetch all years for this indicator + DeSO
+    $history = IndicatorValue::where('deso_code', $desoCode)
+        ->where('indicator_id', $indicator->id)
+        ->whereNotNull('raw_value')
+        ->orderBy('year')
+        ->get(['year', 'raw_value', 'normalized_value']);
+
+    $current = $history->firstWhere('year', $currentYear);
+    $prevYear = $history->firstWhere('year', $currentYear - 1);
+
+    // Percentile = normalized_value × 100 (already 0-1 from rank normalization)
+    $currentPercentile = $current ? round($current->normalized_value * 100) : null;
+    $prevPercentile = $prevYear ? round($prevYear->normalized_value * 100) : null;
+
+    return [
+        'slug' => $indicator->slug,
+        'name' => $indicator->name,
+        'raw_value' => $current?->raw_value,
+        'normalized_value' => $current?->normalized_value,
+        'percentile' => $currentPercentile,
+        'direction' => $indicator->direction,
+        'unit' => $indicator->unit,
+        'trend' => [
+            'years' => $history->pluck('year')->values(),
+            'percentiles' => $history->pluck('normalized_value')
+                ->map(fn ($v) => round($v * 100))->values(),
+            'raw_values' => $history->pluck('raw_value')->values(),
+            'change_1y' => ($currentPercentile !== null && $prevPercentile !== null)
+                ? $currentPercentile - $prevPercentile
+                : null,
+            'change_3y' => $this->computeChange($history, $currentYear, 3),
+            'change_5y' => $this->computeChange($history, $currentYear, 5),
+        ],
+    ];
+}
+
+private function computeChange(Collection $history, int $currentYear, int $span): ?int
+{
+    $current = $history->firstWhere('year', $currentYear);
+    $past = $history->firstWhere('year', $currentYear - $span);
+
+    if (!$current || !$past) return null;
+
+    return round($current->normalized_value * 100) - round($past->normalized_value * 100);
+}
+```
+
+### 1.3 Performance Note
+
+This adds one query per indicator per DeSO (fetching ~6 rows each). With ~15 scored indicators, that's 15 extra queries returning ~6 rows each = ~90 rows total. Negligible.
+
+Or batch it: one query fetching all indicator_values for this DeSO across all years, then group in PHP:
+
+```php
+$allHistory = IndicatorValue::where('deso_code', $desoCode)
+    ->whereIn('indicator_id', $activeIndicatorIds)
+    ->whereNotNull('raw_value')
+    ->orderBy('year')
+    ->get()
+    ->groupBy('indicator_id');
+```
+
+One query, ~90-150 rows. Fast.
+
+---
+
+## Step 2: Frontend — Trend Arrow Component
+
+### 2.1 TrendArrow Component
+
+```tsx
+// resources/js/Components/TrendArrow.tsx
+
+interface TrendArrowProps {
+    change: number | null;
+    direction: 'positive' | 'negative' | 'neutral';
+    size?: 'sm' | 'md';
+}
+
+export function TrendArrow({ change, direction, size = 'sm' }: TrendArrowProps) {
+    if (change === null || direction === 'neutral') {
+        return <span className="text-muted-foreground text-xs">—</span>;
+    }
+
+    // For negative indicators (crime, debt), flip the interpretation
+    // A percentile decrease in crime = good = green arrow
+    const effectiveChange = direction === 'negative' ? -change : change;
+
+    const { arrow, color } = getArrowStyle(effectiveChange);
+    const sign = change > 0 ? '+' : '';
+
+    return (
+        <span
+            className={cn(
+                'inline-flex items-center gap-0.5 font-medium tabular-nums',
+                size === 'sm' ? 'text-xs' : 'text-sm'
+            )}
+            style={{ color }}
+            title={`${sign}${change} percentilpoäng vs förra året`}
+        >
+            {arrow} {sign}{change}
+        </span>
+    );
+}
+
+function getArrowStyle(effectiveChange: number): { arrow: string; color: string } {
+    if (effectiveChange >= 3) return { arrow: '↑', color: '#27ae60' };
+    if (effectiveChange >= 1) return { arrow: '↗', color: '#6abf4b' };
+    if (effectiveChange >= -1) return { arrow: '→', color: '#94a3b8' };
+    if (effectiveChange >= -3) return { arrow: '↘', color: '#e57373' };
+    return { arrow: '↓', color: '#e74c3c' };
+}
+```
+
+### 2.2 Usage in Indicator Bar
+
+```tsx
+// In the sidebar indicator row
+
+<div className="flex items-center justify-between">
+    <span className="text-sm">{indicator.name}</span>
+    <div className="flex items-center gap-2">
+        <span className="text-sm text-muted-foreground">
+            {indicator.percentile}:e percentilen
+        </span>
+        <TrendArrow
+            change={indicator.trend.change_1y}
+            direction={indicator.direction}
+        />
+    </div>
+</div>
+<IndicatorBar percentile={indicator.percentile} direction={indicator.direction} />
+<span className="text-xs text-muted-foreground">
+    ({formatValue(indicator.raw_value, indicator.unit)})
+</span>
+```
+
+---
+
+## Step 3: Frontend — Tooltip Sparkline
+
+### 3.1 Sparkline Component
+
+A tiny SVG line chart. No axes, no labels, no interactivity — just a line showing the trajectory.
+
+```tsx
+// resources/js/Components/Sparkline.tsx
+
+interface SparklineProps {
+    values: number[];        // Percentile values per year
+    years: number[];
+    width?: number;
+    height?: number;
+    color?: string;          // Line color — use trend direction
+}
+
+export function Sparkline({
+    values,
+    years,
+    width = 200,
+    height = 40,
+    color = '#64748b',
+}: SparklineProps) {
+    if (values.length < 2) return null;
+
+    const padding = 4;
+    const w = width - padding * 2;
+    const h = height - padding * 2;
+
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const range = max - min || 1; // Avoid division by zero for flat lines
+
+    const points = values.map((v, i) => {
+        const x = padding + (i / (values.length - 1)) * w;
+        const y = padding + h - ((v - min) / range) * h;
+        return `${x},${y}`;
+    });
+
+    // Determine overall trend color
+    const trendColor = values[values.length - 1] > values[0]
+        ? '#27ae60'  // Trending up
+        : values[values.length - 1] < values[0]
+            ? '#e74c3c'  // Trending down
+            : '#94a3b8'; // Flat
+
+    return (
+        <div className="space-y-1">
+            <svg width={width} height={height} className="block">
+                {/* Subtle background area fill */}
+                <polygon
+                    points={`${padding},${padding + h} ${points.join(' ')} ${padding + w},${padding + h}`}
+                    fill={trendColor}
+                    opacity={0.08}
+                />
+                {/* Line */}
+                <polyline
+                    points={points.join(' ')}
+                    fill="none"
+                    stroke={color || trendColor}
+                    strokeWidth={2}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                />
+                {/* Endpoint dot */}
+                <circle
+                    cx={parseFloat(points[points.length - 1].split(',')[0])}
+                    cy={parseFloat(points[points.length - 1].split(',')[1])}
+                    r={3}
+                    fill={color || trendColor}
+                />
+            </svg>
+            {/* Year labels */}
+            <div className="flex justify-between text-[10px] text-muted-foreground" style={{ width }}>
+                {years.map((y, i) => (
+                    <span key={y}>
+                        {i === 0 || i === years.length - 1 ? `'${String(y).slice(2)}` : ''}
+                    </span>
+                ))}
+            </div>
+            {/* Percentile journey */}
+            <div className="text-[10px] text-muted-foreground">
+                {values.join(' → ')}:e percentilen
+            </div>
+        </div>
     );
 }
 ```
 
-### A.3 Aggregate Historical School Indicators
+### 3.2 Add to Existing Tooltip
 
-After stats are loaded, aggregate to DeSO for each year:
+The indicator info tooltips (the ℹ️ icon popovers) already show description, source, national average. Add the sparkline between the description and the metadata:
 
-```bash
-for year in 2021 2022 2023 2024 2025; do
-    php artisan aggregate:school-indicators --calendar-year=$year
-done
+```tsx
+// In the tooltip/popover content
+
+<div className="space-y-3 p-3 max-w-xs">
+    <h4 className="font-semibold">{indicator.name}</h4>
+    <p className="text-sm text-muted-foreground">{indicator.description}</p>
+
+    {/* NEW: Sparkline section */}
+    {indicator.trend.percentiles.length >= 2 && (
+        <div className="border-t border-b py-2">
+            <Sparkline
+                values={indicator.trend.percentiles}
+                years={indicator.trend.years}
+                width={220}
+                height={36}
+            />
+        </div>
+    )}
+
+    <div className="text-xs text-muted-foreground italic">
+        {indicator.methodology_note}
+    </div>
+    <div className="text-xs text-muted-foreground">
+        National average: {indicator.national_average}
+    </div>
+    <div className="text-xs text-muted-foreground">
+        Source: {indicator.source_name} · Data from: {indicator.latest_year}
+    </div>
+</div>
 ```
-
-The aggregation command already computes DeSO-level averages. Just pass the year.
-
-### A.4 Skolverket Coverage Notes
-
-- **Teacher certification:** ~88-92% school coverage across all 5 years. Good.
-- **Merit value:** ~29-33% coverage. Only schools with year-9 students AND enough students to publish. Low but unavoidable.
-- **Goal achievement:** ~27-31%. Same constraint as merit value.
-- **Student count:** Current year only. Historical aggregation uses unweighted averages.
 
 ---
 
-## Part B: Kolada / Kronofogden Historical (2019-2024)
+## Step 4: Handle Edge Cases
 
-### B.1 Extend Kolada Ingestion
+### 4.1 Indicators With No History
 
-The current ingestion fetches a single year. Add historical support:
+POI-derived indicators (grocery_density, transit_stop_density, etc.) only have 2025 data. No sparkline, no arrow:
 
-```bash
-php artisan ingest:kolada --from=2019 --to=2024
-```
-
-The Kolada API supports multi-year queries natively:
-
-```
-GET https://api.kolada.se/v2/data/kpi/N00989/year/2019,2020,2021,2022,2023,2024
-```
-
-Or fetch one year at a time if the batch endpoint doesn't work well.
-
-### B.2 KPI Mapping
-
-| Kolada KPI | Our Indicator Slug | Notes |
-|---|---|---|
-| N00989 | debt_rate_pct | % of population with debt at Kronofogden |
-| N00990 | median_debt_sek | Median debt amount (SEK) |
-| U00958 | eviction_rate | Evictions per 100,000 population |
-
-### B.3 Year Availability
-
-| KPI | 2019 | 2020 | 2021 | 2022 | 2023 | 2024 | 2025 |
-|---|---|---|---|---|---|---|---|
-| N00989 (debt rate) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| N00990 (median debt) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
-| U00958 (evictions) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
-
-### B.4 Notes
-
-- Kolada data is at **kommun level** (290 municipalities). Disaggregation to DeSO uses the existing weighted propensity model.
-- No crosswalk needed — kommun codes haven't changed.
-- Filter response for 4-digit numeric codes only (exclude grouped `G`-prefix codes and `0000` national total).
-
----
-
-## Part C: BRÅ Crime Historical (2019-2024)
-
-### C.1 The Challenge
-
-The current BRÅ ingestion uses a CSV download that only has the **current year** (2025 preliminary). Historical data must come from the **statistik.bra.se interactive database**.
-
-### C.2 BRÅ Interactive Database
-
-The BRÅ statistics database at `statistik.bra.se` serves Table 120 (kommun-level reported offences by type and year).
-
-**Method to investigate:** Check if the interactive database has an API or export endpoint. Options:
-
-1. **If API exists:** Use it directly with year parameters
-2. **If export only:** Automate the export (select kommun level, all years 2019-2024, download Excel/CSV)
-3. **If neither:** Manually download the historical files and place in `storage/app/data/raw/bra/`
-
-```bash
-php artisan ingest:bra-historical --from=2019 --to=2024
-```
-
-### C.3 Crime Category Mapping
-
-The current ingestion derives three indicators from crime totals + national category proportions:
-- `crime_violent_rate` — violent crimes per 1,000 population
-- `crime_property_rate` — property crimes per 1,000 population
-- `crime_total_rate` — all reported offences per 1,000 population
-
-Historical ingestion should use the same derivation logic. If national category breakdowns are available historically (the Excel file has 10 years), use year-specific proportions.
-
-### C.4 Notes
-
-- BRÅ data is at **kommun level**. Disaggregation to DeSO uses the same model as Kolada.
-- 2020 is anomalous (COVID). Document but don't exclude.
-- Kommune codes haven't changed, no crosswalk needed.
-
----
-
-## Part D: NTU Perceived Safety Historical (2019-2024)
-
-### D.1 Already in the Excel File
-
-The research report confirmed that `ntu_lan_2017_2025.xlsx` already contains 9 years (2017-2025) at län level. The current ingestion only loads the latest year.
-
-### D.2 Extend NTU Ingestion
-
-```bash
-php artisan ingest:ntu --from=2019 --to=2025
-```
-
-Read all sheets/years from the Excel file. The structure should be consistent across years — same columns, same län codes. Sheet R4.1 contains the safety perception data.
-
-### D.3 Notes
-
-- NTU is at **län level** (21 counties) — very coarse. Disaggregated to DeSO via inverse demographic weighting.
-- No crosswalk needed — län codes haven't changed.
-- All 9 years already available in one file. Quick win.
-
----
-
-## Part E: Data Completeness Dashboard
-
-### E.1 The Need
-
-With 15+ indicators × 6-7 years = ~100 indicator-year combinations, the admin needs to see at a glance:
-- Which indicators have data for which years
-- How complete each indicator-year is (% of DeSOs with values)
-- Where the gaps are
-- When data was last updated
-
-### E.2 API Endpoint
-
-```php
-Route::get('/admin/data-completeness', [AdminDataController::class, 'completeness'])
-    ->name('admin.data-completeness');
-```
-
-```php
-public function completeness()
-{
-    // Build the completeness matrix
-    $indicators = Indicator::where('is_active', true)
-        ->orderBy('source')
-        ->orderBy('category')
-        ->orderBy('display_order')
-        ->get();
-
-    $years = range(2019, (int) date('Y'));
-    $totalDesos = DB::table('deso_areas')->count();
-
-    $matrix = [];
-    foreach ($indicators as $indicator) {
-        $yearData = DB::table('indicator_values')
-            ->where('indicator_id', $indicator->id)
-            ->whereIn('year', $years)
-            ->groupBy('year')
-            ->select(
-                'year',
-                DB::raw('COUNT(*) as count'),
-                DB::raw('COUNT(CASE WHEN raw_value IS NOT NULL THEN 1 END) as non_null_count'),
-                DB::raw('ROUND(AVG(raw_value)::numeric, 2) as avg_value'),
-                DB::raw('MIN(updated_at) as earliest_update'),
-                DB::raw('MAX(updated_at) as latest_update')
-            )
-            ->get()
-            ->keyBy('year');
-
-        $matrix[] = [
-            'indicator' => [
-                'id' => $indicator->id,
-                'slug' => $indicator->slug,
-                'name' => $indicator->name,
-                'source' => $indicator->source,
-                'category' => $indicator->category,
-                'unit' => $indicator->unit,
-            ],
-            'years' => collect($years)->mapWithKeys(function ($year) use ($yearData, $totalDesos) {
-                $data = $yearData->get($year);
-                return [$year => [
-                    'has_data' => $data !== null && $data->non_null_count > 0,
-                    'count' => $data->non_null_count ?? 0,
-                    'total' => $totalDesos,
-                    'coverage_pct' => $data
-                        ? round($data->non_null_count / $totalDesos * 100, 1)
-                        : 0,
-                    'avg_value' => $data->avg_value ?? null,
-                    'last_updated' => $data->latest_update ?? null,
-                ]];
-            }),
-        ];
-    }
-
-    // Summary stats
-    $summary = [
-        'total_indicators' => count($indicators),
-        'total_years' => count($years),
-        'total_cells' => count($indicators) * count($years),
-        'filled_cells' => collect($matrix)->sum(fn ($row) =>
-            collect($row['years'])->filter(fn ($y) => $y['has_data'])->count()
-        ),
-        'total_desos' => $totalDesos,
-    ];
-
-    return Inertia::render('Admin/DataCompleteness', [
-        'matrix' => $matrix,
-        'years' => $years,
-        'summary' => $summary,
-    ]);
+```tsx
+{indicator.trend.percentiles.length >= 2
+    ? <TrendArrow change={indicator.trend.change_1y} direction={indicator.direction} />
+    : <span className="text-xs text-muted-foreground">—</span>
 }
 ```
 
-### E.3 Frontend: Completeness Matrix Page
+### 4.2 Indicators Starting Later (Skolverket)
 
-Create `resources/js/Pages/Admin/DataCompleteness.tsx`:
+School indicators start at 2021. They'll have 4-5 data points instead of 6. The sparkline handles variable-length arrays — it just renders fewer points. The 1y change still works.
 
-A heatmap-style table where:
-- Rows = indicators (grouped by source)
-- Columns = years (2019-2025)
-- Cells = colored by coverage percentage
+### 4.3 Direction-Corrected Arrows for Negative Indicators
 
-```
-┌──────────────────────────────┬──────┬──────┬──────┬──────┬──────┬──────┬──────┐
-│ Indicator                    │ 2019 │ 2020 │ 2021 │ 2022 │ 2023 │ 2024 │ 2025 │
-├──────────────────────────────┼──────┼──────┼──────┼──────┼──────┼──────┼──────┤
-│ SCB                          │      │      │      │      │      │      │      │
-│  median_income               │ 98%  │ 98%  │ 98%  │ 98%  │ 98%  │ 99%  │  —   │
-│  employment_rate             │ 97%  │ 98%  │ 98%  │ 98%  │ 98%  │ 99%  │  —   │
-│  education_post_secondary    │ 98%  │ 98%  │ 98%  │ 98%  │ 98%  │ 99%  │  —   │
-│  ...                         │      │      │      │      │      │      │      │
-├──────────────────────────────┼──────┼──────┼──────┼──────┼──────┼──────┼──────┤
-│ Skolverket                   │      │      │      │      │      │      │      │
-│  school_merit_value_avg      │  —   │  —   │ 42%  │ 44%  │ 45%  │ 47%  │ 48%  │
-│  school_teacher_cert_avg     │  —   │  —   │ 85%  │ 86%  │ 87%  │ 88%  │ 89%  │
-│  ...                         │      │      │      │      │      │      │      │
-├──────────────────────────────┼──────┼──────┼──────┼──────┼──────┼──────┼──────┤
-│ BRÅ                          │      │      │      │      │      │      │      │
-│  crime_violent_rate           │ 95%  │ 95%  │ 95%  │ 95%  │ 95%  │ 95%  │ 95%  │
-│  perceived_safety            │ 95%  │ 95%  │ 95%  │ 95%  │ 95%  │ 95%  │ 95%  │
-│  ...                         │      │      │      │      │      │      │      │
-├──────────────────────────────┼──────┼──────┼──────┼──────┼──────┼──────┼──────┤
-│ Kolada/Kronofogden            │      │      │      │      │      │      │      │
-│  debt_rate_pct               │ 95%  │ 95%  │ 95%  │ 95%  │ 95%  │ 95%  │ 95%  │
-│  ...                         │      │      │      │      │      │      │      │
-└──────────────────────────────┴──────┴──────┴──────┴──────┴──────┴──────┴──────┘
+Crime rate goes DOWN → area gets BETTER → green arrow.
 
-Summary: 87 of 105 cells filled (83%) — 15 indicators × 7 years
-```
+The `TrendArrow` component handles this via the `direction` prop. When direction is `negative`, the effective change is flipped before choosing arrow color. The displayed number still shows the raw percentile change (e.g., "↑ -5" would be confusing), so:
 
-### E.4 Cell Styling
+- For `positive` indicators: `↑ +3` means "percentile went up 3 points (good)"
+- For `negative` indicators: `↓ -3` with GREEN arrow means "crime percentile dropped 3 points (good)"
 
-| Coverage | Color | Meaning |
-|---|---|---|
-| 95-100% | Green | Full data |
-| 80-94% | Light green | Good, minor gaps |
-| 50-79% | Yellow | Partial — investigate |
-| 1-49% | Orange | Sparse — expected for some indicators (merit value) |
-| 0% / no data | Gray with dash | Not available for this year |
+Wait — showing a green down-arrow with a negative number is confusing. Better approach:
 
-### E.5 Cell Tooltip
+**Show the "goodness" change, not the raw percentile change:**
 
-On hover, show:
-- Exact count: "5,847 of 6,160 DeSOs (94.9%)"
-- Average value: "Avg: 287,400 SEK"
-- Last updated: "Updated: 2026-02-09"
+For all indicators, compute `directed_change`:
+- `positive`: `directed_change = change` (percentile went up = good)
+- `negative`: `directed_change = -change` (percentile went DOWN = good, so flip sign to show as positive)
 
-### E.6 Cell Click
+Then always show the directed change with matching arrow:
+- Crime percentile dropped from 65 to 60: `change = -5`, `directed_change = +5` → `↑ +5` (green) — "crime improved by 5 points"
+- Crime percentile went from 60 to 65: `change = +5`, `directed_change = -5` → `↓ -5` (red) — "crime worsened by 5 points"
 
-Clicking a cell could show a detail panel or modal with:
-- Distribution histogram of values for that indicator × year
-- List of DeSOs with missing data (kommun-level summary)
-- Comparison to the same indicator's other years (has coverage changed?)
+This way the arrow and number always mean the same thing: green ↑ = "this got better for the area."
 
-This is nice-to-have. The matrix view is the priority.
+### 4.4 Vulnerability Flag
 
-### E.7 Navigation
+`vulnerability_flag` uses the same 2025 classification retroactively for all years (as noted in the completeness report). Its sparkline would be flat — all years show the same value. Either:
+- Skip the sparkline for this indicator
+- Or show it but it'll just be a flat line (which honestly communicates "no historical data" accurately)
 
-Add to admin sidebar/nav:
-```
-/admin/indicators       — Indicator weights & settings (existing)
-/admin/pipeline          — Ingestion status & controls (existing task)
-/admin/data-completeness — NEW: Year × indicator completeness matrix
-```
-
-### E.8 Also: Extend the Existing Indicators Admin Page
-
-The existing `/admin/indicators` page shows per-indicator info. Add a "Years" column showing which years have data:
-
-```
-| Indicator | Source | Weight | Direction | Years with Data | Coverage (latest) |
-|---|---|---|---|---|---|
-| median_income | SCB | 0.20 | positive | 2019-2024 (6y) | 99.2% |
-| school_merit_value_avg | Skolverket | 0.12 | positive | 2021-2025 (5y) | 47.3% |
-| debt_rate_pct | Kolada | 0.05 | negative | 2019-2025 (7y) | 95.1% |
-```
-
-The "Years with Data" column is a compact summary: first year — last year (count). Clicking expands to show per-year coverage.
+Prefer: skip it. Show "—" for trend.
 
 ---
 
-## Execution Order
+## Step 5: Composite Score Trend
 
-| Step | What | Effort | Notes |
-|---|---|---|---|
-| A | Skolverket parser fix + re-ingest 5 years | 2-3 hours | Fix parser, re-run ingestion, aggregate |
-| B | Kolada historical (2019-2024) | 1-2 hours | Same API, just more years |
-| C | BRÅ historical (2019-2024) | 3-4 hours | Need to find/scrape historical source |
-| D | NTU historical (2019-2024) | 1 hour | Already in the Excel file |
-| E | Data completeness dashboard | 3-4 hours | New admin page + API endpoint |
+The composite score in the sidebar header already shows a trend badge. Make sure it uses real historical data now:
 
-Total: ~10-14 hours. A, B, and D are quick wins. C depends on BRÅ data access. E is the admin UI work.
+```
+┌─────────────────────────────────┐
+│  Södermalm 0143                 │
+│  Stockholm, Stockholms län      │
+│                                 │
+│       72                        │  ← Big score number
+│  Stabil / positiv utsikt       │
+│       ↑ +3.2 vs 2023           │  ← 1-year composite score change
+│                                 │
+│  ▁▂▃▄▅▆▇█  (sparkline)         │  ← 6-year composite trajectory
+│  '19 '20 '21 '22 '23 '24       │
+└─────────────────────────────────┘
+```
 
-**Recommended:** Do A + B + D first (quick, high value), then E (admin visibility), then C (harder but important).
+The composite score sparkline comes from `composite_scores` table which now has rows for 2019-2024.
+
+```php
+$scoreHistory = CompositeScore::where('deso_code', $desoCode)
+    ->orderBy('year')
+    ->get(['year', 'score', 'trend_1y']);
+```
 
 ---
 
 ## Verification
 
-### After All Historical Ingestion
-
-```sql
--- The big picture: how many indicator-year-deso combinations do we have?
-SELECT COUNT(*) as total_rows,
-       COUNT(DISTINCT indicator_id) as indicators,
-       COUNT(DISTINCT year) as years,
-       COUNT(DISTINCT deso_code) as desos
-FROM indicator_values
-WHERE raw_value IS NOT NULL;
-
--- Completeness matrix
-SELECT
-    i.source,
-    i.slug,
-    iv.year,
-    COUNT(iv.id) as deso_count,
-    ROUND(COUNT(iv.id)::numeric / 6160 * 100, 1) as coverage_pct
-FROM indicator_values iv
-JOIN indicators i ON i.id = iv.indicator_id
-WHERE iv.raw_value IS NOT NULL
-GROUP BY i.source, i.slug, iv.year
-ORDER BY i.source, i.slug, iv.year;
-```
-
-### Admin UI Checklist
-
-- [ ] `/admin/data-completeness` page loads and shows the matrix
-- [ ] Rows grouped by source (SCB, Skolverket, BRÅ, Kolada)
-- [ ] Cells colored by coverage (green/yellow/orange/gray)
-- [ ] Tooltips show exact counts and dates
-- [ ] SCB indicators show 2019-2024 (6 columns green)
-- [ ] Skolverket indicators show 2021-2025 (5 columns, merit value in orange/yellow due to ~30-50% coverage)
-- [ ] Kolada indicators show 2019-2024/2025 (6-7 columns green)
-- [ ] BRÅ indicators show 2019-2025 (7 columns green)
-- [ ] NTU shows 2019-2025 (7 columns green)
-- [ ] Summary row shows total filled cells / total possible
-- [ ] Existing `/admin/indicators` page shows "Years with Data" column
+- [ ] Every indicator with 2+ years of data shows a trend arrow next to the percentile
+- [ ] Arrows are colored correctly: green = better for the area, red = worse
+- [ ] Negative indicators (crime, debt) show green when their percentile *drops*
+- [ ] POI indicators show "—" instead of an arrow (single year only)
+- [ ] Clicking the ℹ️ tooltip shows a sparkline with year labels
+- [ ] Sparkline renders correctly for 2 points (Skolverket 2024-2025), 5 points, and 6 points
+- [ ] Composite score at the top of the sidebar shows a sparkline of 2019-2024
+- [ ] Flat trends show gray → arrow and flat sparkline (not hidden)
+- [ ] Vulnerability flag shows "—" (no real historical variation)
+- [ ] All numbers are in percentile points, not raw values ("+3" means 3 percentile points, not 3%)
 
 ---
 
 ## What NOT to Do
 
-- **DO NOT re-ingest data that's already correct.** 2024 SCB data, current Skolverket data, and current BRÅ/NTU data are already in. Only add the missing historical years.
-- **DO NOT block on BRÅ.** If the interactive database is hard to scrape, move on and come back. The other sources are higher priority and easier.
-- **DO NOT over-engineer the completeness dashboard.** The matrix view with colored cells is the core deliverable. Drill-down histograms and missing-DeSO lists are nice-to-have.
-- **DO NOT normalize all years in one pass.** Each year must be normalized independently — percentile ranks are relative to that year's distribution.
+- **DO NOT show raw value changes in the arrow.** "Income went up 12,000 SEK" is meaningless without context. "+3 percentile points" is universally comparable across indicators.
+- **DO NOT show both 1y and 5y arrows.** One arrow (1y) keeps it clean. The sparkline in the tooltip gives the long view.
+- **DO NOT add interactivity to the sparkline.** No hover states, no click handlers. It's a tiny glyph that communicates trajectory at a glance. Keep it a simple SVG.
+- **DO NOT fetch historical data in a separate API call.** Bundle it with the existing indicator response — it's ~90 extra rows, negligible overhead.
+- **DO NOT show trend arrows for indicators with `neutral` direction.** Population and foreign_background_pct are context-only — no "better/worse" interpretation.

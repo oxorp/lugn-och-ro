@@ -82,7 +82,7 @@ class LocationControllerTest extends TestCase
         $response->assertOk()
             ->assertJsonStructure([
                 'location' => ['lat', 'lng', 'deso_code', 'kommun', 'lan_code', 'area_km2', 'urbanity_tier'],
-                'score' => ['value', 'area_score', 'proximity_score', 'trend_1y', 'label', 'top_positive', 'top_negative', 'factor_scores'],
+                'score' => ['value', 'area_score', 'proximity_score', 'trend_1y', 'label', 'top_positive', 'top_negative', 'factor_scores', 'history'],
                 'tier',
                 'display_radius',
                 'proximity' => ['composite', 'factors'],
@@ -796,6 +796,205 @@ class LocationControllerTest extends TestCase
         $indicators = $response->json('indicators');
         $this->assertCount(1, $indicators);
         $this->assertEquals('employment_rate', $indicators[0]['slug']);
+    }
+
+    public function test_indicators_include_trend_data_with_historical_values(): void
+    {
+        $this->createDesoWithGeom('0180C1090', 'Stockholm');
+
+        CompositeScore::create([
+            'deso_code' => '0180C1090',
+            'year' => 2024,
+            'score' => 72.5,
+            'computed_at' => now(),
+        ]);
+
+        $indicator = Indicator::create([
+            'slug' => 'median_income',
+            'name' => 'Medianinkomst',
+            'unit' => 'SEK',
+            'direction' => 'positive',
+            'weight' => 0.09,
+            'normalization' => 'rank_percentile',
+            'normalization_scope' => 'national',
+            'source' => 'scb',
+            'is_active' => true,
+            'display_order' => 1,
+        ]);
+
+        // Create 3 years of data
+        IndicatorValue::create([
+            'deso_code' => '0180C1090',
+            'indicator_id' => $indicator->id,
+            'year' => 2022,
+            'raw_value' => 265000,
+            'normalized_value' => 0.72,
+        ]);
+        IndicatorValue::create([
+            'deso_code' => '0180C1090',
+            'indicator_id' => $indicator->id,
+            'year' => 2023,
+            'raw_value' => 275000,
+            'normalized_value' => 0.75,
+        ]);
+        IndicatorValue::create([
+            'deso_code' => '0180C1090',
+            'indicator_id' => $indicator->id,
+            'year' => 2024,
+            'raw_value' => 287000,
+            'normalized_value' => 0.78,
+        ]);
+
+        $user = User::factory()->create(['is_admin' => true]);
+        $response = $this->actingAs($user)->getJson('/api/location/59.335,18.06');
+
+        $response->assertOk();
+
+        $indicators = $response->json('indicators');
+        $this->assertCount(1, $indicators);
+        $ind = $indicators[0];
+
+        // Verify trend structure exists
+        $this->assertArrayHasKey('trend', $ind);
+        $this->assertEquals([2022, 2023, 2024], $ind['trend']['years']);
+        $this->assertEquals([72, 75, 78], $ind['trend']['percentiles']);
+        $this->assertEquals([265000.0, 275000.0, 287000.0], $ind['trend']['raw_values']);
+        $this->assertEquals(3, $ind['trend']['change_1y']); // 78 - 75
+        $this->assertNull($ind['trend']['change_3y']); // no 2021 data
+        $this->assertNull($ind['trend']['change_5y']); // no 2019 data
+    }
+
+    public function test_trend_change_calculations_with_full_history(): void
+    {
+        $this->createDesoWithGeom('0180C1090', 'Stockholm');
+
+        CompositeScore::create([
+            'deso_code' => '0180C1090',
+            'year' => 2024,
+            'score' => 60.0,
+            'computed_at' => now(),
+        ]);
+
+        $indicator = Indicator::create([
+            'slug' => 'employment_rate',
+            'name' => 'Sysselsättningsgrad',
+            'unit' => '%',
+            'direction' => 'positive',
+            'weight' => 0.08,
+            'normalization' => 'rank_percentile',
+            'normalization_scope' => 'national',
+            'source' => 'scb',
+            'is_active' => true,
+            'display_order' => 1,
+        ]);
+
+        // 6 years of data
+        $years = [2019 => 0.55, 2020 => 0.57, 2021 => 0.60, 2022 => 0.63, 2023 => 0.65, 2024 => 0.70];
+        foreach ($years as $year => $norm) {
+            IndicatorValue::create([
+                'deso_code' => '0180C1090',
+                'indicator_id' => $indicator->id,
+                'year' => $year,
+                'raw_value' => $norm * 100,
+                'normalized_value' => $norm,
+            ]);
+        }
+
+        $user = User::factory()->create();
+        $response = $this->actingAs($user)->getJson('/api/location/59.335,18.06');
+        $response->assertOk();
+
+        $trend = $response->json('indicators.0.trend');
+        $this->assertEquals(6, count($trend['years']));
+        $this->assertEquals(5, $trend['change_1y']);   // 70 - 65
+        $this->assertEquals(10, $trend['change_3y']);  // 70 - 60 (2024 - 2021)
+        $this->assertEquals(15, $trend['change_5y']);  // 70 - 55 (2024 - 2019)
+    }
+
+    public function test_single_year_indicator_has_null_trend_changes(): void
+    {
+        $this->createDesoWithGeom('0180C1090', 'Stockholm');
+
+        CompositeScore::create([
+            'deso_code' => '0180C1090',
+            'year' => 2025,
+            'score' => 50.0,
+            'computed_at' => now(),
+        ]);
+
+        $indicator = Indicator::create([
+            'slug' => 'grocery_density',
+            'name' => 'Livsmedelsbutikstäthet',
+            'unit' => 'per_1000',
+            'direction' => 'positive',
+            'weight' => 0.02,
+            'normalization' => 'rank_percentile',
+            'normalization_scope' => 'urbanity_stratified',
+            'source' => 'osm',
+            'is_active' => true,
+            'display_order' => 20,
+        ]);
+
+        IndicatorValue::create([
+            'deso_code' => '0180C1090',
+            'indicator_id' => $indicator->id,
+            'year' => 2025,
+            'raw_value' => 2.5,
+            'normalized_value' => 0.65,
+        ]);
+
+        $user = User::factory()->create();
+        $response = $this->actingAs($user)->getJson('/api/location/59.335,18.06');
+        $response->assertOk();
+
+        $trend = $response->json('indicators.0.trend');
+        $this->assertCount(1, $trend['years']);
+        $this->assertNull($trend['change_1y']);
+        $this->assertNull($trend['change_3y']);
+        $this->assertNull($trend['change_5y']);
+    }
+
+    public function test_score_includes_history_with_multiple_years(): void
+    {
+        $this->createDesoWithGeom('0180C1090', 'Stockholm');
+
+        // Create composite scores for multiple years
+        foreach ([2022 => 60.5, 2023 => 65.2, 2024 => 72.5] as $year => $scoreVal) {
+            CompositeScore::create([
+                'deso_code' => '0180C1090',
+                'year' => $year,
+                'score' => $scoreVal,
+                'trend_1y' => $year > 2022 ? $scoreVal - 60.5 : null,
+                'computed_at' => now(),
+            ]);
+        }
+
+        $user = User::factory()->create();
+        $response = $this->actingAs($user)->getJson('/api/location/59.335,18.06');
+        $response->assertOk();
+
+        $history = $response->json('score.history');
+        $this->assertNotNull($history);
+        $this->assertEquals([2022, 2023, 2024], $history['years']);
+        $this->assertEquals([60.5, 65.2, 72.5], $history['scores']);
+    }
+
+    public function test_score_history_null_for_single_year(): void
+    {
+        $this->createDesoWithGeom('0180C1090', 'Stockholm');
+
+        CompositeScore::create([
+            'deso_code' => '0180C1090',
+            'year' => 2024,
+            'score' => 72.5,
+            'computed_at' => now(),
+        ]);
+
+        $user = User::factory()->create();
+        $response = $this->actingAs($user)->getJson('/api/location/59.335,18.06');
+        $response->assertOk();
+
+        $this->assertNull($response->json('score.history'));
     }
 
     public function test_tile_route_returns_transparent_png_for_missing_tile(): void

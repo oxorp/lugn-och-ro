@@ -26,6 +26,7 @@ export interface IndicatorMeta {
 
 interface InfoTooltipProps {
     indicator: IndicatorMeta;
+    sparkline?: React.ReactNode;
 }
 
 function formatRelativeDate(isoDate: string): string {
@@ -41,7 +42,7 @@ function formatRelativeDate(isoDate: string): string {
     return date.toLocaleDateString();
 }
 
-export function InfoTooltip({ indicator }: InfoTooltipProps) {
+export function InfoTooltip({ indicator, sparkline }: InfoTooltipProps) {
     if (!indicator.description_long && !indicator.description_short) {
         return null;
     }
@@ -73,6 +74,12 @@ export function InfoTooltip({ indicator }: InfoTooltipProps) {
                             <p className="text-muted-foreground border-muted border-l-2 pl-2 text-xs italic">
                                 {indicator.methodology_note}
                             </p>
+                        )}
+
+                        {sparkline && (
+                            <div className="border-muted border-t border-b py-2">
+                                {sparkline}
+                            </div>
                         )}
 
                         {indicator.national_context && (

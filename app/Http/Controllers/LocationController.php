@@ -12,6 +12,7 @@ use App\Services\PreviewStatsService;
 use App\Services\ProximityScoreService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 class LocationController extends Controller
@@ -65,6 +66,7 @@ class LocationController extends Controller
             'top_positive' => $score->top_positive,
             'top_negative' => $score->top_negative,
             'factor_scores' => $score->factor_scores,
+            'history' => null, // populated below for paid tiers
         ] : [
             'value' => $proximityScore > 0 ? round($proximityScore * self::PROXIMITY_WEIGHT + 50 * self::AREA_WEIGHT, 1) : null,
             'area_score' => null,
@@ -74,6 +76,7 @@ class LocationController extends Controller
             'top_positive' => null,
             'top_negative' => null,
             'factor_scores' => null,
+            'history' => null,
         ];
 
         $urbanityTier = $deso->urbanity_tier ?? 'semi_urban';
@@ -106,13 +109,20 @@ class LocationController extends Controller
             ]);
         }
 
-        // 5. Get indicator values for this DeSO (paid tiers)
-        $indicators = IndicatorValue::where('deso_code', $deso->deso_code)
-            ->whereHas('indicator', fn ($q) => $q->where('is_active', true))
-            ->with('indicator')
-            ->orderByDesc('year')
+        // 5. Get indicator values for this DeSO (paid tiers) — all years for trends
+        $activeIndicators = Indicator::where('is_active', true)->get()->keyBy('id');
+
+        $allIndicatorValues = IndicatorValue::where('deso_code', $deso->deso_code)
+            ->whereIn('indicator_id', $activeIndicators->keys())
+            ->whereNotNull('raw_value')
+            ->orderBy('year')
             ->get()
-            ->unique('indicator_id');
+            ->groupBy('indicator_id');
+
+        // 5b. Get composite score history for score sparkline
+        $scoreHistory = CompositeScore::where('deso_code', $deso->deso_code)
+            ->orderBy('year')
+            ->get(['year', 'score']);
 
         // 6. Get nearby schools
         $schoolRadius = $this->getQueryRadius('school_query_radius', $urbanityTier);
@@ -200,6 +210,27 @@ class LocationController extends Controller
             ],
         ]);
 
+        // Add score history for paid tiers
+        if ($scoreHistory->count() >= 2) {
+            $scoreData['history'] = [
+                'years' => $scoreHistory->pluck('year')->values(),
+                'scores' => $scoreHistory->pluck('score')->map(fn ($v) => round((float) $v, 1))->values(),
+            ];
+        }
+
+        // Build indicators with trend data
+        $indicatorsWithTrend = [];
+        foreach ($allIndicatorValues as $indicatorId => $history) {
+            $indicator = $activeIndicators->get($indicatorId);
+            if (! $indicator) {
+                continue;
+            }
+
+            $current = $history->last(); // latest year (ordered by year asc)
+
+            $indicatorsWithTrend[] = $this->buildIndicatorWithTrend($indicator, $history, $current);
+        }
+
         return response()->json([
             'location' => [
                 'lat' => $lat,
@@ -214,16 +245,7 @@ class LocationController extends Controller
             'tier' => $tier->value,
             'display_radius' => $displayRadius,
             'proximity' => $proximity->toArray(),
-            'indicators' => $indicators->map(fn ($iv) => [
-                'slug' => $iv->indicator->slug,
-                'name' => $iv->indicator->name,
-                'raw_value' => (float) $iv->raw_value,
-                'normalized_value' => (float) $iv->normalized_value,
-                'unit' => $iv->indicator->unit,
-                'direction' => $iv->indicator->direction,
-                'category' => $iv->indicator->category,
-                'normalization_scope' => $iv->indicator->normalization_scope,
-            ])->values(),
+            'indicators' => $indicatorsWithTrend,
             'schools' => collect($schools)->map(fn ($s) => [
                 'name' => $s->name,
                 'type' => $s->type_of_schooling,
@@ -407,5 +429,58 @@ class LocationController extends Controller
         }
 
         return 'Okänt';
+    }
+
+    /**
+     * Build a single indicator array with historical trend data.
+     *
+     * @param  Collection<int, IndicatorValue>  $history
+     * @return array<string, mixed>
+     */
+    private function buildIndicatorWithTrend(Indicator $indicator, Collection $history, IndicatorValue $current): array
+    {
+        $currentYear = (int) $current->year;
+        $currentPercentile = round((float) $current->normalized_value * 100);
+
+        $prevYear = $history->firstWhere('year', $currentYear - 1);
+        $prevPercentile = $prevYear ? round((float) $prevYear->normalized_value * 100) : null;
+
+        return [
+            'slug' => $indicator->slug,
+            'name' => $indicator->name,
+            'raw_value' => (float) $current->raw_value,
+            'normalized_value' => (float) $current->normalized_value,
+            'unit' => $indicator->unit,
+            'direction' => $indicator->direction,
+            'category' => $indicator->category,
+            'normalization_scope' => $indicator->normalization_scope,
+            'trend' => [
+                'years' => $history->pluck('year')->map(fn ($y) => (int) $y)->values(),
+                'percentiles' => $history->pluck('normalized_value')
+                    ->map(fn ($v) => (int) round((float) $v * 100))->values(),
+                'raw_values' => $history->pluck('raw_value')
+                    ->map(fn ($v) => (float) $v)->values(),
+                'change_1y' => ($prevPercentile !== null)
+                    ? (int) ($currentPercentile - $prevPercentile)
+                    : null,
+                'change_3y' => $this->computePercentileChange($history, $currentYear, 3),
+                'change_5y' => $this->computePercentileChange($history, $currentYear, 5),
+            ],
+        ];
+    }
+
+    /**
+     * @param  Collection<int, IndicatorValue>  $history
+     */
+    private function computePercentileChange(Collection $history, int $currentYear, int $span): ?int
+    {
+        $current = $history->firstWhere('year', $currentYear);
+        $past = $history->firstWhere('year', $currentYear - $span);
+
+        if (! $current || ! $past) {
+            return null;
+        }
+
+        return (int) (round((float) $current->normalized_value * 100) - round((float) $past->normalized_value * 100));
     }
 }
