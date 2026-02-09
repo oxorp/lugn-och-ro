@@ -17,7 +17,7 @@ PlatsIndex ingests data from 7 primary sources spanning government statistics, l
 | Police Vulnerability | :white_check_mark: Live | Polygon → DeSO | ~2 years | 1 | GeoJSON | None |
 | Kronofogden (Kolada) | :white_check_mark: Live | Kommun → DeSO | Annual | 3 | API (REST) | None |
 | OSM POI | :white_check_mark: Live | Point → DeSO | Monthly | 8 | API (Overpass) | None |
-| GTFS Transit | :yellow_circle: Planned | Stop → DeSO | Monthly | 3 | GTFS file | API key |
+| GTFS Transit | :white_check_mark: Live | Stop → DeSO | Monthly | 2 | GTFS file | API key |
 | Google Places POI | :yellow_circle: Planned | Point → DeSO | Monthly | TBD | API (REST) | API key |
 
 ## Data Quality Summary
@@ -28,8 +28,9 @@ PlatsIndex ingests data from 7 primary sources spanning government statistics, l
 | Skolverket | ~2,500–3,800 | 2020/21 | Merit values limited; teacher cert better |
 | BRÅ Crime | 6,160 (estimated) | 2024 | Disaggregated from 290 kommuner |
 | NTU Survey | 6,160 (estimated) | 2025 | Disaggregated from 21 län |
-| Police | ~275 DeSOs flagged | 2025 | Binary flag (0/1/2), not continuous |
+| Police | ~275 DeSOs penalized | 2025 | Applied as score penalty (-8/-15 pts), not indicator |
 | Kronofogden | 6,160 (estimated) | 2024 | R²=0.40 disaggregation quality |
+| GTFS Transit | ~47,000 stops | 2026 | Replaces OSM transit data; requires Python for frequency computation |
 | OSM POI | Variable | 2026 | Urban bias in OSM coverage |
 
 ## Disaggregation Required

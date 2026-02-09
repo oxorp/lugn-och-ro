@@ -59,7 +59,36 @@ $rawScore = Σ($directedValue × $adjustedWeight) × 100
 
 The result is a score between 0 and 100.
 
-### Step 5: Factor Attribution
+### Step 5: Score Penalties
+
+After computing the raw weighted score, the engine applies **penalties** — hard deductions that exist outside the weighted indicator system. Penalties are defined in the `score_penalties` table and applied post-calculation.
+
+```php
+// app/Services/ScoringService.php — computePenalties()
+// 1. Load all active penalties and DeSO vulnerability mappings (≥10% overlap)
+// 2. Group applicable penalties by category
+// 3. Select worst (most negative) penalty per category
+// 4. Sum across categories
+$totalPenalty = sum of worst-per-category penalties
+$finalScore = clamp($rawScore + $totalPenalty, 0, 100)
+```
+
+**Current penalties:**
+
+| Penalty | Slug | Value | Type | Trigger |
+|---|---|---|---|---|
+| Särskilt utsatt område | `vuln_sarskilt_utsatt` | -15 pts | absolute | Police-classified severely vulnerable area |
+| Utsatt område | `vuln_utsatt` | -8 pts | absolute | Police-classified vulnerable area |
+
+Penalties apply when a DeSO has ≥10% spatial overlap with a vulnerability area (via `deso_vulnerability_mapping`). Both penalty types support `absolute` (fixed deduction) and `percentage` (% of raw score) modes.
+
+**Audit trail**: When penalties are applied, `composite_scores` stores:
+- `raw_score_before_penalties` — the pre-penalty score
+- `penalties_applied` — JSON array with slug, name, and amount for each applied penalty
+
+This replaced the earlier `vulnerability_flag` indicator (weight 0.10), which modeled vulnerability as a continuous 0/1/2 value within the weighted sum. The penalty approach gives clearer separation between data-driven scoring and policy-driven adjustments. The old indicator's weight was redistributed to crime indicators (`crime_violent_rate` +0.02, `crime_property_rate` +0.01, `perceived_safety` +0.015).
+
+### Step 6: Factor Attribution
 
 The engine identifies the top contributing factors (positive and negative) for each DeSO:
 
@@ -77,7 +106,7 @@ $topNegative = top 3 factors with highest negative contribution
 
 These are stored as JSON in `composite_scores.top_positive` and `composite_scores.top_negative`.
 
-### Step 6: Versioning
+### Step 7: Versioning
 
 Each scoring run creates a `ScoreVersion` record. Scores are initially `draft` and must be explicitly published via the admin dashboard. This allows review before scores go live.
 
@@ -207,6 +236,9 @@ graph TD
 - **Sparse data DeSOs**: Very remote areas may only have 3–4 indicators with data. Weight redistribution handles this but scores are less reliable.
 - **Neutral direction**: Indicators with `direction = neutral` are excluded from scoring entirely (used for informational display only).
 - **Score drift detection**: The `ScoreDriftDetector` service monitors for unusual changes between versions.
+- **Penalty stacking**: Only the worst penalty per category is applied (e.g., if a DeSO overlaps both "utsatt" and "särskilt utsatt" areas, only -15 is applied, not -23).
+- **Penalty floor**: Scores are clamped to [0, 100] after penalty application — a raw score of 12 with a -15 penalty floors at 0.
+- **Penalty admin**: Penalty values can be adjusted at `/admin/penalties` but require re-running `compute:scores` to take effect.
 
 ## Related
 

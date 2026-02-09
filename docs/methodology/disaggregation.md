@@ -63,12 +63,26 @@ For Kronofogden debt rates:
 - **`foreign_background_pct`** is explicitly excluded from all disaggregation formulas per legal/ethical review
 - Using ethnic composition as a predictor variable would raise GDPR and discrimination concerns
 
+## Historical Disaggregation via Crosswalk
+
+For historical data (2019–2023), an additional step is required because SCB used **DeSO 2018 codes** (5,984 areas) which don't match current DeSO 2025 codes (6,160 areas).
+
+The `CrosswalkService` maps old values to new codes using the `deso_crosswalk` table:
+
+- **Rate/percentage values**: Assigned directly on 1:1 mappings; area-weighted average on merges
+- **Count values**: Distributed proportionally by `overlap_fraction` on splits
+
+This happens transparently inside `ingest:scb-historical` and `ingest:bra-historical`.
+
+See [Spatial Framework — DeSO Crosswalk](/architecture/spatial-framework#deso-2018-↔-2025-crosswalk) for technical details.
+
 ## Limitations
 
 - Disaggregation assumes the relationship between demographics and the target variable is uniform within a kommun
 - The 40% R² means 60% of variance is unexplained — DeSO estimates are approximations
 - Areas with unusual characteristics (e.g., a university campus in a wealthy kommun) may be mislabeled
 - Median values cannot be disaggregated (median of sub-areas ≠ sub-area medians)
+- Historical crosswalk introduces additional approximation for split areas (~10% of DeSOs)
 
 ## Related
 

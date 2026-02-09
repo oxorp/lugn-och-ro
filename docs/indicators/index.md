@@ -36,20 +36,18 @@ After the proximity rebalancing (`ProximityIndicatorSeeder`), area-level weights
 | `school_goal_achievement_avg` | Goal Achievement Rate | Skolverket | positive | 0.0339 | percent | national |
 | `school_teacher_certification_avg` | Teacher Certification Rate | Skolverket | positive | 0.0264 | percent | national |
 
-### Crime (total weight: ~13.2%)
+### Crime & Safety (total weight: ~14.7%)
 
 | Slug | Name | Source | Direction | Weight | Unit | Scope |
 |---|---|---|---|---|---|---|
-| `crime_violent_rate` | Violent Crime Rate | BRÅ | negative | 0.0452 | per_100k | national |
-| `crime_property_rate` | Property Crime Rate | BRÅ | negative | 0.0339 | per_100k | national |
+| `crime_violent_rate` | Violent Crime Rate | BRÅ | negative | 0.0602 | per_100k | national |
+| `crime_property_rate` | Property Crime Rate | BRÅ | negative | 0.0414 | per_100k | national |
 | `crime_total_rate` | Total Crime Rate | BRÅ | negative | 0.0188 | per_100k | national |
-| `vulnerability_flag` | Police Vulnerability Area | Polisen | negative | 0.0715 | flag | national |
+| `perceived_safety` | Perceived Safety (NTU) | BRÅ NTU | positive | 0.0452 | percent | national |
 
-### Safety (total weight: ~3.4%)
-
-| Slug | Name | Source | Direction | Weight | Unit | Scope |
-|---|---|---|---|---|---|---|
-| `perceived_safety` | Perceived Safety (NTU) | BRÅ NTU | positive | 0.0339 | percent | national |
+::: info Vulnerability Flag → Penalty System
+The `vulnerability_flag` indicator (formerly weight 0.0715) was **deactivated** and replaced by the [Score Penalty System](/architecture/scoring-engine#step-5-score-penalties). Police vulnerability areas now apply a direct point deduction (-8 or -15 points) after the weighted sum, rather than participating as an indicator. The freed weight was redistributed to `crime_violent_rate` (+0.015), `crime_property_rate` (+0.0075), and `perceived_safety` (+0.0113).
+:::
 
 ### Financial Distress (total weight: ~7.5%)
 
@@ -98,14 +96,17 @@ Computed in real-time per coordinate. See [Proximity Indicators](/indicators/pro
 | Category | Total Weight | Indicator Count | Type |
 |---|---|---|---|
 | Education & Schools | 15.8% | 5 | Area |
+| Crime & Safety | 14.7% | 4 | Area |
 | Amenities & Transport | 14.3% | 8 | Area |
-| Crime | 13.2% | 4 | Area |
 | **Proximity** | **30.0%** | **6** | **Real-time** |
 | Income | 7.9% | 2 | Area |
 | Financial Distress | 7.5% | 3 | Area |
 | Employment | 4.1% | 1 | Area |
-| Safety | 3.4% | 1 | Area |
-| **Total** | **~100%** | **30 scored + 3 informational** | |
+| **Total** | **~100%** | **29 scored + 3 informational** | |
+
+::: tip Score Penalties (outside weight budget)
+Police vulnerability areas apply **post-calculation penalties** (-8 or -15 points) that are separate from the weighted indicator sum. See [Scoring Engine — Penalties](/architecture/scoring-engine#step-5-score-penalties).
+:::
 
 ## Direction Semantics
 

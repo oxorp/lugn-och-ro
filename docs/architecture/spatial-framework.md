@@ -42,6 +42,34 @@ In 2025, SCB revised DeSO boundaries, increasing the count from 5,984 to 6,160. 
 - `deso_code_mappings` maps old codes to new codes
 - `trend_eligible` flag on `deso_areas` marks whether trends can be computed (false for changed areas)
 
+### DeSO 2018 ↔ 2025 Crosswalk
+
+Historical data (2019–2023) uses old DeSO 2018 codes. To enable historical trend analysis, the platform maintains a **spatial overlap crosswalk** in the `deso_crosswalk` table.
+
+**How it works:**
+
+1. `import:deso-2018-boundaries` downloads 5,984 DeSO 2018 polygons from SCB WFS
+2. `build:deso-crosswalk` computes pairwise spatial overlap between old and new areas using PostGIS
+3. For each (old, new) pair with overlap > 1%, it records:
+   - `overlap_fraction` — what % of the old area maps to this new area
+   - `reverse_fraction` — what % of the new area comes from this old area
+   - `mapping_type` — `1:1` (>95% overlap both ways), `split`, `merge`, or `partial`
+
+**Mapping distribution:** ~90% of areas are 1:1 (unchanged), ~10% were split into 2+ new areas.
+
+**Value redistribution** (`CrosswalkService`):
+- **Rate/percentage indicators** (income, employment, debt): Same rate assigned to all child areas on splits; area-weighted average for merges
+- **Count indicators** (population): Distributed proportionally by `overlap_fraction`
+
+```bash
+# Build the crosswalk (one-time operation)
+php artisan import:deso-2018-boundaries
+php artisan build:deso-crosswalk --fresh
+
+# Ingest historical data through the crosswalk
+php artisan ingest:scb-historical --from=2019 --to=2023
+```
+
 ## H3 Hexagonal Grid
 
 H3 cells provide uniform spatial analysis. Every hexagon has exactly 6 neighbors at equal distance, making spatial smoothing mathematically clean.

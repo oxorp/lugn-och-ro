@@ -26,12 +26,15 @@ Artisan commands fetch data from external sources and store raw values in source
 | Command | Source | Output Table |
 |---|---|---|
 | `ingest:scb --all` | SCB PX-Web API | `indicator_values` (directly) |
+| `ingest:scb-historical` | SCB PX-Web API (old DeSO codes) | `indicator_values` (via crosswalk) |
 | `ingest:skolverket-schools` | Skolverket v2 API | `schools` |
 | `ingest:skolverket-stats` | Skolverket v3 API | `school_statistics` |
 | `ingest:bra-crime --year=2024` | BRÅ CSV/Excel files | `crime_statistics` |
+| `ingest:bra-historical` | BRÅ SOL Excel export | `crime_statistics` (multi-year) |
 | `ingest:ntu --year=2025` | BRÅ NTU Excel | `ntu_survey_data` |
 | `ingest:vulnerability-areas` | Police GeoJSON | `vulnerability_areas` |
 | `ingest:kronofogden --year=2024` | Kolada API | `kronofogden_statistics` |
+| `ingest:gtfs` | Trafiklab GTFS Sverige 2 | `transit_stops`, `transit_stop_frequencies`, `pois` |
 | `ingest:pois` | OSM Overpass API | `pois` |
 
 ### Stage 2: Aggregation & Disaggregation
@@ -55,14 +58,24 @@ The `normalize:indicators` command converts all raw values to a 0–1 scale:
 
 See [Normalization](/data-pipeline/normalization) for details.
 
+### Stage 3.5: Validation
+
+The `validate:indicators` command runs sanity checks against known reference points before scoring:
+
+- **Kommun-level average checks**: Verifies that averages for well-known municipalities fall within expected ranges (e.g., Danderyd income 350k–700k SEK, Lund post-secondary 40–85%)
+- **National median checks**: Ensures national median percentiles are reasonable
+
+Configuration in `config/data_sanity_checks.php`. Run after normalization, before scoring.
+
 ### Stage 4: Scoring
 
 The `compute:scores` command produces composite 0–100 scores:
 
 1. Load all active indicators with their weights and directions
 2. For each DeSO, compute weighted sum of directed normalized values
-3. Identify top positive and negative contributing factors
-4. Store in `composite_scores` with a draft `score_version`
+3. Apply [score penalties](/architecture/scoring-engine#step-5-score-penalties) (vulnerability area deductions)
+4. Identify top positive and negative contributing factors
+5. Store in `composite_scores` with a draft `score_version`
 
 See [Scoring](/data-pipeline/scoring) for details.
 
@@ -101,6 +114,7 @@ graph LR
         KOL[Kolada API]
         OSM[Overpass]
         POL[Police]
+        GTFS[Trafiklab GTFS]
     end
 
     subgraph "Raw Tables"
@@ -111,6 +125,7 @@ graph LR
         KS[kronofogden_statistics]
         POI[pois]
         VA[vulnerability_areas]
+        TS[transit_stops + frequencies]
     end
 
     subgraph "Processing"
@@ -132,6 +147,8 @@ graph LR
     BRA --> NTU
     KOL --> KS
     OSM --> POI
+    GTFS --> TS
+    TS --> POI
     POL --> VA
 
     SCH --> AGG

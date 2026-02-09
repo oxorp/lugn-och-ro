@@ -41,6 +41,34 @@ Pre-computed H3 hexagonal scores at multiple resolutions.
 | `trend_1y` | decimal | 1-year score trend |
 | `primary_deso_code` | varchar | DeSO with largest overlap |
 
+### `deso_areas_2018`
+
+Historical DeSO 2018 boundary geometries from SCB WFS, used for the crosswalk.
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | bigint (PK) | Auto-increment |
+| `deso_code` | varchar(10), unique | DeSO 2018 identifier |
+| `deso_name` | varchar | Human-readable name |
+| `kommun_code` | varchar(4) | Parent municipality code |
+| `kommun_name` | varchar | Municipality name |
+| `geom` | MULTIPOLYGON (SRID 4326) | PostGIS geometry with GIST index |
+
+### `deso_crosswalk`
+
+Area-weighted mapping between DeSO 2018 codes and DeSO 2025 codes. Built by `build:deso-crosswalk` using spatial overlap computation.
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | bigint (PK) | Auto-increment |
+| `old_code` | varchar | DeSO 2018 code |
+| `new_code` | varchar | DeSO 2025 code |
+| `overlap_fraction` | decimal | Fraction of old area mapping to this new area |
+| `reverse_fraction` | decimal | Fraction of new area coming from this old area |
+| `mapping_type` | varchar | `1:1`, `split`, `merge`, or `partial` |
+
+Unique constraint on `(old_code, new_code)`. ~90% of mappings are `1:1` (unchanged areas).
+
 ### `deso_h3_mapping`
 
 Lookup table mapping DeSO polygons to H3 hexagonal cells.
@@ -129,12 +157,35 @@ Final weighted composite scores per DeSO per year.
 |---|---|---|
 | `deso_code` | varchar | References deso_areas |
 | `year` | integer | Scoring year |
-| `score` | decimal | Composite score 0–100 |
+| `score` | decimal | Composite score 0–100 (after penalties) |
+| `raw_score_before_penalties` | decimal, nullable | Score before penalty deductions (null if no penalties) |
+| `penalties_applied` | json, nullable | Array of applied penalties `[{slug, name, amount}]` |
 | `trend_1y` | decimal | 1-year change |
 | `factor_scores` | json | Per-indicator contributions |
 | `top_positive` | json | Top 3 positive factors |
 | `top_negative` | json | Top 3 negative factors |
 | `score_version_id` | bigint (FK) | References score_versions |
+
+### `score_penalties`
+
+Configurable post-calculation score deductions (e.g., vulnerability area penalties).
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | bigint (PK) | Auto-increment |
+| `slug` | varchar, unique | Machine identifier (e.g., `vuln_sarskilt_utsatt`) |
+| `name` | varchar | Display name |
+| `description` | text | Detailed explanation |
+| `category` | varchar | Penalty grouping (e.g., `vulnerability`) |
+| `penalty_type` | varchar | `absolute` or `percentage` |
+| `penalty_value` | decimal | Deduction amount (always ≤ 0, range -50 to 0) |
+| `is_active` | boolean | Toggle without deletion |
+| `applies_to` | varchar | Scope: `composite_score` |
+| `display_order` | integer | UI ordering within category |
+| `color` | varchar(7), nullable | Map polygon fill color (hex) |
+| `border_color` | varchar(7), nullable | Map polygon border color (hex) |
+| `opacity` | decimal, nullable | Map polygon opacity (0–1) |
+| `metadata` | json, nullable | Extensible metadata |
 
 ### `score_versions`
 
@@ -243,6 +294,45 @@ Estimated DeSO-level debt rates disaggregated from kommun data.
 | `estimated_debt_rate` | decimal | Model-estimated debt rate |
 | `estimated_eviction_rate` | decimal | Model-estimated eviction rate |
 | `model_id` | bigint (FK) | References disaggregation_models |
+
+### `transit_stops`
+
+Authoritative transit stop data from GTFS Sverige 2 (Samtrafiken).
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | bigint (PK) | Auto-increment |
+| `gtfs_stop_id` | varchar(30), unique | GTFS stop identifier |
+| `name` | varchar, nullable | Stop name |
+| `lat` / `lng` | decimal(10,7) | Coordinates |
+| `parent_station` | varchar(30), nullable | Parent station grouping |
+| `location_type` | tinyint | 0 = stop, 1 = station |
+| `source` | varchar(20) | Default `gtfs` |
+| `stop_type` | varchar(20), nullable | Dominant mode: `bus`, `rail`, `subway`, `tram`, `ferry`, `on_demand` |
+| `weekly_departures` | integer, nullable | Estimated weekly departures (weekday × 5) |
+| `routes_count` | integer, nullable | Distinct routes at stop |
+| `deso_code` | varchar(10), nullable | Assigned via PostGIS spatial join |
+| `geom` | POINT (SRID 4326) | PostGIS geometry with GIST index |
+
+### `transit_stop_frequencies`
+
+Per-stop departure counts by mode and time bucket.
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | bigint (PK) | Auto-increment |
+| `gtfs_stop_id` | varchar(30) | References transit_stops |
+| `mode_category` | varchar(20) | `bus`, `rail`, `subway`, `tram`, `ferry`, `on_demand` |
+| `departures_06_09` | integer | Morning rush (06:00–08:59) |
+| `departures_09_15` | integer | Midday (09:00–14:59) |
+| `departures_15_18` | integer | Afternoon rush (15:00–17:59) |
+| `departures_18_22` | integer | Evening (18:00–21:59) |
+| `departures_06_20_total` | integer | Sum of all buckets |
+| `distinct_routes` | integer | Unique route count |
+| `day_type` | varchar(10) | Default `weekday` |
+| `feed_version` | varchar(20), nullable | GTFS feed version (e.g., `2026-03`) |
+
+Index on `(gtfs_stop_id, day_type)`.
 
 ### `pois`
 

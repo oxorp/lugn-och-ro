@@ -70,3 +70,55 @@
 - Full pipeline automation via `pipeline:run`
 - Admin dashboard for indicator weight management
 - Stripe webhook integration (CSRF excluded)
+
+---
+
+## 2026-02 (Late February Update)
+
+### Score Penalty System
+- **Replaced `vulnerability_flag` indicator** with post-calculation penalty deductions
+- Two penalty tiers: Särskilt utsatt (-15 pts) and Utsatt (-8 pts) based on police vulnerability area classification
+- Penalty values configurable at `/admin/penalties` with impact preview (affected DeSOs, population)
+- Supports both `absolute` and `percentage` penalty types
+- Audit trail: `raw_score_before_penalties` and `penalties_applied` JSON stored on composite scores
+- Weight from old indicator redistributed to crime and safety indicators
+
+### Historical Data & DeSO Crosswalk
+- **DeSO 2018 ↔ 2025 spatial crosswalk** — area-weighted mapping of 5,984 old codes to 6,160 new codes
+- `import:deso-2018-boundaries` — downloads old boundary polygons from SCB WFS (~50 MB)
+- `build:deso-crosswalk` — PostGIS spatial overlap computation with mapping type classification (1:1 / split / merge / partial)
+- `CrosswalkService` — handles rate vs count redistribution logic
+- `ingest:scb-historical --from=2019 --to=2023` — fetches and maps historical SCB data through crosswalk
+- `ingest:bra-historical` — multi-year BRÅ crime ingestion from SOL Excel export
+- Multi-year support added to `ingest:kronofogden`, `ingest:ntu`, `ingest:skolverket-stats`
+- Historical data availability: SCB 2019–2024, Skolverket 2020/21–2024/25, BRÅ 2019–2024, Kolada 2019–2025, NTU 2019–2025
+
+### GTFS Transit Data
+- **Replaced OSM transit stops** with authoritative GTFS Sverige 2 feed (Samtrafiken)
+- `ingest:gtfs` — 9-step pipeline: download → import ~47K stops → Python frequency computation → DeSO assignment → POI insertion
+- `scripts/compute_gtfs_frequencies.py` — streams stop_times.txt in 500K-row chunks, classifies modes and time buckets
+- `transit_stops` and `transit_stop_frequencies` tables with per-stop departure counts by mode and time bucket
+- `ProximityScoreService::scoreTransit()` upgraded: mode weighting (rail 1.5x, tram 1.2x), log-scaled frequency bonus
+- High-value stops inserted as tiered POIs: rail stations, tram stops, high-frequency bus stops
+- Requires `TRAFIKLAB_GTFS_KEY` and Python 3 in Docker container
+
+### Historical Trend Visualization
+- **Sparkline component** — SVG inline charts (200×40px) showing 5–6 years of percentile data per indicator
+- **Trend arrow component** — directional 1-year change arrows (↑↗→↘↓) with color coding, direction-aware for negative indicators
+- **Score history** — composite score sparkline on the score card
+- Location API now returns `trend` object per indicator: `{years, percentiles, raw_values, change_1y, change_3y, change_5y}`
+- Score history: `{years, scores}` for composite score trajectory
+
+### Admin Dashboard Expansion
+- **Data Completeness page** (`/admin/data-completeness`) — color-coded heatmap matrix showing indicator × year coverage across all DeSOs
+- **Penalties page** (`/admin/penalties`) — configure penalty values, types, and map styling with score simulation preview
+- **Vulnerability Areas API** (`/api/vulnerability-areas`) — GeoJSON endpoint with penalty metadata for map overlay (24h cache)
+
+### Data Validation
+- `validate:indicators` command — sanity checks against known reference points (kommun averages, national medians)
+- `config/data_sanity_checks.php` — reference values for well-known municipalities (Danderyd, Lund, Filipstad, Lomma)
+
+### Map & UI Improvements
+- Geography indexes on DeSO areas for faster spatial queries
+- Map refactoring for improved performance
+- Improved contrast on admin data completeness page

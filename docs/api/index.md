@@ -12,7 +12,7 @@ API endpoints are defined in `routes/web.php` (not `routes/api.php`). They use J
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/api/location/{lat},{lng}` | **Per-address scoring** — blended area + proximity score, nearby schools, POIs, indicators |
+| GET | `/api/location/{lat},{lng}` | **Per-address scoring** — blended area + proximity score, nearby schools, POIs, indicators, historical trends |
 
 ### Map Data
 
@@ -20,6 +20,7 @@ API endpoints are defined in `routes/web.php` (not `routes/api.php`). They use J
 |---|---|---|---|
 | GET | `/api/deso/geojson` | DeSO polygon boundaries | 24h |
 | GET | `/api/deso/scores?year=2024` | Composite scores per DeSO | 1h |
+| GET | `/api/vulnerability-areas` | Vulnerability area GeoJSON with penalty metadata | 24h |
 | GET | `/api/pois` | POI data for map display | — |
 | GET | `/api/pois/categories` | POI category definitions | — |
 | GET | `/api/h3/scores` | H3 hexagonal scores | 1h |
@@ -65,6 +66,9 @@ API endpoints are defined in `routes/web.php` (not `routes/api.php`). They use J
 | PUT | `/admin/indicators/{id}` | Update indicator settings |
 | PUT | `/admin/poi-categories/{id}` | Update POI category settings |
 | POST | `/admin/recompute-scores` | Re-normalize and recompute all scores |
+| GET | `/admin/penalties` | Score penalty configuration |
+| PUT | `/admin/penalties/{penalty}` | Update penalty settings (value, type, active, colors) |
+| GET | `/admin/data-completeness` | Data coverage matrix (indicator × year × DeSO) |
 | GET | `/admin/data-quality` | Data quality dashboard |
 | POST | `/admin/data-quality/publish/{id}` | Publish a score version |
 | POST | `/admin/data-quality/rollback/{id}` | Rollback a score version |

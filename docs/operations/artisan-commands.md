@@ -123,6 +123,66 @@ php artisan ingest:kronofogden --year=2024 --source=kolada
 
 Fetches debt rates, median debt, and eviction rates for all 290 kommuner.
 
+### `ingest:gtfs`
+
+Ingest public transport data from GTFS Sverige 2 (Samtrafiken).
+
+```bash
+php artisan ingest:gtfs                           # Download and process
+php artisan ingest:gtfs --target-date=20260310    # Specific reference date
+php artisan ingest:gtfs --file=/path/to/sweden.zip # Local file
+php artisan ingest:gtfs --skip-download            # Use existing extracted files
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--target-date=` | auto (Tuesday ~4 weeks out) | YYYYMMDD reference date for frequency computation |
+| `--file=` | — | Path to local GTFS zip file |
+| `--skip-download` | false | Use previously extracted files |
+
+**Pipeline**: Download → Extract → Import ~47K stops → Python frequency computation → Import frequencies → Backfill stop metrics → Spatial DeSO join → Insert high-value stops as POIs.
+
+Requires `TRAFIKLAB_GTFS_KEY` in `.env`. Frequency computation delegates to `scripts/compute_gtfs_frequencies.py` (Python 3 + pandas). Replaces all previous OSM-sourced transit POIs on each run.
+
+### `ingest:scb-historical`
+
+Ingest historical SCB indicator data (2019–2023) using old DeSO 2018 codes, mapped to DeSO 2025 via the crosswalk.
+
+```bash
+php artisan ingest:scb-historical --from=2019 --to=2023
+php artisan ingest:scb-historical --from=2022 --to=2023 --indicator=median_income
+php artisan ingest:scb-historical --from=2019 --to=2023 --skip-normalize
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--from=` | 2019 | Start year |
+| `--to=` | 2023 | End year |
+| `--indicator=` | all | Specific indicator slug |
+| `--skip-normalize` | false | Skip per-year normalization |
+
+**Prerequisite**: DeSO crosswalk must be built first (`import:deso-2018-boundaries` + `build:deso-crosswalk`).
+
+Indicators: `median_income`, `low_economic_standard_pct`, `population`, `foreign_background_pct`, `employment_rate`, `education_post_secondary_pct`, `education_below_secondary_pct`, `rental_tenure_pct`. Rate-limits at 400ms between API calls.
+
+### `ingest:bra-historical`
+
+Ingest historical BRÅ crime data (kommun-level, multi-year) from SOL Excel export.
+
+```bash
+php artisan ingest:bra-historical --from=2019 --to=2024 --file=/path/to/sol_export.xlsx
+php artisan ingest:bra-historical --from=2020 --to=2023 --national-file=/path/to/10yr.xlsx
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--from=` | 2019 | Start year |
+| `--to=` | 2024 | End year |
+| `--file=` | — | Path to BRÅ SOL Excel export (required) |
+| `--national-file=` | auto | National proportions Excel for category estimation |
+
+**Data source**: Download from `statistik.bra.se/solwebb` → Table 120 → All kommuner → Export Excel. Estimates category-level rates using national crime proportions.
+
 ### `ingest:pois`
 
 Ingest POI data from OpenStreetMap via Overpass API.
@@ -317,6 +377,39 @@ php artisan import:deso-changes
 php artisan import:deso-changes --dry-run
 ```
 
+### `import:deso-2018-boundaries`
+
+Download and import DeSO 2018 boundary polygons from SCB WFS.
+
+```bash
+php artisan import:deso-2018-boundaries          # Download and import
+php artisan import:deso-2018-boundaries --fresh   # Truncate and reimport
+php artisan import:deso-2018-boundaries --cache-only  # Use cached file only
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--fresh` | false | Truncate table before importing |
+| `--cache-only` | false | Only use cached GeoJSON file |
+
+Downloads ~50 MB GeoJSON from SCB geodata portal. Caches to `storage/app/geodata/deso_2018.geojson`. Required before building the crosswalk.
+
+### `build:deso-crosswalk`
+
+Build the spatial overlap crosswalk between DeSO 2018 and DeSO 2025 boundaries.
+
+```bash
+php artisan build:deso-crosswalk --fresh
+php artisan build:deso-crosswalk --min-overlap=0.01
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--fresh` | false | Truncate before building |
+| `--min-overlap=` | 0.01 | Minimum overlap fraction to include |
+
+Computes PostGIS `ST_Intersection` area ratios between all old/new DeSO pairs. Classifies mapping types (`1:1`, `split`, `merge`, `partial`). Verifies overlap fractions sum to ~1.0 per old code. One-time operation — run once, reuse for all historical ingestion.
+
 ### `classify:deso-urbanity`
 
 Classify DeSO areas by urbanity tier (urban/semi_urban/rural).
@@ -355,6 +448,26 @@ php artisan check:freshness
 ```
 
 Source-specific thresholds: SCB/Skolverket/Kronofogden (15/24 months), BRA (6/12 months).
+
+### `validate:indicators`
+
+Run sanity checks against known reference points to catch ingestion errors.
+
+```bash
+php artisan validate:indicators --year=2024
+php artisan validate:indicators --year=2024 --indicator=median_income
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--year=` | 2024 | Data year to validate |
+| `--indicator=` | all | Specific indicator slug |
+
+**Check types:**
+- **Kommun-level average**: Verifies average raw values in well-known municipalities fall within expected ranges (e.g., Danderyd income 350k–700k SEK)
+- **National median**: Checks that national median percentile is within acceptable bounds
+
+Configuration in `config/data_sanity_checks.php`. Reports pass/fail/skip per check.
 
 ### `check:sentinels`
 
