@@ -1,1022 +1,1240 @@
-# TASK: Personalized Report Generation + Persistence
+# TASK: Report Page — Full Paid Product
 
-## What This Is
+## Context
 
-The user drops a pin on the map. They've seen the score, the heatmap, the headline in the sidebar. Now they want the full picture. They click "Generate Report" — and before we compute anything, we ask: **what matters most to you?**
+The user paid 79 kr (or has a subscription). They've gone through the preference questionnaire. Now we generate and render the actual report — the thing they're paying for. This is the product.
 
-A family with kids cares about school quality. A 25-year-old cares about transit and nightlife. An investor cares about price trajectory and income trends. The report reflects their priorities by slightly adjusting the weighting — same data, personalized lens.
+The report is a **standalone page** at `/reports/{uuid}`. It's permanent (persisted in the database), shareable (anyone with the link can view it), and print-friendly. Everything is snapshotted at generation time — scores, indicators, schools, trends, map state. It never changes after creation.
 
-This is the monetization moment. The free tier shows the map colors and headline score. The report is the product they pay for. Once paid (or if they have a subscription), the report is theirs forever — persisted in the database, accessible via a unique URL, viewable on any device, months or years later.
+The free sidebar teaser shows 2 indicators per category + gray bars. The report shows **everything**: all indicators with full values, sparklines, trend arrows, per-school breakdowns, a static map image, written verdicts per category, and an overall assessment with strengths/weaknesses.
 
----
-
-## The User Flow
-
-```
-1. User drops pin on map (or searches address)
-   → Sidebar shows: location name, headline score, trend arrow
-   → Button: "Full Report — 79 kr" (or "Generate Report" if subscribed)
-
-2. User clicks the button
-   → If not paid/subscribed: payment flow (out of scope for this task — stub it)
-   → If paid/subscribed: preference questionnaire appears
-
-3. Preference questionnaire (in sidebar, 10 seconds to complete)
-   → "What matters most to you?"
-   → User picks their top 3 priorities from a visual grid
-   → Optional: "Who is this for?" (family, investor, single, retiree)
-   → Click "Generate"
-
-4. Report generates (< 2 seconds)
-   → Sidebar shows condensed report summary
-   → Link: "View full report →" opens /reports/{uuid}
-
-5. Full report page (/reports/{uuid})
-   → Permanent URL, persisted in database
-   → Renders all sections with personalized weighting
-   → Print-friendly, shareable
-   → User can return to it anytime (My Reports page)
-```
+**Depends on:**
+- Report generation service + `reports` table (from `task-report-generation.md`)
+- Indicator trend data in the API (from `task-indicator-trends-ui.md`)
+- Score color centralization (from `task-centralize-score-colors.md`)
+- Sidebar teaser v3 with `is_free_preview` flag (from `task-sidebar-teaser-v3.md`)
 
 ---
 
-## Step 1: Preference Questionnaire
+## What the Report Contains
 
-### 1.1 The Priority Picker
+The report has 9 sections, rendered as a scrollable single-page document:
 
-When the user clicks "Generate Report," a preference panel slides into the sidebar. NOT a multi-page wizard. One screen, done in 10 seconds.
+1. **Header** — address, kommun, län, date, report ID
+2. **Hero Score** — big number, label, trend sparkline, personalization note
+3. **Map Snapshot** — static image of the DeSO area + pin location + school markers
+4. **Category Verdicts** — one verdict card per category with traffic light + summary text
+5. **Full Indicator Breakdown** — every indicator, every value, sparklines, trend arrows
+6. **School Detail** — per-school cards for all nearby schools
+7. **Strengths & Weaknesses** — bullet lists with icons
+8. **Outlook** — forward-looking assessment based on trends
+9. **Methodology & Sources** — data sources, freshness, disclaimer
 
-```
-┌─────────────────────────────────────┐
-│  Vad är viktigast för dig?          │
-│  Välj upp till 3                    │
-│                                     │
-│  ┌──────────┐  ┌──────────┐        │
-│  │ 🏫       │  │ 🚇       │        │
-│  │ Skol-    │  │ Kollek-  │        │
-│  │ kvalitet │  │ tivtrafik│        │
-│  └──────────┘  └──────────┘        │
-│  ┌──────────┐  ┌──────────┐        │
-│  │ 🛡️       │  │ 📈       │        │
-│  │ Trygghet │  │ Värde-   │        │
-│  │          │  │ utveckling│        │
-│  └──────────┘  └──────────┘        │
-│  ┌──────────┐  ┌──────────┐        │
-│  │ 🌳       │  │ 🛒       │        │
-│  │ Grön-    │  │ Service  │        │
-│  │ områden  │  │ & butiker│        │
-│  └──────────┘  └──────────┘        │
-│  ┌──────────┐  ┌──────────┐        │
-│  │ 💰       │  │ 🏃       │        │
-│  │ Pris-    │  │ Livsstil │        │
-│  │ läge     │  │ & nöje   │        │
-│  └──────────┘  └──────────┘        │
-│                                     │
-│  ── Vem är rapporten för? ──        │
-│  ○ Familj  ○ Investerare           │
-│  ○ Singel  ○ Pensionär             │
-│  ○ Annan                            │
-│                                     │
-│  [    Generera rapport    ]         │
-└─────────────────────────────────────┘
-```
+---
 
-### 1.2 Priority Categories
+## Step 1: Extend the Snapshot
 
-| ID | Swedish Label | English (internal) | What it maps to |
-|---|---|---|---|
-| `school` | Skolkvalitet | School quality | School proximity weight ↑, school area indicator weight ↑ |
-| `transit` | Kollektivtrafik | Public transit | Transit proximity weight ↑ |
-| `safety` | Trygghet | Safety | Crime indicators weight ↑ (when available), negative POI weight ↑ |
-| `appreciation` | Värdeutveckling | Price trajectory | Price prediction weight ↑, income trend weight ↑ |
-| `green` | Grönområden | Green spaces | Green space proximity weight ↑ |
-| `services` | Service & butiker | Shops & services | Grocery proximity weight ↑, positive POI weight ↑ |
-| `affordability` | Prisläge | Price level | Low economic standard indicator, rental tenure |
-| `lifestyle` | Livsstil & nöje | Lifestyle & entertainment | Positive POIs (cafes, gyms, restaurants) weight ↑ |
+### 1.1 What Gets Snapshotted
 
-User picks **up to 3**. Selected priorities get boosted. Unselected ones don't get zeroed out — they just stay at default weight.
-
-### 1.3 How Preferences Affect Scoring
-
-This is NOT a fully separate scoring model. It's a **gentle reweighting** of the existing composite score.
-
-```
-Default weights: area 70%, proximity 30% (from proximity scoring task)
-
-If user picks "school quality" as a priority:
-  - school_proximity weight: 0.10 → 0.16 (+60%)
-  - school_merit_value_avg weight: 0.17 → 0.22 (+30%)
-  - Other weights: redistributed down slightly to keep sum at 1.0
-
-If user picks 3 priorities:
-  - Each boosted by ~40-60% of its base weight
-  - Non-priority weights shrink proportionally
-  - Net effect: score shifts by 3-8 points vs default
-```
-
-Implementation:
+The `ReportGenerationService::generate()` already collects most data. Extend it to capture everything the report page needs:
 
 ```php
-class PersonalizedScoringService
+// Additional data to snapshot in the generate() method
+
+// 1. Historical percentiles per indicator (for sparklines)
+$indicatorHistory = $this->getIndicatorHistory($deso->deso_code, $activeIndicators);
+
+// 2. Category-level verdicts
+$categoryVerdicts = $this->computeCategoryVerdicts($indicators, $indicatorHistory);
+
+// 3. Composite score history (for hero sparkline)
+$scoreHistory = CompositeScore::where('deso_code', $deso->deso_code)
+    ->orderBy('year')
+    ->get(['year', 'score'])
+    ->map(fn($s) => ['year' => $s->year, 'score' => round($s->score, 1)])
+    ->values();
+
+// 4. DeSO metadata
+$desoMeta = DesoArea::where('deso_code', $deso->deso_code)
+    ->first(['deso_code', 'deso_name', 'kommun_code', 'kommun_name', 'lan_code', 'lan_name', 'area_km2', 'population']);
+
+// 5. National reference values (for context)
+$nationalRefs = $this->getNationalReferences($activeIndicators);
+
+// 6. Map snapshot bounds (for static map rendering)
+$desoBounds = DB::selectOne("
+    SELECT ST_AsGeoJSON(ST_Envelope(geom)) as bbox,
+           ST_AsGeoJSON(ST_Centroid(geom)) as centroid
+    FROM deso_areas WHERE deso_code = ?
+", [$deso->deso_code]);
+```
+
+### 1.2 Updated Report JSON Structure
+
+The `area_indicators` JSON column now stores full history per indicator:
+
+```json
 {
-    /**
-     * Compute a personalized score by adjusting indicator weights
-     * based on user priorities.
-     *
-     * @param array $priorities  e.g., ['school', 'transit', 'green']
-     * @param float $areaScore   Default area score (0-100)
-     * @param ProximityResult $proximity  Proximity scores
-     * @param array $indicatorValues  Per-indicator normalized values
-     * @return PersonalizedScore
-     */
-    public function compute(
-        array $priorities,
-        float $areaScore,
-        ProximityResult $proximity,
-        array $indicatorValues
-    ): PersonalizedScore {
-
-        // Map priorities to weight boost targets
-        $boostMap = [
-            'school' => [
-                'area' => ['school_merit_value_avg' => 1.3, 'school_goal_achievement_avg' => 1.3],
-                'proximity' => ['school_proximity' => 1.6],
-            ],
-            'transit' => [
-                'proximity' => ['transit' => 1.6],
-            ],
-            'safety' => [
-                'area' => ['crime_rate' => 1.5],  // future
-                'proximity' => ['negative_poi' => 1.5],
-            ],
-            'appreciation' => [
-                'area' => ['median_income' => 1.3, 'employment_rate' => 1.2],
-            ],
-            'green' => [
-                'proximity' => ['green_space' => 1.6],
-            ],
-            'services' => [
-                'proximity' => ['grocery' => 1.5, 'positive_poi' => 1.4],
-            ],
-            'affordability' => [
-                'area' => ['low_economic_standard_pct' => 1.4, 'rental_tenure_pct' => 1.2],
-            ],
-            'lifestyle' => [
-                'proximity' => ['positive_poi' => 1.5],
-            ],
-        ];
-
-        // Apply boosts, then renormalize so weights sum to 1.0
-        // Recompute area + proximity blended score
-        // Return both the personalized score AND the default score for comparison
+  "area_indicators": [
+    {
+      "slug": "median_income",
+      "name": "Medianinkomst",
+      "category": "economy",
+      "category_label": "Ekonomi & arbetsmarknad",
+      "source": "scb",
+      "unit": "SEK",
+      "direction": "positive",
+      "raw_value": 287000,
+      "formatted_value": "287 000 kr",
+      "normalized_value": 0.78,
+      "percentile": 78,
+      "national_median": 265000,
+      "national_median_formatted": "265 000 kr",
+      "trend": {
+        "years": [2019, 2020, 2021, 2022, 2023, 2024],
+        "percentiles": [68, 71, 73, 74, 75, 78],
+        "raw_values": [241000, 251000, 259000, 268000, 275000, 287000],
+        "change_1y": 3,
+        "change_3y": 5,
+        "change_5y": 10
+      },
+      "description": "Medelinkomst efter skatt per person i området. Högre inkomst indikerar ekonomisk styrka och köpkraft.",
+      "weight": 0.20
     }
+  ],
+  "category_verdicts": {
+    "safety": {
+      "label": "Trygghet & brottslighet",
+      "emoji": "🛡️",
+      "score": 62,
+      "grade": "B",
+      "color": "#6abf4b",
+      "verdict_sv": "Området har genomsnittlig brottslighet med sjunkande trend. Upplevd trygghet ligger nära riksgenomsnittet. Inga utsatta områden inom DeSO-gränsen.",
+      "trend_direction": "improving",
+      "indicator_count": 8
+    }
+  },
+  "score_history": [
+    {"year": 2019, "score": 61.2},
+    {"year": 2020, "score": 63.5},
+    {"year": 2024, "score": 72.0}
+  ],
+  "deso_meta": {
+    "deso_code": "0180C4130",
+    "deso_name": "Södermalm östra",
+    "kommun_name": "Stockholm",
+    "lan_name": "Stockholms län",
+    "area_km2": 0.82,
+    "population": 2413
+  }
 }
 ```
 
-The personalized score includes a comparison: "Your personalized score: 74. Default score: 68. School quality pushed your score +6 points because the nearest school (Årstaskolan, meritvärde 241) is excellent."
+### 1.3 Additional Snapshot Columns
 
----
-
-## Step 2: Database — Reports Table
-
-### 2.1 Migration
+Add to the `reports` migration (or add a new migration):
 
 ```php
-Schema::create('reports', function (Blueprint $table) {
-    $table->id();
-    $table->uuid('uuid')->unique()->index();         // Public URL identifier
-    $table->unsignedBigInteger('user_id')->nullable()->index(); // NULL for guest purchases
-    $table->string('guest_email')->nullable();        // For non-logged-in purchases
-    $table->string('stripe_payment_id')->nullable();  // Payment reference (when we add payments)
-
-    // Location
-    $table->decimal('lat', 10, 7);
-    $table->decimal('lng', 10, 7);
-    $table->string('address')->nullable();            // Reverse-geocoded display address
-    $table->string('kommun_name')->nullable();
-    $table->string('lan_name')->nullable();
-    $table->string('deso_code', 10)->nullable()->index();
-
-    // User preferences
-    $table->json('priorities');                        // ["school", "transit", "green"]
-    $table->string('persona')->nullable();            // "family", "investor", "single", "retiree"
-
-    // Computed results (snapshot — persisted at generation time)
-    $table->decimal('default_score', 6, 2)->nullable();
-    $table->decimal('personalized_score', 6, 2)->nullable();
-    $table->decimal('area_score', 6, 2)->nullable();
-    $table->decimal('proximity_score', 6, 2)->nullable();
-    $table->json('area_indicators');                  // Full indicator breakdown snapshot
-    $table->json('proximity_factors');                // Full proximity factor breakdown
-    $table->json('schools');                          // Nearby schools snapshot
-    $table->json('personalization_impact');            // Which factors shifted and by how much
-    $table->json('top_positive');                      // Top strengths
-    $table->json('top_negative');                      // Top weaknesses
-    $table->decimal('trend_1y', 6, 2)->nullable();
-    $table->json('prediction')->nullable();           // Price prediction data if available
-    $table->json('metadata')->nullable();             // Any extra data
-
-    // Access control
-    $table->string('status', 20)->default('active');  // active, expired, refunded
-    $table->timestamp('expires_at')->nullable();       // NULL = never expires
-    $table->integer('view_count')->default(0);
-
-    $table->timestamps();
+Schema::table('reports', function (Blueprint $table) {
+    $table->json('category_verdicts')->nullable();
+    $table->json('score_history')->nullable();         // Composite score per year
+    $table->json('deso_meta')->nullable();             // DeSO name, population, area
+    $table->json('national_references')->nullable();   // National medians per indicator
+    $table->json('deso_geojson')->nullable();          // DeSO polygon for static map
+    $table->string('model_version', 20)->nullable();   // e.g. "v1.2"
+    $table->integer('indicator_count')->default(0);
+    $table->integer('year')->nullable();               // Data year used
 });
 ```
 
-### 2.2 Why Snapshot Everything
+---
 
-The report stores a **complete snapshot** of all computed data at the moment of generation. This is critical because:
+## Step 2: Category Verdicts
 
-- Area scores change when we recompute (new data, new weights)
-- Proximity data changes when POIs update
-- Schools get new statistics annually
-- The user paid for this specific analysis — it shouldn't silently change
+### 2.1 Verdict Computation
 
-The report is a frozen document. If the user wants fresh data, they generate a new report.
-
-### 2.3 Report Model
+Each of the 5 categories gets a verdict: a letter grade (A-E), a color, a short written summary, and a trend direction.
 
 ```php
-class Report extends Model
+// app/Services/VerdictService.php
+
+class VerdictService
 {
-    protected $casts = [
-        'priorities' => 'array',
-        'area_indicators' => 'array',
-        'proximity_factors' => 'array',
-        'schools' => 'array',
-        'personalization_impact' => 'array',
-        'top_positive' => 'array',
-        'top_negative' => 'array',
-        'prediction' => 'array',
-        'metadata' => 'array',
-        'expires_at' => 'datetime',
+    private const CATEGORIES = [
+        'safety' => [
+            'label' => 'Trygghet & brottslighet',
+            'emoji' => '🛡️',
+            'indicator_slugs' => [
+                'crime_violent_rate', 'crime_property_rate', 'crime_total_rate',
+                'perceived_safety', 'vulnerability_flag',
+                'fast_food_density', 'gambling_density', 'pawn_shop_density',
+            ],
+        ],
+        'economy' => [
+            'label' => 'Ekonomi & arbetsmarknad',
+            'emoji' => '💰',
+            'indicator_slugs' => [
+                'median_income', 'low_economic_standard_pct', 'employment_rate',
+                'debt_rate_pct', 'eviction_rate', 'median_debt_sek',
+            ],
+        ],
+        'education' => [
+            'label' => 'Utbildning & skolor',
+            'emoji' => '🏫',
+            'indicator_slugs' => [
+                'school_merit_value_avg', 'school_goal_achievement_avg',
+                'school_teacher_certification_avg',
+                'education_post_secondary_pct', 'education_below_secondary_pct',
+            ],
+        ],
+        'environment' => [
+            'label' => 'Miljö & service',
+            'emoji' => '🌳',
+            'indicator_slugs' => [
+                'grocery_density', 'healthcare_density', 'restaurant_density',
+                'fitness_density', 'transit_stop_density',
+            ],
+        ],
+        'proximity' => [
+            'label' => 'Platsanalys',
+            'emoji' => '📍',
+            // Computed separately from proximity score
+        ],
     ];
 
-    public function user()
+    public function computeVerdict(string $category, array $indicators, array $history): array
     {
-        return $this->belongsTo(User::class);
+        $config = self::CATEGORIES[$category];
+        $relevantIndicators = collect($indicators)
+            ->filter(fn($i) => in_array($i['slug'], $config['indicator_slugs']));
+
+        if ($relevantIndicators->isEmpty()) {
+            return [
+                'label' => $config['label'],
+                'emoji' => $config['emoji'],
+                'score' => null,
+                'grade' => '—',
+                'color' => '#94a3b8',
+                'verdict_sv' => 'Inga data tillgängliga för denna kategori.',
+                'trend_direction' => 'unknown',
+                'indicator_count' => 0,
+            ];
+        }
+
+        // Category score = average directed percentile of all indicators in category
+        $avgPercentile = $relevantIndicators->avg('percentile');
+
+        // Trend = average 1y change across category indicators
+        $avgChange = $relevantIndicators
+            ->filter(fn($i) => $i['trend']['change_1y'] !== null)
+            ->avg(fn($i) => $i['trend']['change_1y']) ?? 0;
+
+        $grade = $this->percentileToGrade($avgPercentile);
+        $trendDir = $avgChange > 1.5 ? 'improving' : ($avgChange < -1.5 ? 'declining' : 'stable');
+
+        return [
+            'label' => $config['label'],
+            'emoji' => $config['emoji'],
+            'score' => round($avgPercentile),
+            'grade' => $grade['letter'],
+            'color' => $grade['color'],
+            'verdict_sv' => $this->generateVerdictText($category, $avgPercentile, $trendDir, $relevantIndicators),
+            'trend_direction' => $trendDir,
+            'indicator_count' => $relevantIndicators->count(),
+        ];
     }
 
-    public function getUrlAttribute(): string
+    private function percentileToGrade(float $pct): array
     {
-        return route('reports.show', $this->uuid);
-    }
-
-    public function isExpired(): bool
-    {
-        return $this->expires_at && $this->expires_at->isPast();
-    }
-
-    public function getScoreLabelAttribute(): string
-    {
-        $score = $this->personalized_score;
         return match(true) {
-            $score >= 80 => 'Starkt tillväxtområde',
-            $score >= 60 => 'Stabilt / Positivt',
-            $score >= 40 => 'Blandade signaler',
-            $score >= 20 => 'Förhöjd risk',
-            default => 'Hög risk / Nedåtgående',
+            $pct >= 80 => ['letter' => 'A', 'color' => '#1a7a2e'],
+            $pct >= 60 => ['letter' => 'B', 'color' => '#6abf4b'],
+            $pct >= 40 => ['letter' => 'C', 'color' => '#f0c040'],
+            $pct >= 20 => ['letter' => 'D', 'color' => '#e57373'],
+            default    => ['letter' => 'E', 'color' => '#c0392b'],
         };
     }
 }
 ```
 
----
+### 2.2 Verdict Text Generation
 
-## Step 3: Report Generation Service
-
-### 3.1 ReportGenerationService
+Each category gets a 2-3 sentence Swedish verdict. These are template-driven, not AI-generated. The templates combine the grade, trend, and standout indicators:
 
 ```php
-class ReportGenerationService
+private function generateVerdictText(
+    string $category,
+    float $avgPercentile,
+    string $trendDir,
+    Collection $indicators
+): string {
+    // Find the standout indicators (best and worst in this category)
+    $best = $indicators->sortByDesc('percentile')->first();
+    $worst = $indicators->sortBy('percentile')->first();
+
+    $trendText = match($trendDir) {
+        'improving' => 'med förbättrad trend senaste året',
+        'declining' => 'med försämrad trend senaste året',
+        'stable'    => 'med stabil trend',
+        default     => '',
+    };
+
+    $levelText = match(true) {
+        $avgPercentile >= 80 => 'väl över riksgenomsnittet',
+        $avgPercentile >= 60 => 'något över riksgenomsnittet',
+        $avgPercentile >= 40 => 'nära riksgenomsnittet',
+        $avgPercentile >= 20 => 'under riksgenomsnittet',
+        default              => 'väl under riksgenomsnittet',
+    };
+
+    // Category-specific templates
+    return match($category) {
+        'safety' => "Tryggheten i området ligger {$levelText} {$trendText}. "
+            . $this->safetyDetail($indicators),
+        'economy' => "Den ekonomiska situationen ligger {$levelText} {$trendText}. "
+            . $this->economyDetail($indicators),
+        'education' => "Utbildningsnivån och skolkvaliteten ligger {$levelText} {$trendText}. "
+            . $this->educationDetail($indicators),
+        'environment' => "Tillgången till service och grönområden ligger {$levelText} {$trendText}. "
+            . $this->environmentDetail($indicators),
+        default => "Kategorin ligger {$levelText} {$trendText}.",
+    };
+}
+
+private function safetyDetail(Collection $indicators): string
 {
-    public function __construct(
-        private ScoringService $scoring,
-        private ProximityScoreService $proximity,
-        private PersonalizedScoringService $personalized,
-    ) {}
+    $perceived = $indicators->firstWhere('slug', 'perceived_safety');
+    $violent = $indicators->firstWhere('slug', 'crime_violent_rate');
+    $vuln = $indicators->firstWhere('slug', 'vulnerability_flag');
 
-    public function generate(
-        float $lat,
-        float $lng,
-        array $priorities,
-        ?string $persona = null,
-        ?User $user = null,
-        ?string $guestEmail = null,
-    ): Report {
-
-        // 1. Resolve DeSO
-        $deso = DB::selectOne("
-            SELECT deso_code, kommun_name, lan_name
-            FROM deso_areas
-            WHERE ST_Contains(geom, ST_SetSRID(ST_MakePoint(?, ?), 4326))
-            LIMIT 1
-        ", [$lng, $lat]);
-
-        // 2. Get area score + indicators
-        $areaScore = CompositeScore::where('deso_code', $deso->deso_code)
-            ->orderBy('year', 'desc')
-            ->first();
-
-        $indicators = IndicatorValue::where('deso_code', $deso->deso_code)
-            ->whereHas('indicator', fn($q) => $q->where('is_active', true))
-            ->orderBy('year', 'desc')
-            ->get()
-            ->groupBy('indicator_id')
-            ->map(fn($group) => $group->first()) // Latest year per indicator
-            ->values();
-
-        // 3. Compute proximity scores
-        $proximityResult = $this->proximity->score($lat, $lng);
-
-        // 4. Get nearby schools
-        $schools = School::where('status', 'active')
-            ->whereRaw("ST_DWithin(geom::geography, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, 2000)", [$lng, $lat])
-            ->with('latestStatistics')
-            ->get()
-            ->map(fn($s) => [
-                'name' => $s->name,
-                'type' => $s->type_of_schooling,
-                'operator' => $s->operator_type,
-                'merit_value' => $s->latestStatistics?->merit_value_17,
-                'goal_achievement' => $s->latestStatistics?->goal_achievement_pct,
-                'distance_m' => DB::selectOne("
-                    SELECT ST_Distance(geom::geography, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography) as dist
-                    FROM schools WHERE id = ?
-                ", [$lng, $lat, $s->id])->dist,
-            ])
-            ->sortBy('distance_m')
-            ->values();
-
-        // 5. Compute personalized score
-        $personalizedResult = $this->personalized->compute(
-            $priorities,
-            $areaScore?->score ?? 50,
-            $proximityResult,
-            $indicators->toArray(),
-        );
-
-        // 6. Reverse geocode for display address
-        $address = $this->reverseGeocode($lat, $lng);
-
-        // 7. Get price prediction if available
-        $prediction = PricePrediction::where('deso_code', $deso->deso_code)
-            ->orderBy('prediction_year', 'desc')
-            ->first();
-
-        // 8. Create and persist the report
-        return Report::create([
-            'uuid' => (string) Str::uuid(),
-            'user_id' => $user?->id,
-            'guest_email' => $guestEmail,
-            'lat' => $lat,
-            'lng' => $lng,
-            'address' => $address,
-            'kommun_name' => $deso->kommun_name,
-            'lan_name' => $deso->lan_name,
-            'deso_code' => $deso->deso_code,
-            'priorities' => $priorities,
-            'persona' => $persona,
-            'default_score' => $areaScore?->score,
-            'personalized_score' => $personalizedResult->score,
-            'area_score' => $areaScore?->score,
-            'proximity_score' => $proximityResult->compositeScore(),
-            'area_indicators' => $this->formatIndicators($indicators),
-            'proximity_factors' => $proximityResult->toArray(),
-            'schools' => $schools->toArray(),
-            'personalization_impact' => $personalizedResult->impact,
-            'top_positive' => $areaScore?->top_positive,
-            'top_negative' => $areaScore?->top_negative,
-            'trend_1y' => $areaScore?->trend_1y,
-            'prediction' => $prediction?->toArray(),
-        ]);
+    $parts = [];
+    if ($perceived) {
+        $level = $perceived['percentile'] >= 60 ? 'god' : ($perceived['percentile'] >= 40 ? 'genomsnittlig' : 'låg');
+        $parts[] = "Upplevd trygghet är {$level} ({$perceived['percentile']}:e percentilen)";
+    }
+    if ($violent) {
+        $level = $violent['percentile'] >= 60 ? 'lägre än genomsnittet' : 'högre än genomsnittet';
+        $parts[] = "våldsbrott {$level}";
+    }
+    if ($vuln && $vuln['raw_value'] > 0) {
+        $parts[] = "Området klassas som utsatt område av Polisen";
     }
 
-    private function reverseGeocode(float $lat, float $lng): string
-    {
-        // Use Photon (free, no API key)
-        $response = Http::get("https://photon.komoot.io/reverse", [
-            'lat' => $lat,
-            'lon' => $lng,
-        ]);
+    return implode('. ', $parts) . '.';
+}
 
-        $props = $response->json('features.0.properties') ?? [];
+// ... similar detail methods for economy, education, environment
+```
 
-        return implode(', ', array_filter([
-            $props['street'] ?? null,
-            $props['housenumber'] ?? null,
-            $props['city'] ?? $props['name'] ?? null,
-        ]));
-    }
+---
+
+## Step 3: Map Snapshot
+
+### 3.1 Static Map Image
+
+The report needs a map showing:
+- The DeSO polygon, colored by score
+- A pin at the user's exact location
+- School markers within the DeSO
+- Surrounding DeSO polygons faintly visible for context
+
+**Option A: Server-side rendered static image (preferred)**
+
+Generate a PNG using a headless rendering approach. The simplest way in Laravel:
+
+```php
+// Use a lightweight static map tile service + overlay
+
+private function generateMapSnapshot(
+    float $lat,
+    float $lng,
+    string $desoCode,
+    array $schools
+): string {
+    // Store the DeSO polygon + pin + school markers as GeoJSON
+    // Then render using a client-side component that gets screenshotted
+    // OR use a tile server + SVG overlay approach
+
+    // For MVP: store the raw data and render client-side in the report page
+    return json_encode([
+        'center' => [$lat, $lng],
+        'zoom' => 14,
+        'deso_geojson' => $this->getDesoGeoJson($desoCode),
+        'pin' => [$lat, $lng],
+        'school_markers' => collect($schools)->map(fn($s) => [
+            'lat' => $s['lat'],
+            'lng' => $s['lng'],
+            'name' => $s['name'],
+            'merit' => $s['merit_value'],
+        ])->toArray(),
+        'surrounding_desos' => $this->getSurroundingDesosGeoJson($desoCode),
+    ]);
 }
 ```
 
----
+### 3.2 Client-Side Map in Report
 
-## Step 4: Routes & Controllers
-
-### 4.1 Routes
-
-```php
-// Report generation
-Route::post('/api/reports', [ReportController::class, 'store']);
-
-// Report detail page (public URL with UUID)
-Route::get('/reports/{uuid}', [ReportController::class, 'show'])->name('reports.show');
-
-// User's reports list
-Route::get('/my-reports', [ReportController::class, 'index'])->name('reports.index');
-```
-
-### 4.2 ReportController
-
-```php
-class ReportController extends Controller
-{
-    public function store(Request $request, ReportGenerationService $service)
-    {
-        $validated = $request->validate([
-            'lat' => 'required|numeric|between:55,69',  // Sweden bounds
-            'lng' => 'required|numeric|between:11,25',
-            'priorities' => 'required|array|min:1|max:3',
-            'priorities.*' => 'string|in:school,transit,safety,appreciation,green,services,affordability,lifestyle',
-            'persona' => 'nullable|string|in:family,investor,single,retiree,other',
-        ]);
-
-        // TODO: Check payment/subscription status
-        // For now, allow all requests (stub payment check)
-
-        $report = $service->generate(
-            lat: $validated['lat'],
-            lng: $validated['lng'],
-            priorities: $validated['priorities'],
-            persona: $validated['persona'] ?? null,
-            user: $request->user(),
-        );
-
-        return response()->json([
-            'uuid' => $report->uuid,
-            'url' => $report->url,
-            'summary' => $this->buildSummary($report),
-        ]);
-    }
-
-    public function show(string $uuid)
-    {
-        $report = Report::where('uuid', $uuid)->firstOrFail();
-
-        if ($report->isExpired()) {
-            abort(410, 'This report has expired.');
-        }
-
-        $report->increment('view_count');
-
-        return Inertia::render('Reports/Show', [
-            'report' => $report,
-        ]);
-    }
-
-    public function index(Request $request)
-    {
-        $reports = Report::where('user_id', $request->user()->id)
-            ->orderBy('created_at', 'desc')
-            ->paginate(20);
-
-        return Inertia::render('Reports/Index', [
-            'reports' => $reports,
-        ]);
-    }
-
-    private function buildSummary(Report $report): array
-    {
-        return [
-            'score' => $report->personalized_score,
-            'label' => $report->score_label,
-            'address' => $report->address,
-            'kommun' => $report->kommun_name,
-            'top_strength' => $report->top_positive[0] ?? null,
-            'top_weakness' => $report->top_negative[0] ?? null,
-            'personalization_note' => $this->personalizationNote($report),
-        ];
-    }
-
-    private function personalizationNote(Report $report): string
-    {
-        $diff = $report->personalized_score - $report->default_score;
-        if (abs($diff) < 1) return 'Dina prioriteringar påverkar inte poängen nämnvärt.';
-
-        $direction = $diff > 0 ? 'högre' : 'lägre';
-        $priorities = collect($report->priorities)
-            ->map(fn($p) => match($p) {
-                'school' => 'skolkvalitet',
-                'transit' => 'kollektivtrafik',
-                'safety' => 'trygghet',
-                'appreciation' => 'värdeutveckling',
-                'green' => 'grönområden',
-                'services' => 'service',
-                'affordability' => 'prisläge',
-                'lifestyle' => 'livsstil',
-            })
-            ->join(', ', ' och ');
-
-        return sprintf(
-            'Ditt personliga poäng är %+.0f poäng %s än standardpoängen tack vare ditt fokus på %s.',
-            $diff, $direction, $priorities
-        );
-    }
-}
-```
-
----
-
-## Step 5: Sidebar Report Summary
-
-### 5.1 After Report Generation
-
-When the report comes back from the API, the sidebar updates to show a condensed version:
-
-```
-┌─────────────────────────────────────┐
-│  📊 Din rapport                     │
-│  Sveavägen 42, Stockholm            │
-│                                     │
-│  ┌──────────────────────┐           │
-│  │  Ditt poäng: 74      │           │
-│  │  Stabilt / Positivt  │           │
-│  │                      │           │
-│  │  Standard: 68        │           │
-│  │  Dina prioriteringar │           │
-│  │  gav +6 poäng        │           │
-│  └──────────────────────┘           │
-│                                     │
-│  ✅ Skolkvalitet: Utmärkt           │
-│  Årstaskolan (241 mv) — 200m        │
-│                                     │
-│  ✅ Kollektivtrafik: Mycket bra     │
-│  Zinkensdamm T-bana — 350m          │
-│                                     │
-│  ⚠️ Trygghet: Blandat               │
-│  Inga negativa POI inom 500m        │
-│                                     │
-│  [  Visa fullständig rapport →  ]   │
-│                                     │
-│  Rapporten sparad — du kan alltid   │
-│  komma tillbaka via länken ovan.    │
-└─────────────────────────────────────┘
-```
-
-The sidebar summary shows ONLY the user's priority categories (the 3 they picked) plus the overall score. The full detail is on the report page.
-
-### 5.2 Sidebar Component
+Render a **non-interactive** OpenLayers map in the report page. The user can look at it but not pan/zoom. This is a snapshot, not a live map.
 
 ```tsx
-interface ReportSummary {
-  uuid: string;
-  url: string;
-  score: number;
-  label: string;
-  address: string;
-  kommun: string;
-  priorities: string[];
-  defaultScore: number;
-  personalizedScore: number;
-  personalizationNote: string;
-  topStrength: string | null;
-  topWeakness: string | null;
+// resources/js/Components/Report/ReportMap.tsx
+
+function ReportMap({ mapData, score }: { mapData: MapSnapshot; score: number }) {
+    const mapRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        if (!mapRef.current) return;
+
+        const map = new OlMap({
+            target: mapRef.current,
+            interactions: [],  // No interactions — static display
+            controls: [],       // No controls
+            layers: [
+                // Base tile layer (light/muted)
+                new TileLayer({
+                    source: new OSM({
+                        url: 'https://{a-c}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
+                    }),
+                }),
+                // Surrounding DeSOs (faint gray)
+                new VectorLayer({ /* ... surrounding polygons, fill #e5e5e5, opacity 0.3 */ }),
+                // Selected DeSO (colored by score)
+                new VectorLayer({ /* ... main polygon, fill = scoreToColor(score), opacity 0.5 */ }),
+                // School markers
+                new VectorLayer({ /* ... circle markers colored by merit value */ }),
+                // Pin
+                new VectorLayer({ /* ... pin icon at exact address */ }),
+            ],
+            view: new View({
+                center: fromLonLat([mapData.center[1], mapData.center[0]]),
+                zoom: mapData.zoom,
+            }),
+        });
+
+        return () => map.setTarget(undefined);
+    }, [mapData]);
+
+    return (
+        <div
+            ref={mapRef}
+            className="w-full h-[300px] rounded-lg overflow-hidden border"
+            style={{ pointerEvents: 'none' }} // Extra safety: no interaction
+        />
+    );
+}
+```
+
+### 3.3 Snapshot the DeSO Polygon
+
+The report must store the GeoJSON at generation time so it renders correctly even if DeSO boundaries are updated later.
+
+```php
+private function getDesoGeoJson(string $desoCode): array
+{
+    $row = DB::selectOne("
+        SELECT ST_AsGeoJSON(ST_SimplifyPreserveTopology(geom, 0.0001)) as geojson
+        FROM deso_areas
+        WHERE deso_code = ?
+    ", [$desoCode]);
+
+    return json_decode($row->geojson, true);
 }
 
-function ReportSummaryCard({ summary }: { summary: ReportSummary }) {
-  const diff = summary.personalizedScore - summary.defaultScore;
+private function getSurroundingDesosGeoJson(string $desoCode): array
+{
+    // Get neighboring DeSOs that touch or are within 500m
+    $rows = DB::select("
+        SELECT d2.deso_code,
+               ST_AsGeoJSON(ST_SimplifyPreserveTopology(d2.geom, 0.0002)) as geojson
+        FROM deso_areas d1
+        JOIN deso_areas d2 ON ST_DWithin(d1.geom, d2.geom, 0.005)
+        WHERE d1.deso_code = ?
+          AND d2.deso_code != ?
+        LIMIT 20
+    ", [$desoCode, $desoCode]);
 
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-sm">📊 Din rapport</CardTitle>
-        <p className="text-muted-foreground text-xs">{summary.address}</p>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {/* Score display */}
-        <div className="text-center p-4 rounded-lg bg-muted">
-          <div className="text-3xl font-bold" style={{ color: scoreColor(summary.score) }}>
-            {summary.personalizedScore}
-          </div>
-          <div className="text-sm text-muted-foreground">{summary.label}</div>
-          {diff !== 0 && (
-            <div className="text-xs mt-1">
-              Standard: {summary.defaultScore} ·
-              <span className={diff > 0 ? 'text-green-600' : 'text-red-600'}>
-                {diff > 0 ? '+' : ''}{diff.toFixed(0)} från dina val
-              </span>
-            </div>
-          )}
-        </div>
-
-        {/* Personalization note */}
-        <p className="text-xs text-muted-foreground">{summary.personalizationNote}</p>
-
-        {/* Link to full report */}
-        <Button asChild className="w-full">
-          <a href={summary.url}>Visa fullständig rapport →</a>
-        </Button>
-
-        <p className="text-xs text-muted-foreground text-center">
-          Rapporten sparad — du kan alltid komma tillbaka.
-        </p>
-      </CardContent>
-    </Card>
-  );
+    return collect($rows)->map(fn($r) => [
+        'deso_code' => $r->deso_code,
+        'geojson' => json_decode($r->geojson, true),
+    ])->toArray();
 }
 ```
 
 ---
 
-## Step 6: Full Report Page
+## Step 4: Report Page Layout
 
-### 6.1 Page Structure
+### 4.1 Route
 
-`/reports/{uuid}` is a standalone Inertia page. NOT a sidebar view — this is a full-width page designed for reading, sharing, and printing.
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│  Platsindex                            [Mina rapporter]      │
-├──────────────────────────────────────────────────────────────┤
-│                                                              │
-│  ── Områdesrapport ──────────────────────────────────────    │
-│  Sveavägen 42, Stockholms kommun, Stockholms län             │
-│  Genererad 2026-02-08 · Rapport-ID: abc-123-def              │
-│                                                              │
-│  ┌────────────────────────────────────────────────────┐      │
-│  │  Ditt personliga poäng                             │      │
-│  │                                                    │      │
-│  │      74 / 100                                      │      │
-│  │  Stabilt / Positivt                                │      │
-│  │                                                    │      │
-│  │  ↑ +3.2 (1 år)     Standard: 68                   │      │
-│  │                                                    │      │
-│  │  Baserat på dina prioriteringar:                   │      │
-│  │  🏫 Skolkvalitet · 🚇 Kollektivtrafik · 🌳 Grön  │      │
-│  └────────────────────────────────────────────────────┘      │
-│                                                              │
-│  ── Varför detta poäng? ─────────────────────────────────    │
-│                                                              │
-│  Dina prioriteringar gav +6 poäng jämfört med standard-      │
-│  poängen (68). Skolkvaliteten i närheten drog upp mest       │
-│  (+4 poäng) tack vare Årstaskolan med meritvärde 241,        │
-│  bara 200 meter bort.                                        │
-│                                                              │
-│  ── Områdesdata ─────────────────────────────────────────    │
-│                                                              │
-│  Medianinkomst        ████████░░  78:e percentilen  287 tkr  │
-│  Sysselsättning       ██████░░░░  61:a percentilen  72.3%    │
-│  Eftergymn. utb.      ███████░░░  71:a percentilen  48.2%    │
-│  Skolkvalitet (snitt) █████████░  91:a percentilen  241 mv   │
-│  ...                                                         │
-│                                                              │
-│  ── Närhetsanalys ───────────────────────────────────────    │
-│                                                              │
-│  🏫 Skolkvalitet                                    82/100   │
-│  Årstaskolan (grundskola, kommunal) — 200m                   │
-│  Meritvärde 241 · Måluppfyllelse 94% · Behöriga 78%         │
-│                                                              │
-│  Eriksdalsskolan (grundskola, kommunal) — 850m               │
-│  Meritvärde 228 · Måluppfyllelse 88% · Behöriga 82%         │
-│                                                              │
-│  🚇 Kollektivtrafik                                68/100   │
-│  Zinkensdamm (T-bana) — 350m                                 │
-│  Hornstull (T-bana) — 600m                                   │
-│  Buss 4, 66 — 120m                                           │
-│                                                              │
-│  🌳 Grönområden                                    97/100   │
-│  Tantolunden — 120m                                          │
-│  Eriksdalsbadet — 400m                                       │
-│                                                              │
-│  🛒 Livsmedel                                      91/100   │
-│  ICA Nära Hornstull — 80m                                    │
-│                                                              │
-│  ── Styrkor & Svagheter ─────────────────────────────────    │
-│                                                              │
-│  ✅ Hög skolkvalitet i närheten                              │
-│  ✅ Stigande medianinkomst (+8% senaste 3 åren)              │
-│  ✅ Utmärkt kollektivtrafik                                  │
-│  ✅ Nära grönområden                                         │
-│                                                              │
-│  ⚠️ Sysselsättningsgrad under genomsnittet                   │
-│  ⚠️ Hög andel hyresrätter (begränsar pristillväxt)           │
-│                                                              │
-│  ── Prisutsikt ──────────────────────────────────────────    │
-│  (if prediction data available)                              │
-│                                                              │
-│  ↑ Trolig uppgång: +5 till +12% (2 år)                      │
-│  Konfidensgrad: Medium                                       │
-│  Baserat på historiska mönster från liknande områden.         │
-│                                                              │
-│  ── Metod & Data ────────────────────────────────────────    │
-│                                                              │
-│  Denna rapport bygger på öppna data från SCB, Skolverket,    │
-│  och OpenStreetMap. Poängen beräknas med [antal] indikatorer │
-│  på områdesnivå och [antal] närhetsfaktorer för den exakta   │
-│  adressen. Dina prioriteringar justerar viktningen med       │
-│  upp till ±8 poäng.                                          │
-│                                                              │
-│  Data senast uppdaterad: 2026-01-15                          │
-│  Beräkningsmodell: v1.0                                      │
-│                                                              │
-│  ⚠️ Statistisk uppskattning baserad på historiska mönster.   │
-│  Inte finansiell rådgivning.                                 │
-│                                                              │
-│  ── Fotnoter ────────────────────────────────────────────    │
-│  [Print-vänlig version]  [Dela rapport]  [Generera ny]       │
-│                                                              │
-└──────────────────────────────────────────────────────────────┘
+```php
+Route::get('/reports/{uuid}', [ReportController::class, 'show'])->name('reports.show');
 ```
 
-### 6.2 Report Page Component
+```php
+public function show(string $uuid)
+{
+    $report = Report::where('uuid', $uuid)
+        ->where('status', 'active')
+        ->firstOrFail();
+
+    $report->increment('view_count');
+
+    return Inertia::render('Reports/Show', [
+        'report' => $report,
+    ]);
+}
+```
+
+### 4.2 Page Component Structure
 
 ```tsx
 // resources/js/Pages/Reports/Show.tsx
 
-export default function ReportShow({ report }: { report: Report }) {
-  return (
-    <div className="max-w-3xl mx-auto py-8 px-4 print:px-0">
-      {/* Header */}
-      <header className="mb-8">
-        <h1 className="text-2xl font-bold">Områdesrapport</h1>
-        <p className="text-muted-foreground">{report.address}</p>
-        <p className="text-xs text-muted-foreground">
-          {report.kommun_name}, {report.lan_name} ·
-          Genererad {formatDate(report.created_at)} ·
-          Rapport-ID: {report.uuid.slice(0, 8)}
-        </p>
-      </header>
+export default function ReportShow({ report }: { report: ReportData }) {
+    return (
+        <div className="min-h-screen bg-muted/30 print:bg-white">
+            {/* Sticky nav — minimal, just logo + back */}
+            <ReportNav reportId={report.uuid} />
 
-      {/* Score card */}
-      <ScoreHero report={report} />
+            <main className="max-w-4xl mx-auto px-4 py-8 space-y-8 print:space-y-6">
 
-      {/* Personalization explanation */}
-      <PersonalizationExplanation report={report} />
+                {/* 1. Header */}
+                <ReportHeader report={report} />
 
-      {/* Area indicators */}
-      <AreaIndicatorSection indicators={report.area_indicators} />
+                {/* 2. Hero Score */}
+                <ReportHeroScore report={report} />
 
-      {/* Proximity factors - ordered by user's priorities first */}
-      <ProximitySection
-        factors={report.proximity_factors}
-        schools={report.schools}
-        priorities={report.priorities}
-      />
+                {/* 3. Map Snapshot */}
+                <ReportMap mapData={report.map_snapshot} score={report.default_score} />
 
-      {/* Strengths & weaknesses */}
-      <StrengthsWeaknesses
-        positive={report.top_positive}
-        negative={report.top_negative}
-      />
+                {/* 4. Category Verdict Cards — the quick overview */}
+                <ReportVerdictGrid verdicts={report.category_verdicts} />
 
-      {/* Price prediction (if available) */}
-      {report.prediction && (
-        <PricePredictionSection prediction={report.prediction} />
-      )}
+                {/* 5. Full Indicator Breakdown — the deep dive */}
+                <ReportIndicatorBreakdown
+                    indicators={report.area_indicators}
+                    priorities={report.priorities}
+                />
 
-      {/* Methodology footer */}
-      <MethodologyFooter report={report} />
-    </div>
-  );
+                {/* 6. School Detail — per-school cards */}
+                <ReportSchoolSection
+                    schools={report.schools}
+                    proximity={report.proximity_factors}
+                />
+
+                {/* 7. Strengths & Weaknesses */}
+                <ReportStrengthsWeaknesses
+                    positive={report.top_positive}
+                    negative={report.top_negative}
+                />
+
+                {/* 8. Outlook */}
+                <ReportOutlook report={report} />
+
+                {/* 9. Methodology & Sources */}
+                <ReportMethodology report={report} />
+
+            </main>
+        </div>
+    );
 }
 ```
 
-### 6.3 Priority-Ordered Sections
+---
 
-The report sections should be ordered by the user's priorities. If they picked school → transit → green, the proximity section shows schools first, then transit, then green space, then the rest. This makes the report feel personalized even at a structural level.
+## Step 5: Section Designs
+
+### 5.1 Header
+
+Clean, informational. Not a hero banner — the score section handles the visual impact.
+
+```
+Områdesrapport
+
+Sveavägen 42, Stockholm
+Stockholms kommun · Stockholms län
+DeSO: Södermalm östra (0180C4130) · 0,82 km² · 2 413 invånare
+
+Genererad 9 feb 2026 · Rapport abc12345
+Dataunderlag: 2024 · 27 indikatorer · 5 datakällor
+```
 
 ```tsx
-function ProximitySection({ factors, schools, priorities }) {
-  // Sort factors: user priorities first, then the rest
-  const priorityOrder = [
-    ...priorities,
-    ...ALL_PRIORITIES.filter(p => !priorities.includes(p)),
-  ];
-
-  const sortedFactors = priorityOrder
-    .map(p => factors.find(f => f.slug === prioritySlugMap[p]))
-    .filter(Boolean);
-
-  return (
-    <section>
-      <h2>Närhetsanalys</h2>
-      {sortedFactors.map(factor => (
-        <ProximityFactorCard
-          key={factor.slug}
-          factor={factor}
-          isPriority={priorities.includes(reverseSlugMap[factor.slug])}
-          schools={factor.slug === 'school_proximity' ? schools : undefined}
-        />
-      ))}
-    </section>
-  );
+function ReportHeader({ report }: { report: ReportData }) {
+    return (
+        <header className="space-y-1">
+            <p className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
+                Områdesrapport
+            </p>
+            <h1 className="text-2xl font-bold">{report.address}</h1>
+            <p className="text-muted-foreground">
+                {report.kommun_name} · {report.lan_name}
+            </p>
+            <p className="text-sm text-muted-foreground">
+                DeSO: {report.deso_meta.deso_name} ({report.deso_code})
+                {' · '}{report.deso_meta.area_km2} km²
+                {' · '}{report.deso_meta.population?.toLocaleString('sv-SE')} invånare
+            </p>
+            <div className="flex gap-4 text-xs text-muted-foreground pt-2 border-t mt-4">
+                <span>Genererad {formatDate(report.created_at)}</span>
+                <span>·</span>
+                <span>Rapport {report.uuid.slice(0, 8)}</span>
+                <span>·</span>
+                <span>{report.indicator_count} indikatorer</span>
+                <span>·</span>
+                <span>Dataår {report.year}</span>
+            </div>
+        </header>
+    );
 }
 ```
 
----
+### 5.2 Hero Score
 
-## Step 7: My Reports Page
-
-### 7.1 User's Report History
-
-`/my-reports` shows all reports the user has generated, ordered by date.
+The visual centerpiece. Big number, sparkline, trend, personalization note.
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Mina rapporter                                             │
-│                                                             │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │ 📊 Sveavägen 42, Stockholm          74    2026-02-08 │  │
-│  │    🏫 Skolkvalitet · 🚇 Trafik · 🌳 Grön            │  │
-│  │    [Visa rapport →]                                   │  │
-│  └───────────────────────────────────────────────────────┘  │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │ 📊 Strandvägen 7, Danderyd           82    2026-02-05│  │
-│  │    🏫 Skolkvalitet · 📈 Värde · 💰 Pris              │  │
-│  │    [Visa rapport →]                                   │  │
-│  └───────────────────────────────────────────────────────┘  │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │ 📊 Rinkeby torg 1, Stockholm         38    2026-01-28│  │
-│  │    🛡️ Trygghet · 📈 Värde · 🚇 Trafik               │  │
-│  │    [Visa rapport →]                                   │  │
-│  └───────────────────────────────────────────────────────┘  │
-│                                                             │
-│  Visar 3 av 3 rapporter                                    │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                                                                  │
+│           ┌───────────────────────┐                              │
+│           │                       │     Stabilt / Positivt       │
+│           │         72            │     ↑ +3,2 vs 2023           │
+│           │                       │                              │
+│           └───────────────────────┘     ▁▂▃▄▅▆▇█                │
+│                                         '19  '21  '23  '24      │
+│                                                                  │
+│  ── Dina prioriteringar ──                                       │
+│  🏫 Skolkvalitet · 🚇 Kollektivtrafik · 🌳 Grönområden         │
+│  Personlig poäng: 78 (+6 jämfört med standardpoäng 72)          │
+│                                                                  │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-### 7.2 Guest Access
+The score circle uses the centralized `scoreToColor()`. The sparkline shows 2019-2024 composite trajectory. If the user's personalized score differs from the default, show both.
 
-If the user isn't logged in, reports are tied to their email (from payment). They can:
-- Access the report via the UUID URL at any time (bookmarkable)
-- See all their reports by entering their email at `/my-reports` (sends a magic link)
-- Create an account later and claim their existing reports
+```tsx
+function ReportHeroScore({ report }: { report: ReportData }) {
+    const diff = (report.personalized_score ?? report.default_score) - report.default_score;
+
+    return (
+        <Card className="overflow-hidden">
+            <CardContent className="p-8">
+                <div className="flex items-center gap-8">
+                    {/* Big score circle */}
+                    <div
+                        className="w-28 h-28 rounded-full flex items-center justify-center text-white text-4xl font-bold shrink-0"
+                        style={{ backgroundColor: scoreToColor(report.default_score) }}
+                    >
+                        {Math.round(report.personalized_score ?? report.default_score)}
+                    </div>
+
+                    <div className="space-y-2">
+                        <div>
+                            <p className="text-lg font-semibold">
+                                {scoreToLabel(report.default_score)}
+                            </p>
+                            {report.trend_1y != null && (
+                                <p className="text-sm">
+                                    <TrendArrow change={report.trend_1y} direction="positive" size="md" />
+                                    {' '}vs {report.year - 1}
+                                </p>
+                            )}
+                        </div>
+
+                        {/* Sparkline */}
+                        {report.score_history?.length >= 2 && (
+                            <Sparkline
+                                values={report.score_history.map(h => h.score)}
+                                years={report.score_history.map(h => h.year)}
+                                width={180}
+                                height={32}
+                            />
+                        )}
+                    </div>
+                </div>
+
+                {/* Personalization note */}
+                {report.priorities?.length > 0 && (
+                    <div className="mt-6 pt-4 border-t">
+                        <p className="text-sm text-muted-foreground">
+                            Baserat på dina prioriteringar:{' '}
+                            {report.priorities.map(p => priorityLabels[p]).join(' · ')}
+                        </p>
+                        {diff !== 0 && (
+                            <p className="text-sm mt-1">
+                                Personlig poäng: {Math.round(report.personalized_score)}
+                                {' '}
+                                <span className={diff > 0 ? 'text-green-600' : 'text-red-600'}>
+                                    ({diff > 0 ? '+' : ''}{diff.toFixed(0)} jämfört med standard {Math.round(report.default_score)})
+                                </span>
+                            </p>
+                        )}
+                    </div>
+                )}
+            </CardContent>
+        </Card>
+    );
+}
+```
+
+### 5.3 Category Verdict Cards
+
+A grid of 4-5 cards, one per category. Each card shows: emoji, name, letter grade in a colored circle, 2-3 sentence verdict text, trend direction. This is the "quick scan" — the user reads these first before diving into individual indicators.
+
+```
+┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
+│ 🛡️ Trygghet     │  │ 💰 Ekonomi      │  │ 🏫 Utbildning   │
+│                  │  │                  │  │                  │
+│     B            │  │     A            │  │     B            │
+│   62:a pctl      │  │   81:a pctl      │  │   67:a pctl      │
+│   ↗ Förbättras   │  │   → Stabil       │  │   ↑ Förbättras   │
+│                  │  │                  │  │                  │
+│ Genomsnittlig    │  │ Stark ekonomi    │  │ God skolkvalitet │
+│ brottslighet     │  │ med hög median-  │  │ med stigande     │
+│ med sjunkande    │  │ inkomst och      │  │ meritvärden.     │
+│ trend.           │  │ sysselsättning.  │  │                  │
+└─────────────────┘  └─────────────────┘  └─────────────────┘
+
+┌─────────────────┐  ┌─────────────────┐
+│ 🌳 Miljö &      │  │ 📍 Plats-       │
+│    service       │  │    analys        │
+│                  │  │                  │
+│     A            │  │     B            │
+│   85:a pctl      │  │   71 poäng       │
+│   → Stabil       │  │                  │
+│                  │  │                  │
+│ Utmärkt till-    │  │ God tillgång     │
+│ gång till butik- │  │ till skola och   │
+│ er, vård och     │  │ kollektivtrafik  │
+│ grönområden.     │  │ inom gångavstånd │
+└─────────────────┘  └─────────────────┘
+```
+
+```tsx
+function ReportVerdictGrid({ verdicts }: { verdicts: Record<string, CategoryVerdict> }) {
+    const categoryOrder = ['safety', 'economy', 'education', 'environment', 'proximity'];
+
+    return (
+        <section>
+            <h2 className="text-lg font-semibold mb-4">Sammanfattning per kategori</h2>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 print:grid-cols-3">
+                {categoryOrder.map(key => {
+                    const v = verdicts[key];
+                    if (!v) return null;
+                    return (
+                        <Card key={key} className="p-4 space-y-3">
+                            <div className="flex items-center gap-2">
+                                <span className="text-lg">{v.emoji}</span>
+                                <span className="text-sm font-medium">{v.label}</span>
+                            </div>
+
+                            <div className="flex items-center gap-3">
+                                <div
+                                    className="w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-bold"
+                                    style={{ backgroundColor: v.color }}
+                                >
+                                    {v.grade}
+                                </div>
+                                <div>
+                                    <p className="text-sm">{v.score}:e percentilen</p>
+                                    <p className="text-xs text-muted-foreground">
+                                        {trendLabel(v.trend_direction)}
+                                    </p>
+                                </div>
+                            </div>
+
+                            <p className="text-xs text-muted-foreground leading-relaxed">
+                                {v.verdict_sv}
+                            </p>
+
+                            <p className="text-[10px] text-muted-foreground">
+                                Baserat på {v.indicator_count} indikatorer
+                            </p>
+                        </Card>
+                    );
+                })}
+            </div>
+        </section>
+    );
+}
+```
+
+### 5.4 Full Indicator Breakdown
+
+This is the meat of the report — what the user paid for. Every indicator, organized by category. Each shows: name, percentile bar, raw value, trend arrow, sparkline.
+
+```
+── Ekonomi & arbetsmarknad ──────────────────────────────── Betyg: A
+
+  Medianinkomst           ████████░░  78:e pctl  ↑ +3   287 000 kr
+                          ▁▂▃▃▄▅▆█  (2019-2024)
+
+  Sysselsättningsgrad     ██████░░░░  61:a pctl  → 0    72,3 %
+                          ▄▄▄▄▄▅▅▅  (2019-2024)
+
+  Låg ekonomisk standard  █████████░  88:e pctl  ↗ +2   8,1 %
+                          ▅▅▆▆▇▇▇█  (2019-2024)
+                          (Lägre = bättre. 88:e percentilen innebär lägre
+                           andel med låg ekonomisk standard än 88% av DeSO.)
+
+  Skuldkvot               ████████░░  76:e pctl  → 0    3,2 %
+                          ▅▅▅▅▅▅▆▇  (2019-2024)
+
+  Vräkningsgrad           █████████░  92:a pctl  ↗ +1   0,4 per 100k
+                          ▇▇▇▇▇▇▇█  (2019-2024)
+
+  Medianskuld             ███████░░░  68:e pctl  ↘ -2   42 000 kr
+                          ▇▆▆▅▅▅▄▃  (2019-2024)
+```
+
+Note: for `negative` direction indicators, add a clarifying note below the bar: "Lägre = bättre" so the user understands why 88th percentile for low economic standard is green.
+
+```tsx
+function ReportIndicatorBreakdown({
+    indicators,
+    priorities,
+}: {
+    indicators: SnapshotIndicator[];
+    priorities: string[];
+}) {
+    // Group by category
+    const grouped = groupBy(indicators, 'category');
+    const categoryOrder = ['safety', 'economy', 'education', 'environment'];
+
+    return (
+        <section className="space-y-8">
+            <h2 className="text-lg font-semibold">Detaljerad indikatoranalys</h2>
+
+            {categoryOrder.map(cat => {
+                const catIndicators = grouped[cat];
+                if (!catIndicators?.length) return null;
+
+                const catLabel = categoryLabels[cat];
+                const catVerdict = verdicts[cat];
+
+                return (
+                    <div key={cat} className="space-y-4">
+                        <div className="flex items-center justify-between border-b pb-2">
+                            <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                                {catLabel}
+                            </h3>
+                            {catVerdict && (
+                                <span
+                                    className="text-xs font-medium px-2 py-0.5 rounded-full text-white"
+                                    style={{ backgroundColor: catVerdict.color }}
+                                >
+                                    Betyg: {catVerdict.grade}
+                                </span>
+                            )}
+                        </div>
+
+                        {catIndicators.map(ind => (
+                            <ReportIndicatorRow key={ind.slug} indicator={ind} />
+                        ))}
+                    </div>
+                );
+            })}
+        </section>
+    );
+}
+
+function ReportIndicatorRow({ indicator }: { indicator: SnapshotIndicator }) {
+    const isNegative = indicator.direction === 'negative';
+
+    return (
+        <div className="space-y-1 py-2">
+            {/* Row 1: Name + bar + percentile + trend + value */}
+            <div className="flex items-center gap-3">
+                <span className="text-sm w-48 shrink-0">{indicator.name}</span>
+                <IndicatorBar percentile={indicator.percentile} className="flex-1" />
+                <span className="text-sm tabular-nums w-16 text-right">
+                    {indicator.percentile}:e
+                </span>
+                <TrendArrow
+                    change={indicator.trend.change_1y}
+                    direction={indicator.direction}
+                />
+                <span className="text-sm text-muted-foreground w-24 text-right tabular-nums">
+                    {indicator.formatted_value}
+                </span>
+            </div>
+
+            {/* Row 2: Sparkline + clarification for negative indicators */}
+            <div className="flex items-center gap-3 pl-48">
+                {indicator.trend.percentiles?.length >= 2 && (
+                    <Sparkline
+                        values={indicator.trend.percentiles}
+                        years={indicator.trend.years}
+                        width={160}
+                        height={20}
+                    />
+                )}
+                {isNegative && (
+                    <span className="text-[10px] text-muted-foreground italic">
+                        Lägre = bättre för området
+                    </span>
+                )}
+            </div>
+
+            {/* Row 3: National reference */}
+            {indicator.national_median != null && (
+                <p className="text-[10px] text-muted-foreground pl-48">
+                    Riksgenomsnitt: {indicator.national_median_formatted}
+                </p>
+            )}
+        </div>
+    );
+}
+```
+
+### 5.5 School Detail Section
+
+Per-school cards with full statistics. Only show schools within the proximity radius (~2km). Ordered by distance from pin.
+
+```
+── Skolor i närheten (5 grundskolor inom 2 km) ─────────────────
+
+  ┌────────────────────────────────────────────────────────────┐
+  │  🏫 Årstaskolan                                  200 m    │
+  │  Grundskola F-9 · Kommunal (Stockholms kommun)            │
+  │                                                            │
+  │  Meritvärde (17 ämnen)  ████████░░  241    (85:e pctl)    │
+  │  Måluppfyllelse          █████████░  94 %   (91:a pctl)   │
+  │  Lärarbehörighet         ███████░░░  78 %   (52:a pctl)   │
+  │  Antal elever: 342                                         │
+  │                                                            │
+  │  Trend: Meritvärdet stigit från 228 till 241 (2021→2025)  │
+  └────────────────────────────────────────────────────────────┘
+
+  ┌────────────────────────────────────────────────────────────┐
+  │  🏫 Eriksdalsskolan                              850 m    │
+  │  Grundskola F-6 · Kommunal (Stockholms kommun)            │
+  │                                                            │
+  │  Meritvärde (17 ämnen)  —  (skolan har ej åk 9)           │
+  │  Måluppfyllelse          —                                 │
+  │  Lärarbehörighet         ████████░░  82 %   (61:a pctl)   │
+  │  Antal elever: 280                                         │
+  └────────────────────────────────────────────────────────────┘
+```
+
+For schools without year-9 (F-6 schools), merit value and goal achievement aren't applicable. Show "—" with an explanatory note.
+
+The school section is separate from the indicator breakdown because it's per-school (point data), not per-DeSO (area data). This is the kind of granularity you can't get from the free tier.
+
+### 5.6 Strengths & Weaknesses
+
+Bullet list distilled from the top/bottom indicators. Written as actionable statements, not raw data.
+
+```
+── Styrkor ──────────────────────────────────────────────────────
+
+  ✅ Hög skolkvalitet i närheten — Årstaskolan (241 meritvärde)
+     ligger i topp 15 % nationellt, bara 200 m bort.
+
+  ✅ Stigande medianinkomst — inkomsten ökat med 19 % sedan 2019
+     och rankas nu i 78:e percentilen.
+
+  ✅ Utmärkt tillgång till grönområden — Tantolunden 120 m,
+     Eriksdalsbadet 400 m.
+
+  ✅ God kollektivtrafik — T-bana (Zinkensdamm) inom 350 m,
+     3 busslinjer inom 200 m.
+
+
+── Svagheter ────────────────────────────────────────────────────
+
+  ⚠️ Sysselsättningsgrad under genomsnittet — 72,3 % mot
+     riksmedian 82,5 %. Rankas i 61:a percentilen.
+
+  ⚠️ Lärarbehörighet kan förbättras — 78 % behöriga lärare
+     på Årstaskolan, under riksgenomsnittet på 83 %.
+
+  ⚠️ Hög andel hyresrätter — 67 % hyresrätter begränsar
+     potential för prisutveckling på bostadsrätter.
+```
 
 ```php
-// Claim guest reports when user creates account
-public function claimGuestReports(User $user): int
+// In ReportGenerationService — generate strengths/weaknesses
+
+private function generateStrengths(array $indicators, array $schools, array $proximity): array
 {
-    return Report::where('guest_email', $user->email)
-        ->whereNull('user_id')
-        ->update(['user_id' => $user->id]);
+    $strengths = [];
+
+    // Top area indicators (percentile >= 75)
+    foreach ($indicators as $ind) {
+        if ($ind['direction'] === 'neutral') continue;
+        $directedPctl = $ind['direction'] === 'negative'
+            ? 100 - $ind['percentile']
+            : $ind['percentile'];
+
+        if ($directedPctl >= 75) {
+            $strengths[] = [
+                'category' => $ind['category'],
+                'slug' => $ind['slug'],
+                'text_sv' => $this->strengthText($ind),
+                'percentile' => $directedPctl,
+            ];
+        }
+    }
+
+    // Nearby high-quality schools
+    $topSchool = collect($schools)
+        ->filter(fn($s) => ($s['merit_value'] ?? 0) >= 230)
+        ->sortBy('distance_m')
+        ->first();
+
+    if ($topSchool) {
+        $strengths[] = [
+            'category' => 'education',
+            'slug' => 'school_nearby',
+            'text_sv' => "Hög skolkvalitet i närheten — {$topSchool['name']} ({$topSchool['merit_value']} meritvärde) ligger i topp " . $this->meritToTopPct($topSchool['merit_value']) . " % nationellt, bara " . round($topSchool['distance_m']) . " m bort.",
+            'percentile' => 90,
+        ];
+    }
+
+    // Sort by percentile descending, take top 5
+    usort($strengths, fn($a, $b) => $b['percentile'] <=> $a['percentile']);
+    return array_slice($strengths, 0, 5);
+}
+
+// Mirror logic for weaknesses (directed percentile <= 35)
+```
+
+### 5.7 Outlook Section
+
+A forward-looking assessment synthesizing trends. Template-driven, not AI-generated.
+
+```
+── Utsikter ─────────────────────────────────────────────────────
+
+  Områdets totalpoäng har stigit stadigt från 61 (2019) till 72
+  (2024), en ökning med 11 poäng på 5 år. Denna trend drivs
+  främst av stigande inkomster och förbättrad skolkvalitet.
+
+  3 av 5 kategorier visar förbättring senaste året. Ekonomi och
+  utbildning är starkast. Sysselsättningen är den svagaste
+  punkten men stabil.
+
+  Baserat på historiska mönster tyder områdets profil på
+  fortsatt positiv utveckling. Områden med liknande profiler
+  har i genomsnitt ökat i poäng med 2-4 enheter per år.
+
+  ⚠️ Detta är en statistisk uppskattning baserad på historiska
+  data. Inte finansiell rådgivning. Lokala faktorer som ny-
+  byggnation, infrastrukturprojekt och politiska beslut kan
+  påverka utvecklingen avsevärt.
+```
+
+```php
+private function generateOutlook(array $scoreHistory, array $verdicts, array $indicators): array
+{
+    $years = count($scoreHistory);
+    $firstScore = $scoreHistory[0]['score'] ?? null;
+    $lastScore = $scoreHistory[count($scoreHistory) - 1]['score'] ?? null;
+    $totalChange = $lastScore && $firstScore ? $lastScore - $firstScore : null;
+
+    // Count improving categories
+    $improving = collect($verdicts)->filter(fn($v) => $v['trend_direction'] === 'improving')->count();
+    $declining = collect($verdicts)->filter(fn($v) => $v['trend_direction'] === 'declining')->count();
+    $total = collect($verdicts)->count();
+
+    // Determine overall outlook
+    $outlook = match(true) {
+        $improving >= 3 && $declining === 0 => 'strong_positive',
+        $improving >= 2 => 'positive',
+        $declining >= 3 => 'negative',
+        $declining >= 2 => 'cautious',
+        default => 'neutral',
+    };
+
+    return [
+        'outlook' => $outlook,
+        'outlook_label' => match($outlook) {
+            'strong_positive' => 'Starkt positiv',
+            'positive' => 'Positiv',
+            'neutral' => 'Neutral',
+            'cautious' => 'Viss osäkerhet',
+            'negative' => 'Utmanande',
+        },
+        'total_change' => $totalChange ? round($totalChange, 1) : null,
+        'years_span' => $years,
+        'improving_count' => $improving,
+        'declining_count' => $declining,
+        'total_categories' => $total,
+        'text_sv' => $this->generateOutlookText($scoreHistory, $outlook, $improving, $declining, $total, $totalChange),
+        'disclaimer' => 'Detta är en statistisk uppskattning baserad på historiska data. Inte finansiell rådgivning. Lokala faktorer som nybyggnation, infrastrukturprojekt och politiska beslut kan påverka utvecklingen avsevärt.',
+    ];
+}
+```
+
+### 5.8 Methodology & Sources
+
+The last section. Builds trust and covers legal requirements.
+
+```
+── Metod & datakällor ───────────────────────────────────────────
+
+  Denna rapport bygger på 27 indikatorer från 5 offentliga
+  datakällor, aggregerade till DeSO-nivå (demografiska
+  statistikområden, ca 700-3 000 invånare per område).
+
+  ┌──────────────────────────────────────────────────────────┐
+  │ Källa          │ Antal indikatorer │ Senaste data        │
+  │────────────────│───────────────────│─────────────────────│
+  │ SCB            │ 8                 │ 2024                │
+  │ Skolverket     │ 3                 │ 2024/25             │
+  │ BRÅ            │ 3                 │ 2024                │
+  │ Kolada         │ 3                 │ 2024                │
+  │ OpenStreetMap  │ 8                 │ Feb 2026            │
+  │ NTU            │ 1                 │ 2024                │
+  │ Polisen        │ 1                 │ 2025                │
+  └──────────────────────────────────────────────────────────┘
+
+  Poängen beräknas som ett viktat genomsnitt av percentilrankning
+  per indikator. Områdespoäng (70 %) baseras på DeSO-aggregerade
+  data. Närhetspoäng (30 %) baseras på avstånd till specifika
+  platser från den exakta adressen.
+
+  All data är offentlig statistik på aggregerad nivå. Inga
+  personuppgifter eller individuella data lagras eller behandlas.
+
+  Beräkningsmodell: v1.0
+  Data senast uppdaterad: 2026-01-15
+```
+
+---
+
+## Step 6: Print & Share
+
+### 6.1 Print Styles
+
+The report should look good when printed or saved as PDF. Add print-specific Tailwind classes:
+
+```tsx
+// In the main layout
+<main className="max-w-4xl mx-auto px-4 py-8 space-y-8 print:space-y-4 print:px-0 print:max-w-none">
+
+// Hide nav and non-essential UI when printing
+<ReportNav className="print:hidden" />
+
+// Page breaks before major sections
+<section className="print:break-before-page"> // Before school section
+```
+
+### 6.2 Share Functionality
+
+The report URL (`/reports/{uuid}`) is already shareable — no auth required to view. Add:
+
+```tsx
+function ShareButton({ uuid }: { uuid: string }) {
+    const url = `${window.location.origin}/reports/${uuid}`;
+
+    const copyToClipboard = async () => {
+        await navigator.clipboard.writeText(url);
+        toast('Länk kopierad!');
+    };
+
+    return (
+        <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={copyToClipboard}>
+                Kopiera länk
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => window.print()}>
+                Skriv ut / Spara PDF
+            </Button>
+        </div>
+    );
 }
 ```
 
 ---
 
-## Step 8: Report Sharing
+## Step 7: Value Formatting
 
-### 8.1 Public UUID URLs
+### 7.1 Swedish Number Formatting
 
-Every report has a permanent URL: `/reports/{uuid}`. This URL is:
-- Accessible without login (the report is the product — once paid, it's shareable)
-- Shareable via messaging, email, social media
-- Indexable by search engines (optional — could be noindex if we want to keep them private)
+All values in the report use Swedish formatting conventions:
 
-### 8.2 Share Options
+```tsx
+function formatValue(value: number | null, unit: string): string {
+    if (value === null) return '—';
 
-On the report page, add share buttons:
-
-```
-[📋 Kopiera länk]  [📧 Skicka via email]  [🖨️ Skriv ut]
-```
-
-The print stylesheet should produce a clean, single-page PDF-like output. No navigation, no sidebar — just the report content.
-
-### 8.3 OG Tags for Social Sharing
-
-When someone shares a report URL on social media, show a preview:
-
-```php
-// In ReportController::show()
-Inertia::render('Reports/Show', [
-    'report' => $report,
-])->withViewData([
-    'og_title' => "Områdesrapport: {$report->address}",
-    'og_description' => "Poäng: {$report->personalized_score}/100 — {$report->score_label}",
-    'og_image' => route('reports.og-image', $report->uuid),
-]);
-```
-
-Generate a simple OG image (Python/Pillow or HTML-to-image) showing the score and address. Not critical for v1 — can be added later.
-
----
-
-## Step 9: Payment Stub
-
-### 9.1 Not Implementing Payments Yet
-
-This task creates the report infrastructure. Payment integration (Swish, Klarna, Stripe) is a separate task. For now:
-
-```php
-// In ReportController::store()
-
-// TODO: Implement payment check
-// For now, all report generation is free (development mode)
-$canGenerate = true;
-
-// Future logic:
-// $canGenerate = $user?->hasActiveSubscription()
-//     || $user?->hasCredit('report')
-//     || $this->processPayment($request);
-
-if (!$canGenerate) {
-    return response()->json(['error' => 'Payment required'], 402);
+    switch (unit) {
+        case 'SEK':
+            return new Intl.NumberFormat('sv-SE').format(Math.round(value)) + ' kr';
+        case 'percent':
+            return value.toFixed(1).replace('.', ',') + ' %';
+        case 'per_1000':
+            return value.toFixed(1).replace('.', ',') + ' per 1 000';
+        case 'points':
+            return Math.round(value).toString();
+        case 'number':
+            return new Intl.NumberFormat('sv-SE').format(Math.round(value));
+        default:
+            return value.toFixed(1).replace('.', ',');
+    }
 }
 ```
 
-### 9.2 Payment-Ready Fields
+### 7.2 Percentile Ordinal Formatting
 
-The `reports` table already has `stripe_payment_id` and `status` columns. When payment is implemented:
-- Single purchase: create report → redirect to payment → on success, set `stripe_payment_id`
-- Subscription: check `user.subscription_status` before allowing generation
-- Credits: decrement credit counter, record which credit was used
+Swedish ordinal suffixes for percentiles:
 
----
-
-## Implementation Order
-
-### Phase A: Database + Service Layer
-1. Create `reports` migration
-2. Create `Report` model with casts and accessors
-3. Create `PersonalizedScoringService`
-4. Create `ReportGenerationService`
-5. Test: `php artisan tinker` → manually generate a report, verify JSON structure
-
-### Phase B: API + Preference UI
-6. Create `ReportController` with `store`, `show`, `index`
-7. Add routes
-8. Build preference questionnaire component (sidebar panel)
-9. Wire up: user picks priorities → POST to API → receives UUID + summary
-10. Show summary in sidebar with link to full report
-
-### Phase C: Full Report Page
-11. Create `Reports/Show.tsx` Inertia page
-12. Build all report sections: score hero, personalization explanation, area indicators, proximity factors, schools, strengths/weaknesses, methodology
-13. Priority-ordered section rendering
-14. Print stylesheet
-15. Test: generate report → view at `/reports/{uuid}` → verify all sections render
-
-### Phase D: My Reports + Persistence
-16. Create `Reports/Index.tsx` page
-17. Add "Mina rapporter" navigation link
-18. Verify: generate 3 reports → see all 3 in My Reports → click each → full report loads
-19. Test persistence: generate report → close browser → reopen → navigate to `/reports/{uuid}` → report is still there
-20. Guest email claim logic (for future auth integration)
+```tsx
+function formatPercentile(pctl: number): string {
+    // Swedish: 1:a, 2:a, 3:e, 4:e, ..., 78:e, 91:a, 92:a, 100:e
+    const suffix = [1, 2].includes(pctl % 10) && ![11, 12].includes(pctl % 100) ? ':a' : ':e';
+    return `${pctl}${suffix}`;
+}
+```
 
 ---
 
 ## Verification
 
-### Core Flow
-- [ ] Clicking "Generate Report" shows preference questionnaire in sidebar
-- [ ] User can select 1-3 priorities from the grid
-- [ ] User can optionally select a persona
-- [ ] Clicking "Generate" creates a report in < 2 seconds
-- [ ] Sidebar shows condensed report summary with personalized score
-- [ ] "View full report" link opens `/reports/{uuid}`
-- [ ] Full report page renders all sections
-- [ ] Report URL works when opened in a new browser/incognito (persistence)
-- [ ] My Reports page lists all generated reports
+### Data Integrity
+- [ ] All snapshotted values match what the sidebar shows for the same DeSO
+- [ ] Trend sparklines match the indicator_values table history
+- [ ] School distances are correct (verify one against Google Maps)
+- [ ] Category verdicts are consistent with the individual indicator values they aggregate
+- [ ] National references are plausible (median income ~265k, employment ~82%)
 
-### Personalization
-- [ ] Selecting "school quality" as priority actually changes the score (vs default)
-- [ ] Score difference is visible: "Standard: 68, Your score: 74, +6 from your priorities"
-- [ ] Report sections are ordered by user's priorities
-- [ ] Explanation text describes WHY the score shifted
-
-### Persistence
-- [ ] Report data survives server restart (it's in the database, not session)
-- [ ] UUID URL is bookmarkable and works days later
-- [ ] Report shows the data snapshot from generation time (not live data)
-- [ ] `view_count` increments on each view
+### Visual Checklist
+- [ ] Report page loads at `/reports/{uuid}` with all 9 sections
+- [ ] Hero score circle is colored correctly (using centralized color function)
+- [ ] Score sparkline shows 2019-2024 trajectory
+- [ ] Map snapshot renders with DeSO polygon, pin, school markers
+- [ ] Map is non-interactive (no pan/zoom)
+- [ ] Category verdict cards show letter grades A-E with correct colors
+- [ ] All indicators show name, bar, percentile, trend arrow, raw value, sparkline
+- [ ] Negative indicators show "Lägre = bättre" clarification
+- [ ] School cards show full statistics with distance
+- [ ] Schools without year-9 show "—" for merit/goal, not 0
+- [ ] Strengths and weaknesses are written as Swedish sentences, not raw data
+- [ ] Outlook section synthesizes trends into forward-looking text
+- [ ] Methodology section lists all sources with indicator counts and data dates
+- [ ] All numbers use Swedish formatting (287 000 kr, 72,3 %, komma as decimal separator)
+- [ ] Percentile ordinals are correct (1:a, 2:a, 3:e, 78:e)
+- [ ] Print view renders cleanly (Ctrl+P → looks good)
+- [ ] Share link copies the correct URL
+- [ ] Report persists — close browser, reopen URL, report is still there
+- [ ] View count increments on each visit
 
 ### Edge Cases
-- [ ] Location with no schools → proximity school section says "Inga skolor inom 2 km"
-- [ ] Location outside DeSO boundaries → graceful error
-- [ ] Location in rural area with few POIs → low proximity score, report still renders
-- [ ] User generates same location twice with different priorities → two separate reports, different scores
+- [ ] DeSO with no schools shows "Inga skolor inom 2 km" with nearest school info
+- [ ] DeSO with no historical data shows flat sparkline / "—" for trends
+- [ ] Indicator with NULL raw_value shows "Inga data" not "0"
+- [ ] Very long school names don't break layout
+- [ ] Report for rural DeSO (sparse data, few POIs) still renders all sections
 
 ---
 
 ## What NOT to Do
 
-- **DO NOT implement payment processing.** Stub it. That's a separate task with Swish/Klarna/Stripe integration.
-- **DO NOT generate PDF files.** The web page IS the report. Print stylesheet handles the print case. PDF generation (server-side with Puppeteer/wkhtmltopdf) is a future optimization.
-- **DO NOT change the heatmap tiles.** Tiles still show default (non-personalized) area scores. Personalization is sidebar + report only.
-- **DO NOT store personalized scores in `composite_scores`.** The reports table has its own snapshot. The composite_scores table stays as the canonical default score.
-- **DO NOT make the preference questionnaire more than one screen.** One panel, 10 seconds, done. Multi-step wizards kill conversion.
-- **DO NOT allow more than 3 priorities.** If everything is a priority, nothing is. Three forces the user to think about what actually matters to them.
-- **DO NOT expire reports.** Once generated, the report lives forever (unless explicitly refunded). The `expires_at` column exists for future subscription-gated features but defaults to NULL (no expiry).
-
-**DO:**
-- Snapshot everything at generation time (scores, indicators, schools)
-- Show both default and personalized score (transparency builds trust)
-- Order report sections by user's priorities (feels custom)
-- Make UUIDs the primary access key (no login required to view)
-- Keep the preference questionnaire delightful (icons, quick, visual)
-- Show a "personalization impact" explanation in plain Swedish
+- **DO NOT render the report from live data.** Everything comes from the `reports` table snapshot. If we recompute scores tomorrow, existing reports stay unchanged.
+- **DO NOT use AI/LLM to generate verdict text.** Template-driven text is predictable, fast, and free. The templates combine data points into readable Swedish sentences. No API calls during rendering.
+- **DO NOT make the map interactive.** It's a snapshot — non-interactive OpenLayers with no controls, no interactions. The user has the live map on the main page.
+- **DO NOT show indicator weights in the report.** Users don't need to know that median_income has weight 0.20. They see the percentile, the bar, the trend. The weighting is internal methodology.
+- **DO NOT translate to English yet.** The report is Swedish-first. English comes with the i18n task. All user-facing text in this task is in Swedish.
+- **DO NOT add PDF generation.** Browser print (Ctrl+P → Save as PDF) is good enough for v1. Native PDF generation (using DomPDF or Puppeteer) is a future optimization.
+- **DO NOT gate report viewing behind auth.** Anyone with the UUID link can view. This is intentional — reports are shareable. The payment gate is at *generation* time, not viewing time.

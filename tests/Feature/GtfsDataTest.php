@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Indicator;
 use App\Models\Poi;
 use App\Models\PoiCategory;
 use App\Models\TransitStop;
@@ -440,6 +441,81 @@ class GtfsDataTest extends TestCase
             'lng' => 18.07,
             'source' => 'gtfs',
         ]);
+    }
+
+    // ─── Aggregation from transit_stops ─────────────────
+
+    public function test_transit_density_aggregates_from_transit_stops_table(): void
+    {
+        // Set up a DeSO area with geometry and population
+        $desoCode = 'T0001';
+        DB::table('deso_areas')->insert([
+            'deso_code' => $desoCode,
+            'deso_name' => 'Test DeSO',
+            'kommun_code' => '0180',
+            'kommun_name' => 'Stockholm',
+            'lan_code' => '01',
+            'population' => 1000,
+        ]);
+        DB::statement("
+            UPDATE deso_areas SET geom = ST_SetSRID(ST_MakePolygon(
+                ST_GeomFromText('LINESTRING(18.05 59.33, 18.07 59.33, 18.07 59.34, 18.05 59.34, 18.05 59.33)')
+            ), 4326) WHERE deso_code = '{$desoCode}'
+        ");
+
+        // Create transit stops NEAR the DeSO centroid (within 1km)
+        for ($i = 0; $i < 5; $i++) {
+            TransitStop::create([
+                'gtfs_stop_id' => "74001000{$i}",
+                'name' => "Stop {$i}",
+                'lat' => 59.335 + ($i * 0.0001),
+                'lng' => 18.060,
+                'source' => 'gtfs',
+            ]);
+        }
+
+        // Set geometry on all transit stops
+        DB::statement('
+            UPDATE transit_stops SET geom = ST_SetSRID(ST_MakePoint(lng, lat), 4326) WHERE geom IS NULL
+        ');
+
+        // Create the indicator and POI category
+        $indicator = Indicator::create([
+            'slug' => 'transit_stop_density',
+            'name' => 'Transit Stop Density',
+            'source' => 'gtfs',
+            'direction' => 'positive',
+            'weight' => 0.04,
+            'normalization' => 'rank_percentile',
+            'normalization_scope' => 'urbanity_stratified',
+            'is_active' => true,
+        ]);
+
+        PoiCategory::query()->updateOrCreate(
+            ['slug' => 'public_transport_stop'],
+            [
+                'name' => 'Public Transport Stops',
+                'indicator_slug' => 'transit_stop_density',
+                'signal' => 'positive',
+                'is_active' => true,
+                'catchment_km' => 1.00,
+            ]
+        );
+
+        // Run aggregation — should use transit_stops table
+        $job = new \App\Jobs\AggregatePoiCategoryJob('public_transport_stop', 2025);
+        $job->handle();
+
+        // Verify indicator values were created from transit_stops data
+        $value = DB::table('indicator_values')
+            ->where('deso_code', $desoCode)
+            ->where('indicator_id', $indicator->id)
+            ->where('year', 2025)
+            ->first();
+
+        $this->assertNotNull($value);
+        // 5 stops / 1000 population * 1000 = 5.0 per 1000 residents
+        $this->assertEqualsWithDelta(5.0, $value->raw_value, 0.1);
     }
 
     // ─── Config ──────────────────────────────────────────

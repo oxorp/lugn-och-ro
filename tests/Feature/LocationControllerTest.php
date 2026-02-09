@@ -923,14 +923,14 @@ class LocationControllerTest extends TestCase
         ]);
 
         $indicator = Indicator::create([
-            'slug' => 'grocery_density',
-            'name' => 'Livsmedelsbutikstäthet',
-            'unit' => 'per_1000',
-            'direction' => 'positive',
-            'weight' => 0.02,
+            'slug' => 'debt_rate_pct',
+            'name' => 'Skuldsättningsgrad',
+            'unit' => '%',
+            'direction' => 'negative',
+            'weight' => 0.06,
             'normalization' => 'rank_percentile',
-            'normalization_scope' => 'urbanity_stratified',
-            'source' => 'osm',
+            'normalization_scope' => 'national',
+            'source' => 'kolada',
             'is_active' => true,
             'display_order' => 20,
         ]);
@@ -939,7 +939,7 @@ class LocationControllerTest extends TestCase
             'deso_code' => '0180C1090',
             'indicator_id' => $indicator->id,
             'year' => 2025,
-            'raw_value' => 2.5,
+            'raw_value' => 4.3,
             'normalized_value' => 0.65,
         ]);
 
@@ -1010,5 +1010,158 @@ class LocationControllerTest extends TestCase
         $response = $this->get('/explore/59.3340,18.0650');
 
         $response->assertOk();
+    }
+
+    public function test_blended_score_excludes_amenity_density_from_area_score(): void
+    {
+        $this->createDesoWithGeom('0180C1090', 'Stockholm');
+
+        $income = Indicator::create([
+            'slug' => 'median_income',
+            'name' => 'Medianinkomst',
+            'unit' => 'SEK',
+            'direction' => 'positive',
+            'weight' => 0.09,
+            'normalization' => 'rank_percentile',
+            'normalization_scope' => 'national',
+            'source' => 'scb',
+            'is_active' => true,
+            'display_order' => 1,
+        ]);
+
+        Indicator::create([
+            'slug' => 'grocery_density',
+            'name' => 'Livsmedelsbutikstäthet',
+            'unit' => 'per_1000',
+            'direction' => 'positive',
+            'weight' => 0.027,
+            'normalization' => 'rank_percentile',
+            'normalization_scope' => 'urbanity_stratified',
+            'source' => 'osm',
+            'is_active' => true,
+            'display_order' => 20,
+        ]);
+
+        // factor_scores: income directed=0.80, grocery directed=0.40
+        // Full score = ((0.09*0.80 + 0.027*0.40) / (0.09+0.027)) * 100 = (0.072+0.0108)/0.117 * 100 = 70.77
+        // Adjusted (no grocery) = (0.09*0.80 / 0.09) * 100 = 80.0
+        CompositeScore::create([
+            'deso_code' => '0180C1090',
+            'year' => 2024,
+            'score' => 70.77,
+            'factor_scores' => ['median_income' => 0.80, 'grocery_density' => 0.40],
+            'top_positive' => ['median_income'],
+            'top_negative' => ['grocery_density'],
+            'computed_at' => now(),
+        ]);
+
+        IndicatorValue::create([
+            'deso_code' => '0180C1090',
+            'indicator_id' => $income->id,
+            'year' => 2024,
+            'raw_value' => 287000,
+            'normalized_value' => 0.80,
+        ]);
+
+        $user = User::factory()->create();
+        $response = $this->actingAs($user)->getJson('/api/location/59.335,18.06');
+        $response->assertOk();
+
+        $data = $response->json();
+        // area_score should be adjusted (80.0), not full composite (70.77)
+        $this->assertEquals(80.0, $data['score']['area_score']);
+        // area_score_full should be the original composite
+        $this->assertEquals(70.8, $data['score']['area_score_full']);
+        // Blended uses adjusted area score
+        $expected = round(80.0 * 0.70 + $data['score']['proximity_score'] * 0.30, 1);
+        $this->assertEquals($expected, $data['score']['value']);
+    }
+
+    public function test_amenity_indicators_excluded_from_response(): void
+    {
+        $this->createDesoWithGeom('0180C1090', 'Stockholm');
+
+        CompositeScore::create([
+            'deso_code' => '0180C1090',
+            'year' => 2024,
+            'score' => 55.0,
+            'computed_at' => now(),
+        ]);
+
+        $income = Indicator::create([
+            'slug' => 'median_income',
+            'name' => 'Medianinkomst',
+            'unit' => 'SEK',
+            'direction' => 'positive',
+            'weight' => 0.09,
+            'normalization' => 'rank_percentile',
+            'normalization_scope' => 'national',
+            'source' => 'scb',
+            'is_active' => true,
+            'display_order' => 1,
+        ]);
+
+        $grocery = Indicator::create([
+            'slug' => 'grocery_density',
+            'name' => 'Livsmedelsbutikstäthet',
+            'unit' => 'per_1000',
+            'direction' => 'positive',
+            'weight' => 0.027,
+            'normalization' => 'rank_percentile',
+            'normalization_scope' => 'urbanity_stratified',
+            'source' => 'osm',
+            'is_active' => true,
+            'display_order' => 20,
+        ]);
+
+        $transit = Indicator::create([
+            'slug' => 'transit_stop_density',
+            'name' => 'Hållplatstäthet',
+            'unit' => 'per_1000',
+            'direction' => 'positive',
+            'weight' => 0.04,
+            'normalization' => 'rank_percentile',
+            'normalization_scope' => 'urbanity_stratified',
+            'source' => 'osm',
+            'is_active' => true,
+            'display_order' => 21,
+        ]);
+
+        foreach ([$income, $grocery, $transit] as $ind) {
+            IndicatorValue::create([
+                'deso_code' => '0180C1090',
+                'indicator_id' => $ind->id,
+                'year' => 2024,
+                'raw_value' => 50.0,
+                'normalized_value' => 0.50,
+            ]);
+        }
+
+        $user = User::factory()->create();
+        $response = $this->actingAs($user)->getJson('/api/location/59.335,18.06');
+        $response->assertOk();
+
+        $slugs = array_column($response->json('indicators'), 'slug');
+        $this->assertContains('median_income', $slugs);
+        $this->assertNotContains('grocery_density', $slugs);
+        $this->assertNotContains('transit_stop_density', $slugs);
+    }
+
+    public function test_adjusted_area_score_falls_back_without_factor_scores(): void
+    {
+        $this->createDesoWithGeom('0180C1090', 'Stockholm');
+
+        CompositeScore::create([
+            'deso_code' => '0180C1090',
+            'year' => 2024,
+            'score' => 65.0,
+            'factor_scores' => null,
+            'computed_at' => now(),
+        ]);
+
+        $response = $this->getJson('/api/location/59.335,18.06');
+
+        $response->assertOk();
+        $this->assertEquals(65.0, $response->json('score.area_score'));
     }
 }

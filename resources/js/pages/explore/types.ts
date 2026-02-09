@@ -77,6 +77,7 @@ export interface LocationData {
     score: {
         value: number;
         area_score: number | null;
+        area_score_full: number | null;
         proximity_score: number;
         trend_1y: number | null;
         label: string;

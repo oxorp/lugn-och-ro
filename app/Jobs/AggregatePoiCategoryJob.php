@@ -17,6 +17,9 @@ class AggregatePoiCategoryJob implements ShouldQueue
 
     private const BATCH_SIZE = 500;
 
+    /** Transit categories are aggregated from transit_stops table instead of pois */
+    private const TRANSIT_CATEGORY = 'public_transport_stop';
+
     public function __construct(
         public string $categorySlug,
         public int $year,
@@ -32,18 +35,24 @@ class AggregatePoiCategoryJob implements ShouldQueue
         $catchmentMeters = (float) $category->catchment_km * 1000;
         $now = now()->toDateTimeString();
 
+        // Transit uses transit_stops table (GTFS authority) instead of pois
+        $useTransitStops = $this->categorySlug === self::TRANSIT_CATEGORY
+            && DB::table('transit_stops')->exists();
+
         Log::info("POI aggregation started: {$category->name}", [
             'category' => $this->categorySlug,
             'catchment_km' => $category->catchment_km,
             'year' => $this->year,
+            'source_table' => $useTransitStops ? 'transit_stops' : 'pois',
         ]);
 
-        // Get POI count to decide batching strategy
-        $poiCount = DB::table('pois')
-            ->where('category', $this->categorySlug)
-            ->where('status', 'active')
-            ->whereNotNull('geom')
-            ->count();
+        $poiCount = $useTransitStops
+            ? DB::table('transit_stops')->whereNotNull('geom')->count()
+            : DB::table('pois')
+                ->where('category', $this->categorySlug)
+                ->where('status', 'active')
+                ->whereNotNull('geom')
+                ->count();
 
         // Get all DeSO codes with population
         $allDesos = DB::select('
@@ -58,7 +67,7 @@ class AggregatePoiCategoryJob implements ShouldQueue
 
         if ($poiCount >= 10000) {
             // Batched approach for large categories
-            Log::info("Using batched aggregation for {$this->categorySlug} ({$poiCount} POIs, batches of ".self::BATCH_SIZE.')');
+            Log::info("Using batched aggregation for {$this->categorySlug} ({$poiCount} points, batches of ".self::BATCH_SIZE.')');
 
             foreach (array_chunk($allDesos, self::BATCH_SIZE) as $batchIndex => $batch) {
                 $desoCodes = array_map(fn ($d) => $d->deso_code, $batch);
@@ -69,23 +78,41 @@ class AggregatePoiCategoryJob implements ShouldQueue
 
                 $placeholders = implode(',', array_fill(0, count($desoCodes), '?'));
 
-                $results = DB::select("
-                    SELECT
-                        d.deso_code,
-                        COUNT(p.id) AS poi_count
-                    FROM deso_areas d
-                    LEFT JOIN pois p ON
-                        p.category = ?
-                        AND p.status = 'active'
-                        AND p.geom IS NOT NULL
-                        AND ST_DWithin(
-                            p.geom::geography,
-                            ST_Centroid(d.geom)::geography,
-                            ?
-                        )
-                    WHERE d.deso_code IN ({$placeholders})
-                    GROUP BY d.deso_code
-                ", array_merge([$this->categorySlug, $catchmentMeters], $desoCodes));
+                if ($useTransitStops) {
+                    $results = DB::select("
+                        SELECT
+                            d.deso_code,
+                            COUNT(ts.id) AS poi_count
+                        FROM deso_areas d
+                        LEFT JOIN transit_stops ts ON
+                            ts.geom IS NOT NULL
+                            AND ST_DWithin(
+                                ts.geom::geography,
+                                d.geom::geography,
+                                ?
+                            )
+                        WHERE d.deso_code IN ({$placeholders})
+                        GROUP BY d.deso_code
+                    ", array_merge([$catchmentMeters], $desoCodes));
+                } else {
+                    $results = DB::select("
+                        SELECT
+                            d.deso_code,
+                            COUNT(p.id) AS poi_count
+                        FROM deso_areas d
+                        LEFT JOIN pois p ON
+                            p.category = ?
+                            AND p.status = 'active'
+                            AND p.geom IS NOT NULL
+                            AND ST_DWithin(
+                                p.geom::geography,
+                                d.geom::geography,
+                                ?
+                            )
+                        WHERE d.deso_code IN ({$placeholders})
+                        GROUP BY d.deso_code
+                    ", array_merge([$this->categorySlug, $catchmentMeters], $desoCodes));
+                }
 
                 $resultMap = [];
                 foreach ($results as $r) {
@@ -119,25 +146,45 @@ class AggregatePoiCategoryJob implements ShouldQueue
             }
         } else {
             // Single query for small categories
-            $results = DB::select("
-                SELECT
-                    d.deso_code,
-                    d.population,
-                    COUNT(p.id) AS poi_count
-                FROM deso_areas d
-                LEFT JOIN pois p ON
-                    p.category = ?
-                    AND p.status = 'active'
-                    AND p.geom IS NOT NULL
-                    AND ST_DWithin(
-                        p.geom::geography,
-                        ST_Centroid(d.geom)::geography,
-                        ?
-                    )
-                WHERE d.population IS NOT NULL
-                  AND d.population > 0
-                GROUP BY d.deso_code, d.population
-            ", [$this->categorySlug, $catchmentMeters]);
+            if ($useTransitStops) {
+                $results = DB::select('
+                    SELECT
+                        d.deso_code,
+                        d.population,
+                        COUNT(ts.id) AS poi_count
+                    FROM deso_areas d
+                    LEFT JOIN transit_stops ts ON
+                        ts.geom IS NOT NULL
+                        AND ST_DWithin(
+                            ts.geom::geography,
+                            d.geom::geography,
+                            ?
+                        )
+                    WHERE d.population IS NOT NULL
+                      AND d.population > 0
+                    GROUP BY d.deso_code, d.population
+                ', [$catchmentMeters]);
+            } else {
+                $results = DB::select("
+                    SELECT
+                        d.deso_code,
+                        d.population,
+                        COUNT(p.id) AS poi_count
+                    FROM deso_areas d
+                    LEFT JOIN pois p ON
+                        p.category = ?
+                        AND p.status = 'active'
+                        AND p.geom IS NOT NULL
+                        AND ST_DWithin(
+                            p.geom::geography,
+                            d.geom::geography,
+                            ?
+                        )
+                    WHERE d.population IS NOT NULL
+                      AND d.population > 0
+                    GROUP BY d.deso_code, d.population
+                ", [$this->categorySlug, $catchmentMeters]);
+            }
 
             foreach ($results as $row) {
                 $rawValue = ($row->poi_count / $row->population) * 1000;
@@ -186,6 +233,7 @@ class AggregatePoiCategoryJob implements ShouldQueue
             'desos' => $totalDesos,
             'non_zero' => $nonZero,
             'poi_count' => $poiCount,
+            'source_table' => $useTransitStops ? 'transit_stops' : 'pois',
             'elapsed_seconds' => $elapsed,
         ]);
     }

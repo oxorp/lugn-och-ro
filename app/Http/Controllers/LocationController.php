@@ -21,6 +21,18 @@ class LocationController extends Controller
 
     private const PROXIMITY_WEIGHT = 0.30;
 
+    /** Amenity density indicators superseded by proximity scoring at pin level */
+    private const AMENITY_DENSITY_SLUGS = [
+        'grocery_density',
+        'transit_stop_density',
+        'healthcare_density',
+        'restaurant_density',
+        'fitness_density',
+        'gambling_density',
+        'pawn_shop_density',
+        'fast_food_density',
+    ];
+
     public function __construct(
         private DataTieringService $tiering,
         private ProximityScoreService $proximityService,
@@ -49,22 +61,30 @@ class LocationController extends Controller
             ->first();
 
         $areaScore = $score ? round((float) $score->score, 1) : null;
+        $adjustedAreaScore = $score ? $this->computeAdjustedAreaScore($score) : null;
 
         // 3. Compute proximity score (cached by ~100m grid cell)
         $proximity = $this->proximityService->scoreCached($lat, $lng);
         $proximityScore = round($proximity->compositeScore(), 1);
 
-        // 4. Blend area + proximity scores
-        $blendedScore = $this->blendScores($areaScore, $proximityScore);
+        // 4. Blend adjusted area + proximity scores
+        //    Amenity access is handled entirely by proximity (pin-accurate),
+        //    area score only contributes socioeconomic/safety/education factors.
+        $blendedScore = $this->blendScores($adjustedAreaScore, $proximityScore);
 
         $scoreData = $score ? [
             'value' => $blendedScore,
-            'area_score' => $areaScore,
+            'area_score' => $adjustedAreaScore,
+            'area_score_full' => $areaScore,
             'proximity_score' => $proximityScore,
             'trend_1y' => $score->trend_1y ? round((float) $score->trend_1y, 1) : null,
             'label' => $this->scoreLabel($blendedScore),
-            'top_positive' => $score->top_positive,
-            'top_negative' => $score->top_negative,
+            'top_positive' => $score->top_positive
+                ? array_values(array_diff($score->top_positive, self::AMENITY_DENSITY_SLUGS))
+                : null,
+            'top_negative' => $score->top_negative
+                ? array_values(array_diff($score->top_negative, self::AMENITY_DENSITY_SLUGS))
+                : null,
             'factor_scores' => $score->factor_scores,
             'raw_score_before_penalties' => $score->raw_score_before_penalties ? round((float) $score->raw_score_before_penalties, 1) : null,
             'penalties_applied' => $score->penalties_applied,
@@ -227,6 +247,11 @@ class LocationController extends Controller
         foreach ($allIndicatorValues as $indicatorId => $history) {
             $indicator = $activeIndicators->get($indicatorId);
             if (! $indicator) {
+                continue;
+            }
+
+            // Skip amenity density indicators — proximity factors handle access metrics
+            if (in_array($indicator->slug, self::AMENITY_DENSITY_SLUGS, true)) {
                 continue;
             }
 
@@ -401,6 +426,75 @@ class LocationController extends Controller
                 'poi_count' => $proximityStats['poi_count'],
             ],
         ];
+    }
+
+    /**
+     * Recompute area score excluding amenity density indicators.
+     * These are superseded by the more accurate pin-based proximity factors.
+     */
+    private function computeAdjustedAreaScore(CompositeScore $score): float
+    {
+        $factorScores = $score->factor_scores;
+
+        if (empty($factorScores)) {
+            return round((float) $score->score, 1);
+        }
+
+        // Fast path: if no amenity indicators in factor_scores, no adjustment needed
+        $hasAmenity = ! empty(array_intersect_key(
+            $factorScores,
+            array_flip(self::AMENITY_DENSITY_SLUGS)
+        ));
+
+        if (! $hasAmenity) {
+            return round((float) $score->score, 1);
+        }
+
+        // Load indicator weights (cached 5 min)
+        $weights = cache()->remember('indicator_weights_map', 300, fn () => Indicator::query()
+            ->where('is_active', true)
+            ->where('weight', '>', 0)
+            ->pluck('weight', 'slug')
+            ->map(fn ($w) => (float) $w)
+            ->toArray()
+        );
+
+        $totalWeightedSum = 0.0;
+        $totalWeight = 0.0;
+        $amenityWeightedSum = 0.0;
+        $amenityWeight = 0.0;
+
+        foreach ($factorScores as $slug => $directedValue) {
+            $weight = $weights[$slug] ?? null;
+            if ($weight === null) {
+                continue;
+            }
+
+            $contribution = $weight * (float) $directedValue;
+            $totalWeightedSum += $contribution;
+            $totalWeight += $weight;
+
+            if (in_array($slug, self::AMENITY_DENSITY_SLUGS, true)) {
+                $amenityWeightedSum += $contribution;
+                $amenityWeight += $weight;
+            }
+        }
+
+        $nonAmenityWeight = $totalWeight - $amenityWeight;
+
+        if ($nonAmenityWeight <= 0) {
+            return round((float) $score->score, 1);
+        }
+
+        $adjustedRaw = (($totalWeightedSum - $amenityWeightedSum) / $nonAmenityWeight) * 100;
+
+        // Apply same penalties
+        if (! empty($score->penalties_applied)) {
+            $totalPenalty = array_sum(array_column($score->penalties_applied, 'amount'));
+            $adjustedRaw += $totalPenalty;
+        }
+
+        return round(max(0, min(100, $adjustedRaw)), 1);
     }
 
     private function blendScores(?float $areaScore, float $proximityScore): float

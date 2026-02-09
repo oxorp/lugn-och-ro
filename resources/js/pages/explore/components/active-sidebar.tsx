@@ -127,7 +127,7 @@ export function ActiveSidebar({
                                     ))}
                                     <div className="flex justify-between border-t border-red-900/20 pt-1">
                                         <span>Poäng efter avdrag</span>
-                                        <span className="font-medium tabular-nums">{score.area_score}</span>
+                                        <span className="font-medium tabular-nums">{score.area_score_full}</span>
                                     </div>
                                 </>
                             )}
