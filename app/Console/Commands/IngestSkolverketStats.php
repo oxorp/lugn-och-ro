@@ -16,7 +16,8 @@ class IngestSkolverketStats extends Command
     protected $signature = 'ingest:skolverket-stats
         {--delay=200 : Delay between batch requests in milliseconds}
         {--batch-size=10 : Number of concurrent requests per batch}
-        {--limit=0 : Limit number of schools to fetch (0 = all)}';
+        {--limit=0 : Limit number of schools to fetch (0 = all)}
+        {--all-years : Store all academic years from the API response (not just the latest)}';
 
     protected $description = 'Ingest school performance statistics from Skolverket Planned Educations API';
 
@@ -29,6 +30,7 @@ class IngestSkolverketStats extends Command
         $delay = (int) $this->option('delay');
         $batchSize = (int) $this->option('batch-size');
         $limit = (int) $this->option('limit');
+        $allYears = (bool) $this->option('all-years');
         $service = new SkolverketApiService($delay);
 
         $this->startIngestionLog('skolverket_stats', 'ingest:skolverket-stats');
@@ -74,24 +76,48 @@ class IngestSkolverketStats extends Command
                         $response = $responses[$code] ?? null;
 
                         if ($response instanceof \Illuminate\Http\Client\Response && $response->successful()) {
-                            $stats = $service->parseGrundskolaStatsResponse($response->json());
+                            if ($allYears) {
+                                $allYearsStats = $service->parseAllYearsGrundskolaStats($response->json());
 
-                            if ($stats && $stats['academic_year']) {
-                                $rows[] = [
-                                    'school_unit_code' => $code,
-                                    'academic_year' => $stats['academic_year'],
-                                    'merit_value_17' => $stats['merit_value_17'],
-                                    'goal_achievement_pct' => $stats['goal_achievement_pct'],
-                                    'eligibility_pct' => $stats['eligibility_pct'],
-                                    'teacher_certification_pct' => $stats['teacher_certification_pct'],
-                                    'student_count' => $stats['student_count'],
-                                    'data_source' => 'planned_educations_v3',
-                                    'created_at' => $now,
-                                    'updated_at' => $now,
-                                ];
-                                $fetched++;
+                                if (! empty($allYearsStats)) {
+                                    foreach ($allYearsStats as $academicYear => $yearStats) {
+                                        $rows[] = [
+                                            'school_unit_code' => $code,
+                                            'academic_year' => $academicYear,
+                                            'merit_value_17' => $yearStats['merit_value_17'],
+                                            'goal_achievement_pct' => $yearStats['goal_achievement_pct'],
+                                            'eligibility_pct' => $yearStats['eligibility_pct'],
+                                            'teacher_certification_pct' => $yearStats['teacher_certification_pct'],
+                                            'student_count' => $yearStats['student_count'],
+                                            'data_source' => 'planned_educations_v3',
+                                            'created_at' => $now,
+                                            'updated_at' => $now,
+                                        ];
+                                    }
+                                    $fetched++;
+                                } else {
+                                    $noData++;
+                                }
                             } else {
-                                $noData++;
+                                $stats = $service->parseGrundskolaStatsResponse($response->json());
+
+                                if ($stats && $stats['academic_year']) {
+                                    $rows[] = [
+                                        'school_unit_code' => $code,
+                                        'academic_year' => $stats['academic_year'],
+                                        'merit_value_17' => $stats['merit_value_17'],
+                                        'goal_achievement_pct' => $stats['goal_achievement_pct'],
+                                        'eligibility_pct' => $stats['eligibility_pct'],
+                                        'teacher_certification_pct' => $stats['teacher_certification_pct'],
+                                        'student_count' => $stats['student_count'],
+                                        'data_source' => 'planned_educations_v3',
+                                        'created_at' => $now,
+                                        'updated_at' => $now,
+                                    ];
+                                    $fetched++;
+                                } else {
+                                    $noData++;
+                                }
                             }
                         } else {
                             $failed++;

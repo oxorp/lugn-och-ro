@@ -20,11 +20,32 @@ class IngestPois extends Command
 
     protected $description = 'Ingest POI data from external sources (Overpass/OSM)';
 
+    /** Categories managed by GTFS ingestion — skip during OSM ingestion */
+    private const GTFS_MANAGED_CATEGORIES = [
+        'public_transport_stop',
+        'transit_stop',
+        'bus_stop',
+        'tram_stop',
+        'rail_station',
+        'subway_station',
+        'transit',
+    ];
+
     private const RATE_LIMIT_SECONDS = 10;
 
     public function handle(OverpassService $overpass): int
     {
         $source = $this->option('source');
+
+        // Check if a specific transit category was requested — redirect to GTFS
+        $requestedCategory = $this->option('category');
+        if ($requestedCategory && in_array($requestedCategory, self::GTFS_MANAGED_CATEGORIES)) {
+            $this->warn("Category '{$requestedCategory}' is managed by GTFS ingestion. Skipping.");
+            $this->warn("Run 'php artisan ingest:gtfs' instead.");
+
+            return self::SUCCESS;
+        }
+
         $categories = $this->getCategories();
 
         if ($categories->isEmpty()) {
@@ -167,6 +188,9 @@ class IngestPois extends Command
         } elseif ($source === 'osm') {
             $query->whereNotNull('osm_tags');
         }
+
+        // Filter out GTFS-managed transit categories
+        $query->whereNotIn('slug', self::GTFS_MANAGED_CATEGORIES);
 
         return $query->get();
     }

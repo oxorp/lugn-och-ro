@@ -6,6 +6,8 @@ import { useScoreLabel } from '../hooks/use-score-label';
 import type { LocationData } from '../types';
 import { scoreBgStyle } from '../utils';
 
+import { Sparkline } from './sparkline';
+
 export function ScoreCard({
     score,
     urbanityTier,
@@ -15,6 +17,8 @@ export function ScoreCard({
 }) {
     const { t } = useTranslation();
     const getScoreLabel = useScoreLabel();
+
+    const history = score.history;
 
     return (
         <div className="mb-4 rounded-lg border border-border p-3">
@@ -63,6 +67,18 @@ export function ScoreCard({
                     )}
                 </div>
             </div>
+
+            {/* Composite score history sparkline */}
+            {history && history.scores.length >= 2 && (
+                <div className="mt-2 border-t border-border pt-2">
+                    <Sparkline
+                        values={history.scores.map(Math.round)}
+                        years={history.years}
+                        width={260}
+                        height={48}
+                    />
+                </div>
+            )}
         </div>
     );
 }

@@ -38,6 +38,15 @@ class AdminIndicatorController extends Controller
 
                 $totalDesos = DB::table('deso_areas')->count();
 
+                // Years with data
+                $yearsWithData = DB::table('indicator_values')
+                    ->where('indicator_id', $indicator->id)
+                    ->whereNotNull('raw_value')
+                    ->distinct('year')
+                    ->orderBy('year')
+                    ->pluck('year')
+                    ->toArray();
+
                 // Read weight/direction/is_active from tenant weights if available, else from indicator defaults
                 $tenantWeight = $tenant
                     ? TenantIndicatorWeight::query()
@@ -61,6 +70,7 @@ class AdminIndicatorController extends Controller
                     'latest_year' => $latestYear,
                     'coverage' => $coverage,
                     'total_desos' => $totalDesos,
+                    'years_with_data' => $yearsWithData,
                     'description_short' => $indicator->description_short,
                     'description_long' => $indicator->description_long,
                     'methodology_note' => $indicator->methodology_note,

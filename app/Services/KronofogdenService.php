@@ -31,13 +31,42 @@ class KronofogdenService
         $medianDebts = $this->fetchKpiData(self::KPI_MEDIAN_DEBT, $year);
         $evictionRates = $this->fetchKpiData(self::KPI_EVICTION_RATE, $year);
 
-        // Build set of actual kommun codes (type "K", exclude "0000" = Riket) from Kolada
+        return $this->mergeKpiData($municipalityNames, $debtRates, $medianDebts, $evictionRates, $year);
+    }
+
+    /**
+     * Fetch all Kronofogden-related data from Kolada API for multiple years.
+     *
+     * @return Collection<int, Collection<string, array<string, mixed>>> Keyed by year, then municipality_code
+     */
+    public function fetchFromKoladaMultiYear(int $fromYear, int $toYear): Collection
+    {
+        $municipalityNames = $this->fetchMunicipalityNames();
+        $results = collect();
+
+        for ($year = $fromYear; $year <= $toYear; $year++) {
+            $debtRates = $this->fetchKpiData(self::KPI_DEBT_RATE, $year);
+            $medianDebts = $this->fetchKpiData(self::KPI_MEDIAN_DEBT, $year);
+            $evictionRates = $this->fetchKpiData(self::KPI_EVICTION_RATE, $year);
+
+            $results[$year] = $this->mergeKpiData($municipalityNames, $debtRates, $medianDebts, $evictionRates, $year);
+        }
+
+        return $results;
+    }
+
+    /**
+     * Merge KPI data from multiple sources into a single collection keyed by municipality code.
+     *
+     * @return Collection<string, array<string, mixed>>
+     */
+    private function mergeKpiData(Collection $municipalityNames, array $debtRates, array $medianDebts, array $evictionRates, int $year): Collection
+    {
         $kommunCodes = $municipalityNames
             ->filter(fn (array $item, string $id) => $item['type'] === 'K' && $id !== '0000')
             ->keys()
             ->flip();
 
-        // Merge all data by municipality code
         $result = collect();
 
         foreach ($debtRates as $code => $values) {

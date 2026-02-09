@@ -1,7 +1,9 @@
 <?php
 
+use App\Http\Controllers\AdminDataCompletenessController;
 use App\Http\Controllers\AdminDataQualityController;
 use App\Http\Controllers\AdminIndicatorController;
+use App\Http\Controllers\AdminPenaltyController;
 use App\Http\Controllers\AdminPipelineController;
 use App\Http\Controllers\AdminPoiCategoryController;
 use App\Http\Controllers\AdminScoreController;
@@ -17,6 +19,7 @@ use App\Http\Controllers\ReportController;
 use App\Http\Controllers\SocialAuthController;
 use App\Http\Controllers\StripeWebhookController;
 use App\Http\Controllers\TileController;
+use App\Http\Controllers\VulnerabilityAreaController;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
@@ -41,6 +44,9 @@ Route::get('/api/pois/categories', [PoiController::class, 'categories'])->name('
 Route::get('/api/location/{lat},{lng}', [LocationController::class, 'show'])
     ->where(['lat' => '[0-9.-]+', 'lng' => '[0-9.-]+'])
     ->name('location.show');
+
+Route::get('/api/vulnerability-areas', [VulnerabilityAreaController::class, 'index'])
+    ->name('vulnerability-areas.index');
 
 Route::get('/tiles/{year}/{z}/{x}/{y}.png', [TileController::class, 'serve'])
     ->where(['year' => '[0-9]+', 'z' => '[0-9]+', 'x' => '[0-9]+', 'y' => '[0-9]+'])
@@ -101,11 +107,15 @@ $webRoutes = function () {
         Route::put('/poi-categories/{poiCategory}', [AdminIndicatorController::class, 'updatePoiCategory'])->name('admin.poi-categories.update');
         Route::get('/poi-categories', [AdminPoiCategoryController::class, 'index'])->name('admin.poi-categories');
         Route::put('/poi-categories/{poiCategory}/safety', [AdminPoiCategoryController::class, 'update'])->name('admin.poi-categories.update-safety');
+        Route::get('/penalties', [AdminPenaltyController::class, 'index'])->name('admin.penalties');
+        Route::put('/penalties/{penalty}', [AdminPenaltyController::class, 'update'])->name('admin.penalties.update');
         Route::post('/recompute-scores', [AdminScoreController::class, 'recompute'])->name('admin.recompute');
 
         Route::get('/data-quality', [AdminDataQualityController::class, 'index'])->name('admin.data-quality');
         Route::post('/data-quality/publish/{versionId}', [AdminDataQualityController::class, 'publish'])->name('admin.data-quality.publish');
         Route::post('/data-quality/rollback/{versionId}', [AdminDataQualityController::class, 'rollback'])->name('admin.data-quality.rollback');
+
+        Route::get('/data-completeness', [AdminDataCompletenessController::class, 'index'])->name('admin.data-completeness');
 
         Route::get('/pipeline', [AdminPipelineController::class, 'index'])->name('admin.pipeline');
         Route::get('/pipeline/logs/{log}', [AdminPipelineController::class, 'log'])->name('admin.pipeline.log');

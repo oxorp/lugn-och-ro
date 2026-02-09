@@ -40,10 +40,10 @@ RUN docker-php-ext-configure intl \
 # Install Redis extension
 RUN pecl install redis && docker-php-ext-enable redis
 
-# Install Python dependencies for tile generation
+# Install Python dependencies for tile generation and GTFS processing
 RUN python3 -m venv /opt/venv \
     && /opt/venv/bin/pip install --no-cache-dir \
-        h3 numpy pillow psycopg2-binary shapely
+        h3 numpy pillow psycopg2-binary shapely pandas
 
 # Install Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer

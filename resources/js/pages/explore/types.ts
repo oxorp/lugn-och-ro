@@ -77,12 +77,23 @@ export interface LocationData {
     score: {
         value: number;
         area_score: number | null;
+        area_score_full: number | null;
         proximity_score: number;
         trend_1y: number | null;
         label: string;
         top_positive: string[] | null;
         top_negative: string[] | null;
         factor_scores: Record<string, number> | null;
+        raw_score_before_penalties: number | null;
+        penalties_applied: Array<{
+            slug: string;
+            name: string;
+            amount: number;
+        }> | null;
+        history: {
+            years: number[];
+            scores: number[];
+        } | null;
     } | null;
     tier: number;
     display_radius: number;
@@ -97,8 +108,21 @@ export interface LocationData {
         direction: 'positive' | 'negative' | 'neutral';
         category: string | null;
         normalization_scope: 'national' | 'urbanity_stratified';
+        trend: {
+            years: number[];
+            percentiles: number[];
+            raw_values: number[];
+            change_1y: number | null;
+            change_3y: number | null;
+            change_5y: number | null;
+        };
     }>;
     schools: SchoolMarker[];
     pois: PoiMarker[];
+    poi_summary: Array<{
+        category: string;
+        count: number;
+        nearest_m: number;
+    }>;
     poi_categories: Record<string, PoiCategoryMeta>;
 }

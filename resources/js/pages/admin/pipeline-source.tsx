@@ -41,7 +41,7 @@ interface SourceConfig {
     description: string;
     expected_frequency: string;
     critical: boolean;
-    commands: Record<string, string>;
+    commands: Record<string, { command: string; options: Record<string, unknown> }>;
     indicators: string[];
     stale_after_days: number | null;
     health: 'healthy' | 'warning' | 'critical' | 'unknown';
@@ -260,13 +260,13 @@ export default function PipelineSourcePage({
                             Commands
                         </div>
                         <div className="mt-1 flex flex-wrap gap-1">
-                            {Object.values(source.commands).map((cmd) => (
+                            {Object.entries(source.commands).map(([key, cmd]) => (
                                 <Badge
-                                    key={cmd}
+                                    key={key}
                                     variant="secondary"
                                     className="font-mono text-xs"
                                 >
-                                    {cmd}
+                                    {typeof cmd === 'string' ? cmd : cmd.command}
                                 </Badge>
                             ))}
                         </div>

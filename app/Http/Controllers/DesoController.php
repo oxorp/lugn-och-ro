@@ -33,7 +33,7 @@ class DesoController extends Controller
             ]);
         }
 
-        // Fallback: generate from DB if static file doesn't exist
+        // Fallback: generate simplified GeoJSON from DB
         $features = DB::select('
             SELECT
                 deso_code,
@@ -43,7 +43,7 @@ class DesoController extends Controller
                 lan_code,
                 lan_name,
                 area_km2,
-                ST_AsGeoJSON(ST_Buffer(geom, 0.00005)) as geometry
+                ST_AsGeoJSON(ST_SimplifyPreserveTopology(geom, 0.001)) as geometry
             FROM deso_areas
             WHERE geom IS NOT NULL
         ');
@@ -98,7 +98,7 @@ class DesoController extends Controller
         $query = DB::table('composite_scores')
             ->leftJoin('deso_areas', 'deso_areas.deso_code', '=', 'composite_scores.deso_code')
             ->where('composite_scores.year', $year)
-            ->select('composite_scores.deso_code', 'score', 'trend_1y', 'factor_scores', 'top_positive', 'top_negative', 'deso_areas.urbanity_tier');
+            ->select('composite_scores.deso_code', 'score', 'raw_score_before_penalties', 'trend_1y', 'factor_scores', 'top_positive', 'top_negative', 'penalties_applied', 'deso_areas.urbanity_tier');
 
         if ($publishedVersion) {
             $query->where('score_version_id', $publishedVersion->id);

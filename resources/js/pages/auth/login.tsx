@@ -1,4 +1,4 @@
-import { Form, Head } from '@inertiajs/react';
+import { Form, Head, Link } from '@inertiajs/react';
 
 import InputError from '@/components/input-error';
 import { Button } from '@/components/ui/button';
@@ -77,6 +77,15 @@ export default function Login({ status }: LoginProps) {
                                 {processing && <Spinner />}
                                 Log in
                             </Button>
+
+                            <div className="text-center">
+                                <Link
+                                    href="/"
+                                    className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                                >
+                                    Back to the main page
+                                </Link>
+                            </div>
                         </div>
 
                     </>

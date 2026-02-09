@@ -9,8 +9,10 @@ import { cn } from '@/lib/utils';
 
 const navItems = [
     { label: 'Indicators', href: '/admin/indicators' },
+    { label: 'Penalties', href: '/admin/penalties' },
     { label: 'POI Safety', href: '/admin/poi-categories' },
     { label: 'Pipeline', href: '/admin/pipeline' },
+    { label: 'Completeness', href: '/admin/data-completeness' },
     { label: 'Data Quality', href: '/admin/data-quality' },
 ];
 

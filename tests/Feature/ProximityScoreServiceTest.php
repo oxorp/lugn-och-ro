@@ -10,6 +10,7 @@ use App\Models\SchoolStatistic;
 use App\Models\User;
 use App\Services\ProximityScoreService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -503,5 +504,27 @@ class ProximityScoreServiceTest extends TestCase
                 'icon' => 'circle',
             ]
         );
+    }
+
+    public function test_cached_score_returns_same_result_for_nearby_coordinates(): void
+    {
+        $this->createDesoWithGeom('0180C1090', 'Stockholm');
+
+        Cache::flush();
+
+        // First call computes fresh
+        $result1 = $this->service->scoreCached(59.3351, 18.0601);
+
+        // Second call with coordinates that round to the same grid cell (~100m)
+        $result2 = $this->service->scoreCached(59.3354, 18.0604);
+
+        // Both should have identical composite scores (same cache key)
+        $this->assertEquals(
+            $result1->compositeScore(),
+            $result2->compositeScore(),
+        );
+
+        // Verify cache key exists
+        $this->assertTrue(Cache::has('proximity:59.335,18.06'));
     }
 }

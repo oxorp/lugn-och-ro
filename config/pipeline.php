@@ -135,6 +135,19 @@ return [
         ],
     ],
 
+    // Maps ingestion_log.source values to pipeline config keys
+    // for sources that don't match 1:1
+    'source_mapping' => [
+        'scb_wfs' => 'scb',
+        'skolverket' => 'skolverket_schools',
+        'polisen' => 'vulnerability',
+        'bra_ntu' => 'vulnerability',
+        'bra_disaggregated' => 'bra',
+        'kronofogden_disaggregated' => 'kronofogden',
+        'kronofogden_indicators' => 'kronofogden',
+        'poi_osm' => 'pois',
+    ],
+
     'pipeline_order' => [
         'scb',
         'skolverket_schools',

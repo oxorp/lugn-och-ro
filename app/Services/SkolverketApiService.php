@@ -225,7 +225,7 @@ class SkolverketApiService
     }
 
     /**
-     * Parse a grundskola statistics API response into structured data.
+     * Parse a grundskola statistics API response into structured data (latest year only).
      *
      * @return array{merit_value_17: float|null, goal_achievement_pct: float|null, eligibility_pct: float|null, teacher_certification_pct: float|null, student_count: int|null, academic_year: string|null}|null
      */
@@ -260,6 +260,83 @@ class SkolverketApiService
             'student_count' => $students,
             'academic_year' => $academicYear,
         ];
+    }
+
+    /**
+     * Parse ALL academic years from a grundskola statistics API response.
+     *
+     * @return array<string, array{merit_value_17: float|null, goal_achievement_pct: float|null, eligibility_pct: float|null, teacher_certification_pct: float|null, student_count: int|null}>
+     */
+    public function parseAllYearsGrundskolaStats(array $responseData): array
+    {
+        $body = $responseData['body'] ?? [];
+
+        $fieldMap = [
+            'averageGradesMeritRating9thGrade' => 'merit_value_17',
+            'ratioOfPupilsIn9thGradeWithAllSubjectsPassed' => 'goal_achievement_pct',
+            'ratioOfPupils9thGradeEligibleForNationalProgramYR' => 'eligibility_pct',
+            'certifiedTeachersQuota' => 'teacher_certification_pct',
+        ];
+
+        $yearlyStats = [];
+
+        foreach ($fieldMap as $apiField => $dbField) {
+            $entries = $body[$apiField] ?? [];
+
+            foreach ($entries as $entry) {
+                if (($entry['valueType'] ?? '') !== 'EXISTS') {
+                    continue;
+                }
+
+                $timePeriod = $entry['timePeriod'] ?? null;
+                $value = $entry['value'] ?? null;
+
+                if ($timePeriod === null || $value === null || $value === '.' || $value === '..') {
+                    continue;
+                }
+
+                $parsed = (float) str_replace(',', '.', $value);
+                $yearlyStats[$timePeriod][$dbField] = $parsed;
+            }
+        }
+
+        // Student count — only available for certain years
+        foreach ($body['totalNumberOfPupils'] ?? [] as $entry) {
+            if (($entry['valueType'] ?? '') !== 'EXISTS') {
+                continue;
+            }
+
+            $timePeriod = $entry['timePeriod'] ?? null;
+            $value = $entry['value'] ?? null;
+
+            if ($timePeriod === null || $value === null) {
+                continue;
+            }
+
+            $number = preg_replace('/[^0-9]/', '', $value);
+            if ($number !== '') {
+                $yearlyStats[$timePeriod]['student_count'] = (int) $number;
+            }
+        }
+
+        // Fill in null defaults for each year
+        foreach ($yearlyStats as $year => &$stats) {
+            $stats += [
+                'merit_value_17' => null,
+                'goal_achievement_pct' => null,
+                'eligibility_pct' => null,
+                'teacher_certification_pct' => null,
+                'student_count' => null,
+            ];
+        }
+
+        // Remove years where all stat values are null (only student_count)
+        return array_filter($yearlyStats, function (array $stats) {
+            return $stats['merit_value_17'] !== null
+                || $stats['goal_achievement_pct'] !== null
+                || $stats['eligibility_pct'] !== null
+                || $stats['teacher_certification_pct'] !== null;
+        });
     }
 
     /**

@@ -12,6 +12,7 @@ use App\Services\PreviewStatsService;
 use App\Services\ProximityScoreService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 class LocationController extends Controller
@@ -19,6 +20,18 @@ class LocationController extends Controller
     private const AREA_WEIGHT = 0.70;
 
     private const PROXIMITY_WEIGHT = 0.30;
+
+    /** Amenity density indicators superseded by proximity scoring at pin level */
+    private const AMENITY_DENSITY_SLUGS = [
+        'grocery_density',
+        'transit_stop_density',
+        'healthcare_density',
+        'restaurant_density',
+        'fitness_density',
+        'gambling_density',
+        'pawn_shop_density',
+        'fast_food_density',
+    ];
 
     public function __construct(
         private DataTieringService $tiering,
@@ -48,23 +61,34 @@ class LocationController extends Controller
             ->first();
 
         $areaScore = $score ? round((float) $score->score, 1) : null;
+        $adjustedAreaScore = $score ? $this->computeAdjustedAreaScore($score) : null;
 
-        // 3. Compute proximity score for this exact coordinate
-        $proximity = $this->proximityService->score($lat, $lng);
+        // 3. Compute proximity score (cached by ~100m grid cell)
+        $proximity = $this->proximityService->scoreCached($lat, $lng);
         $proximityScore = round($proximity->compositeScore(), 1);
 
-        // 4. Blend area + proximity scores
-        $blendedScore = $this->blendScores($areaScore, $proximityScore);
+        // 4. Blend adjusted area + proximity scores
+        //    Amenity access is handled entirely by proximity (pin-accurate),
+        //    area score only contributes socioeconomic/safety/education factors.
+        $blendedScore = $this->blendScores($adjustedAreaScore, $proximityScore);
 
         $scoreData = $score ? [
             'value' => $blendedScore,
-            'area_score' => $areaScore,
+            'area_score' => $adjustedAreaScore,
+            'area_score_full' => $areaScore,
             'proximity_score' => $proximityScore,
             'trend_1y' => $score->trend_1y ? round((float) $score->trend_1y, 1) : null,
             'label' => $this->scoreLabel($blendedScore),
-            'top_positive' => $score->top_positive,
-            'top_negative' => $score->top_negative,
+            'top_positive' => $score->top_positive
+                ? array_values(array_diff($score->top_positive, self::AMENITY_DENSITY_SLUGS))
+                : null,
+            'top_negative' => $score->top_negative
+                ? array_values(array_diff($score->top_negative, self::AMENITY_DENSITY_SLUGS))
+                : null,
             'factor_scores' => $score->factor_scores,
+            'raw_score_before_penalties' => $score->raw_score_before_penalties ? round((float) $score->raw_score_before_penalties, 1) : null,
+            'penalties_applied' => $score->penalties_applied,
+            'history' => null, // populated below for paid tiers
         ] : [
             'value' => $proximityScore > 0 ? round($proximityScore * self::PROXIMITY_WEIGHT + 50 * self::AREA_WEIGHT, 1) : null,
             'area_score' => null,
@@ -74,6 +98,9 @@ class LocationController extends Controller
             'top_positive' => null,
             'top_negative' => null,
             'factor_scores' => null,
+            'raw_score_before_penalties' => null,
+            'penalties_applied' => null,
+            'history' => null,
         ];
 
         $urbanityTier = $deso->urbanity_tier ?? 'semi_urban';
@@ -101,17 +128,25 @@ class LocationController extends Controller
                 'indicators' => [],
                 'schools' => [],
                 'pois' => [],
+                'poi_summary' => [],
                 'poi_categories' => [],
             ]);
         }
 
-        // 5. Get indicator values for this DeSO (paid tiers)
-        $indicators = IndicatorValue::where('deso_code', $deso->deso_code)
-            ->whereHas('indicator', fn ($q) => $q->where('is_active', true))
-            ->with('indicator')
-            ->orderByDesc('year')
+        // 5. Get indicator values for this DeSO (paid tiers) — all years for trends
+        $activeIndicators = Indicator::where('is_active', true)->get()->keyBy('id');
+
+        $allIndicatorValues = IndicatorValue::where('deso_code', $deso->deso_code)
+            ->whereIn('indicator_id', $activeIndicators->keys())
+            ->whereNotNull('raw_value')
+            ->orderBy('year')
             ->get()
-            ->unique('indicator_id');
+            ->groupBy('indicator_id');
+
+        // 5b. Get composite score history for score sparkline
+        $scoreHistory = CompositeScore::where('deso_code', $deso->deso_code)
+            ->orderBy('year')
+            ->get(['year', 'score']);
 
         // 6. Get nearby schools
         $schoolRadius = $this->getQueryRadius('school_query_radius', $urbanityTier);
@@ -140,14 +175,43 @@ class LocationController extends Controller
             LIMIT 10
         ', [$lng, $lat, $lng, $lat, $schoolRadius]);
 
-        // 7. Get POIs within radius
+        // 7. Get POIs — split into map markers (Tier 1) and sidebar counts (Tier 2)
         $poiRadius = $this->getQueryRadius('poi_query_radius', $urbanityTier);
-        $pois = DB::select('
-            SELECT p.name, p.category, p.lat, p.lng, p.subcategory,
-                   ST_Distance(
+        $poiCategories = PoiCategory::all();
+        $mapSlugs = $poiCategories->where('show_on_map', true)->pluck('slug')->all();
+
+        // Tier 1: Full details + coordinates for map markers (show_on_map categories only)
+        $mapPois = [];
+        if (! empty($mapSlugs)) {
+            $mapPois = DB::select('
+                SELECT p.name, p.category, p.lat, p.lng, p.subcategory,
+                       ST_Distance(
+                           p.geom::geography,
+                           ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography
+                       ) as distance_m
+                FROM pois p
+                JOIN poi_categories pc ON pc.slug = p.category
+                WHERE p.status = \'active\'
+                  AND pc.show_on_map = true
+                  AND p.geom IS NOT NULL
+                  AND ST_DWithin(
+                      p.geom::geography,
+                      ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography,
+                      ?
+                  )
+                ORDER BY distance_m
+                LIMIT 100
+            ', [$lng, $lat, $lng, $lat, $poiRadius]);
+        }
+
+        // Tier 2: Counts + nearest distance for sidebar (all categories)
+        $poiSummary = DB::select('
+            SELECT p.category,
+                   COUNT(*) as count,
+                   ROUND(MIN(ST_Distance(
                        p.geom::geography,
                        ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography
-                   ) as distance_m
+                   ))::numeric) as nearest_m
             FROM pois p
             WHERE p.status = \'active\'
               AND p.geom IS NOT NULL
@@ -156,19 +220,45 @@ class LocationController extends Controller
                   ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography,
                   ?
               )
-            ORDER BY p.category, distance_m
+            GROUP BY p.category
+            ORDER BY count DESC
         ', [$lng, $lat, $lng, $lat, $poiRadius]);
 
-        // 8. Get POI category metadata for rendering (all categories for icon/color mapping)
-        $poiCategories = PoiCategory::all()
-            ->mapWithKeys(fn ($cat) => [
-                $cat->slug => [
-                    'name' => $cat->name,
-                    'color' => $cat->color,
-                    'icon' => $cat->icon,
-                    'signal' => $cat->signal,
-                ],
-            ]);
+        // 8. Build POI category metadata for rendering
+        $poiCategoryMap = $poiCategories->mapWithKeys(fn ($cat) => [
+            $cat->slug => [
+                'name' => $cat->name,
+                'color' => $cat->color,
+                'icon' => $cat->icon,
+                'signal' => $cat->signal,
+            ],
+        ]);
+
+        // Add score history for paid tiers
+        if ($scoreHistory->count() >= 2) {
+            $scoreData['history'] = [
+                'years' => $scoreHistory->pluck('year')->values(),
+                'scores' => $scoreHistory->pluck('score')->map(fn ($v) => round((float) $v, 1))->values(),
+            ];
+        }
+
+        // Build indicators with trend data
+        $indicatorsWithTrend = [];
+        foreach ($allIndicatorValues as $indicatorId => $history) {
+            $indicator = $activeIndicators->get($indicatorId);
+            if (! $indicator) {
+                continue;
+            }
+
+            // Skip amenity density indicators — proximity factors handle access metrics
+            if (in_array($indicator->slug, self::AMENITY_DENSITY_SLUGS, true)) {
+                continue;
+            }
+
+            $current = $history->last(); // latest year (ordered by year asc)
+
+            $indicatorsWithTrend[] = $this->buildIndicatorWithTrend($indicator, $history, $current);
+        }
 
         return response()->json([
             'location' => [
@@ -184,16 +274,7 @@ class LocationController extends Controller
             'tier' => $tier->value,
             'display_radius' => $displayRadius,
             'proximity' => $proximity->toArray(),
-            'indicators' => $indicators->map(fn ($iv) => [
-                'slug' => $iv->indicator->slug,
-                'name' => $iv->indicator->name,
-                'raw_value' => (float) $iv->raw_value,
-                'normalized_value' => (float) $iv->normalized_value,
-                'unit' => $iv->indicator->unit,
-                'direction' => $iv->indicator->direction,
-                'category' => $iv->indicator->category,
-                'normalization_scope' => $iv->indicator->normalization_scope,
-            ])->values(),
+            'indicators' => $indicatorsWithTrend,
             'schools' => collect($schools)->map(fn ($s) => [
                 'name' => $s->name,
                 'type' => $s->type_of_schooling,
@@ -206,14 +287,19 @@ class LocationController extends Controller
                 'lat' => (float) $s->lat,
                 'lng' => (float) $s->lng,
             ]),
-            'pois' => collect($pois)->map(fn ($p) => [
+            'pois' => collect($mapPois)->map(fn ($p) => [
                 'name' => $p->name,
                 'category' => $p->category,
                 'lat' => (float) $p->lat,
                 'lng' => (float) $p->lng,
                 'distance_m' => round((float) $p->distance_m),
             ]),
-            'poi_categories' => $poiCategories,
+            'poi_summary' => collect($poiSummary)->map(fn ($s) => [
+                'category' => $s->category,
+                'count' => (int) $s->count,
+                'nearest_m' => (int) $s->nearest_m,
+            ]),
+            'poi_categories' => $poiCategoryMap,
         ]);
     }
 
@@ -342,6 +428,75 @@ class LocationController extends Controller
         ];
     }
 
+    /**
+     * Recompute area score excluding amenity density indicators.
+     * These are superseded by the more accurate pin-based proximity factors.
+     */
+    private function computeAdjustedAreaScore(CompositeScore $score): float
+    {
+        $factorScores = $score->factor_scores;
+
+        if (empty($factorScores)) {
+            return round((float) $score->score, 1);
+        }
+
+        // Fast path: if no amenity indicators in factor_scores, no adjustment needed
+        $hasAmenity = ! empty(array_intersect_key(
+            $factorScores,
+            array_flip(self::AMENITY_DENSITY_SLUGS)
+        ));
+
+        if (! $hasAmenity) {
+            return round((float) $score->score, 1);
+        }
+
+        // Load indicator weights (cached 5 min)
+        $weights = cache()->remember('indicator_weights_map', 300, fn () => Indicator::query()
+            ->where('is_active', true)
+            ->where('weight', '>', 0)
+            ->pluck('weight', 'slug')
+            ->map(fn ($w) => (float) $w)
+            ->toArray()
+        );
+
+        $totalWeightedSum = 0.0;
+        $totalWeight = 0.0;
+        $amenityWeightedSum = 0.0;
+        $amenityWeight = 0.0;
+
+        foreach ($factorScores as $slug => $directedValue) {
+            $weight = $weights[$slug] ?? null;
+            if ($weight === null) {
+                continue;
+            }
+
+            $contribution = $weight * (float) $directedValue;
+            $totalWeightedSum += $contribution;
+            $totalWeight += $weight;
+
+            if (in_array($slug, self::AMENITY_DENSITY_SLUGS, true)) {
+                $amenityWeightedSum += $contribution;
+                $amenityWeight += $weight;
+            }
+        }
+
+        $nonAmenityWeight = $totalWeight - $amenityWeight;
+
+        if ($nonAmenityWeight <= 0) {
+            return round((float) $score->score, 1);
+        }
+
+        $adjustedRaw = (($totalWeightedSum - $amenityWeightedSum) / $nonAmenityWeight) * 100;
+
+        // Apply same penalties
+        if (! empty($score->penalties_applied)) {
+            $totalPenalty = array_sum(array_column($score->penalties_applied, 'amount'));
+            $adjustedRaw += $totalPenalty;
+        }
+
+        return round(max(0, min(100, $adjustedRaw)), 1);
+    }
+
     private function blendScores(?float $areaScore, float $proximityScore): float
     {
         if ($areaScore === null) {
@@ -372,5 +527,58 @@ class LocationController extends Controller
         }
 
         return 'Okänt';
+    }
+
+    /**
+     * Build a single indicator array with historical trend data.
+     *
+     * @param  Collection<int, IndicatorValue>  $history
+     * @return array<string, mixed>
+     */
+    private function buildIndicatorWithTrend(Indicator $indicator, Collection $history, IndicatorValue $current): array
+    {
+        $currentYear = (int) $current->year;
+        $currentPercentile = round((float) $current->normalized_value * 100);
+
+        $prevYear = $history->firstWhere('year', $currentYear - 1);
+        $prevPercentile = $prevYear ? round((float) $prevYear->normalized_value * 100) : null;
+
+        return [
+            'slug' => $indicator->slug,
+            'name' => $indicator->name,
+            'raw_value' => (float) $current->raw_value,
+            'normalized_value' => (float) $current->normalized_value,
+            'unit' => $indicator->unit,
+            'direction' => $indicator->direction,
+            'category' => $indicator->category,
+            'normalization_scope' => $indicator->normalization_scope,
+            'trend' => [
+                'years' => $history->pluck('year')->map(fn ($y) => (int) $y)->values(),
+                'percentiles' => $history->pluck('normalized_value')
+                    ->map(fn ($v) => (int) round((float) $v * 100))->values(),
+                'raw_values' => $history->pluck('raw_value')
+                    ->map(fn ($v) => (float) $v)->values(),
+                'change_1y' => ($prevPercentile !== null)
+                    ? (int) ($currentPercentile - $prevPercentile)
+                    : null,
+                'change_3y' => $this->computePercentileChange($history, $currentYear, 3),
+                'change_5y' => $this->computePercentileChange($history, $currentYear, 5),
+            ],
+        ];
+    }
+
+    /**
+     * @param  Collection<int, IndicatorValue>  $history
+     */
+    private function computePercentileChange(Collection $history, int $currentYear, int $span): ?int
+    {
+        $current = $history->firstWhere('year', $currentYear);
+        $past = $history->firstWhere('year', $currentYear - $span);
+
+        if (! $current || ! $past) {
+            return null;
+        }
+
+        return (int) (round((float) $current->normalized_value * 100) - round((float) $past->normalized_value * 100));
     }
 }

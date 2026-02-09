@@ -2,7 +2,9 @@ import type { IndicatorMeta } from '@/components/info-tooltip';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faGraduationCap, faSpinnerThird, faXmark } from '@/icons';
+import { faGraduationCap, faSpinnerThird, faTriangleExclamation, faXmark } from '@/icons';
+import { usePage } from '@inertiajs/react';
+import type { SharedData } from '@/types';
 import { useTranslation } from '@/hooks/use-translation';
 import { useEffect, useRef, useState } from 'react';
 
@@ -32,6 +34,7 @@ export function ActiveSidebar({
     onClose: () => void;
 }) {
     const { t } = useTranslation();
+    const isAdmin = !!usePage<SharedData>().props.auth?.user?.is_admin;
     const [showStickyBar, setShowStickyBar] = useState(false);
     const firstCtaRef = useRef<HTMLDivElement>(null);
 
@@ -64,6 +67,7 @@ export function ActiveSidebar({
         indicators,
         schools,
         pois,
+        poi_summary,
         poi_categories,
         tier,
         preview,
@@ -97,6 +101,41 @@ export function ActiveSidebar({
                         score={score}
                         urbanityTier={location.urbanity_tier}
                     />
+                )}
+
+                {/* Penalty notice (admin only) */}
+                {isAdmin && score?.penalties_applied && score.penalties_applied.length > 0 && (
+                    <div className="mb-3 rounded-lg border border-red-900/20 bg-red-950/5 p-3">
+                        <div className="flex items-center gap-2">
+                            <FontAwesomeIcon icon={faTriangleExclamation} className="h-4 w-4 text-red-900" />
+                            <span className="text-sm font-semibold text-red-900">
+                                {score.penalties_applied[0].name}
+                            </span>
+                        </div>
+                        <div className="mt-2 space-y-1 text-xs text-red-900">
+                            {score.raw_score_before_penalties !== null && (
+                                <>
+                                    <div className="flex justify-between">
+                                        <span>Poäng före avdrag</span>
+                                        <span className="font-medium tabular-nums">{score.raw_score_before_penalties}</span>
+                                    </div>
+                                    {score.penalties_applied.map((p) => (
+                                        <div key={p.slug} className="flex justify-between">
+                                            <span>Avdrag</span>
+                                            <span className="font-medium tabular-nums">{p.amount} poäng</span>
+                                        </div>
+                                    ))}
+                                    <div className="flex justify-between border-t border-red-900/20 pt-1">
+                                        <span>Poäng efter avdrag</span>
+                                        <span className="font-medium tabular-nums">{score.area_score_full}</span>
+                                    </div>
+                                </>
+                            )}
+                        </div>
+                        <p className="mt-2 text-[10px] text-red-900/50">
+                            Admin · Polismyndigheten 2025
+                        </p>
+                    </div>
                 )}
 
                 {/* PUBLIC TIER: Locked preview content */}
@@ -245,25 +284,16 @@ export function ActiveSidebar({
                         )}
 
                         {/* POIs */}
-                        {pois.length > 0 && (
+                        {poi_summary?.length > 0 && (
                             <>
                                 <Separator className="my-3" />
                                 <h3 className="mb-3 text-xs font-semibold tracking-wider text-muted-foreground uppercase">
                                     {t('sidebar.pois.title')}
                                 </h3>
                                 <div className="space-y-1.5">
-                                    {Object.entries(
-                                        pois.reduce<Record<string, number>>(
-                                            (acc, p) => {
-                                                acc[p.category] =
-                                                    (acc[p.category] || 0) + 1;
-                                                return acc;
-                                            },
-                                            {},
-                                        ),
-                                    ).map(([category, count]) => (
+                                    {poi_summary.map((s) => (
                                         <div
-                                            key={category}
+                                            key={s.category}
                                             className="flex items-center justify-between text-xs"
                                         >
                                             <span className="flex items-center gap-1.5">
@@ -272,18 +302,21 @@ export function ActiveSidebar({
                                                     style={{
                                                         backgroundColor:
                                                             poi_categories[
-                                                                category
+                                                                s.category
                                                             ]?.color ??
                                                             '#94a3b8',
                                                     }}
                                                 />
                                                 <span className="text-foreground">
-                                                    {poi_categories[category]
-                                                        ?.name ?? category}
+                                                    {poi_categories[s.category]
+                                                        ?.name ?? s.category}
                                                 </span>
                                             </span>
                                             <span className="text-muted-foreground tabular-nums">
-                                                {count}
+                                                {s.count}
+                                                <span className="ml-1 text-[10px] opacity-60">
+                                                    ({s.nearest_m}m)
+                                                </span>
                                             </span>
                                         </div>
                                     ))}
