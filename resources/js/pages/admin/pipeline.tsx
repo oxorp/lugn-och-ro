@@ -75,6 +75,7 @@ interface Source {
 interface RecentLog {
     id: number;
     source: string;
+    pipeline_key: string;
     command: string;
     status: string;
     trigger: string | null;
@@ -369,7 +370,7 @@ export default function PipelinePage({ sources, overallHealth, stats, pipelineOr
                                     <TableRow
                                         key={log.id}
                                         className="cursor-pointer hover:bg-muted/50"
-                                        onClick={() => router.visit(`/admin/pipeline/${log.source}`)}
+                                        onClick={() => router.visit(`/admin/pipeline/${log.pipeline_key}`)}
                                     >
                                         <TableCell className="text-muted-foreground text-sm">
                                             {formatDate(log.started_at)}

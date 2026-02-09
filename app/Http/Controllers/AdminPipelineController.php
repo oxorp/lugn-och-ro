@@ -73,12 +73,15 @@ class AdminPipelineController extends Controller
             'total_schools' => School::where('status', 'active')->count(),
         ];
 
+        $sourceMapping = config('pipeline.source_mapping', []);
+
         $recentLogs = IngestionLog::latest('started_at')
             ->limit(20)
             ->get()
             ->map(fn (IngestionLog $log) => [
                 'id' => $log->id,
                 'source' => $log->source,
+                'pipeline_key' => $sourceMapping[$log->source] ?? $log->source,
                 'command' => $log->command,
                 'status' => $log->status,
                 'trigger' => $log->trigger,
