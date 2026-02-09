@@ -83,6 +83,12 @@ export interface LocationData {
         top_positive: string[] | null;
         top_negative: string[] | null;
         factor_scores: Record<string, number> | null;
+        raw_score_before_penalties: number | null;
+        penalties_applied: Array<{
+            slug: string;
+            name: string;
+            amount: number;
+        }> | null;
         history: {
             years: number[];
             scores: number[];

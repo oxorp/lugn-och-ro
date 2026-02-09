@@ -2,7 +2,7 @@ import type { IndicatorMeta } from '@/components/info-tooltip';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faGraduationCap, faSpinnerThird, faXmark } from '@/icons';
+import { faGraduationCap, faSpinnerThird, faTriangleExclamation, faXmark } from '@/icons';
 import { useTranslation } from '@/hooks/use-translation';
 import { useEffect, useRef, useState } from 'react';
 
@@ -98,6 +98,41 @@ export function ActiveSidebar({
                         score={score}
                         urbanityTier={location.urbanity_tier}
                     />
+                )}
+
+                {/* Penalty notice */}
+                {score?.penalties_applied && score.penalties_applied.length > 0 && (
+                    <div className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3">
+                        <div className="flex items-center gap-2">
+                            <FontAwesomeIcon icon={faTriangleExclamation} className="h-4 w-4 text-red-600" />
+                            <span className="text-sm font-semibold text-red-800">
+                                {score.penalties_applied[0].name}
+                            </span>
+                        </div>
+                        <div className="mt-2 space-y-1 text-xs text-red-700">
+                            {score.raw_score_before_penalties !== null && (
+                                <>
+                                    <div className="flex justify-between">
+                                        <span>Poäng före avdrag</span>
+                                        <span className="font-medium tabular-nums">{score.raw_score_before_penalties}</span>
+                                    </div>
+                                    {score.penalties_applied.map((p) => (
+                                        <div key={p.slug} className="flex justify-between">
+                                            <span>Avdrag</span>
+                                            <span className="font-medium tabular-nums">{p.amount} poäng</span>
+                                        </div>
+                                    ))}
+                                    <div className="flex justify-between border-t border-red-200 pt-1">
+                                        <span>Poäng efter avdrag</span>
+                                        <span className="font-medium tabular-nums">{score.area_score}</span>
+                                    </div>
+                                </>
+                            )}
+                        </div>
+                        <p className="mt-2 text-[10px] text-red-500">
+                            Polismyndigheten 2025
+                        </p>
+                    </div>
                 )}
 
                 {/* PUBLIC TIER: Locked preview content */}

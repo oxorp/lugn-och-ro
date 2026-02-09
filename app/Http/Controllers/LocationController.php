@@ -66,6 +66,8 @@ class LocationController extends Controller
             'top_positive' => $score->top_positive,
             'top_negative' => $score->top_negative,
             'factor_scores' => $score->factor_scores,
+            'raw_score_before_penalties' => $score->raw_score_before_penalties ? round((float) $score->raw_score_before_penalties, 1) : null,
+            'penalties_applied' => $score->penalties_applied,
             'history' => null, // populated below for paid tiers
         ] : [
             'value' => $proximityScore > 0 ? round($proximityScore * self::PROXIMITY_WEIGHT + 50 * self::AREA_WEIGHT, 1) : null,
@@ -76,6 +78,8 @@ class LocationController extends Controller
             'top_positive' => null,
             'top_negative' => null,
             'factor_scores' => null,
+            'raw_score_before_penalties' => null,
+            'penalties_applied' => null,
             'history' => null,
         ];
 

@@ -1,497 +1,671 @@
-# TASK: Indicator Trend Arrows + Tooltip Sparklines
+# TASK: Vulnerability Area Penalty System + Map Layer
 
 ## Context
 
-We now have 6 years of historical data (2019-2024) for most indicators. The sidebar currently shows a static snapshot — "Median Income: 78th percentile (287,000 SEK)". There's no indication of whether this is improving, declining, or flat.
+The `vulnerability_flag` is currently stored as a regular indicator with percentile normalization. This is wrong. A binary flag (0 or 1) forced into a percentile ranking means 95% of DeSOs get percentile 0 and the 5% in vulnerability areas get percentile 100 — there's no gradient, no nuance. It wastes an indicator slot and an indicator weight budget on what is fundamentally a **pass/fail classification**.
 
-Add two things:
-1. **Trend arrow** next to the percentile — small colored arrow with the year-over-year percentile change
-2. **Sparkline in the tooltip** — tiny line chart showing the indicator's trajectory over all available years
+The correct model: vulnerability areas apply a **hard penalty** to the composite score. If your DeSO overlaps a "särskilt utsatt område," you lose X points off your final score, period. No percentile, no weighting against other indicators. It's a separate mechanism — a penalty applied *after* the weighted average, not *inside* it.
+
+Additionally, vulnerability area polygons should be visible on the map as their own layer — distinct boundaries that users can see independently from the DeSO coloring. Everyone in Sweden knows "the list." Making it visible adds credibility and drives engagement.
 
 ---
 
-## What It Looks Like
+## Step 1: Remove `vulnerability_flag` as an Indicator
 
-### Sidebar Indicator Row (Current)
+### 1.1 Deactivate the Indicator
 
+Don't delete it — deactivate it and set weight to 0:
+
+```php
+// Migration or seeder update
+Indicator::where('slug', 'vulnerability_flag')->update([
+    'is_active' => false,
+    'weight' => 0,
+    'direction' => 'neutral',
+    'description' => 'DEPRECATED — replaced by hard penalty system. See vulnerability_penalties config.',
+]);
 ```
-Median Income          ████████░░  78:e percentilen
-                                   (287 000 kr)
-```
 
-### Sidebar Indicator Row (After)
+### 1.2 Clean Up Indicator Values
 
-```
-Median Income          ████████░░  78:e percentilen  ↑ +3
-                                   (287 000 kr)
-```
+The `indicator_values` rows for `vulnerability_flag` can stay — they don't hurt anything and provide historical reference. But they no longer feed into scoring.
 
-The `↑ +3` means: this DeSO moved from the 75th to the 78th percentile in the last year. Green arrow, green text.
+### 1.3 Redistribute Weight
 
-### Arrow Rules
+The `vulnerability_flag` had weight ~0.095 (from the indicator architecture cleanup). This weight goes back to the unallocated budget or gets redistributed to other safety indicators:
 
-| Change | Arrow | Color | Example |
+| Indicator | Old Weight | New Weight | Change |
 |---|---|---|---|
-| +3 or more percentile points | ↑ | Green (#27ae60) | ↑ +5 |
-| +1 to +2 | ↗ | Light green (#6abf4b) | ↗ +2 |
-| -1 to +1 (flat) | → | Gray (#94a3b8) | → 0 |
-| -1 to -2 | ↘ | Light red (#e57373) | ↘ -2 |
-| -3 or more | ↓ | Red (#e74c3c) | ↓ -7 |
-| No previous year data | — | Gray | — |
+| vulnerability_flag | 0.095 | 0.000 | Removed |
+| crime_violent_rate | 0.060 | 0.080 | +0.020 |
+| crime_property_rate | 0.045 | 0.055 | +0.010 |
+| perceived_safety | 0.045 | 0.060 | +0.015 |
+| Penalty system | n/a | n/a | Separate mechanism, up to -15 pts |
 
-**Important:** The arrow direction reflects whether this is **good or bad for the area**, not just whether the number went up. For `negative` direction indicators (crime rate, debt rate), a *decrease* in percentile is actually good — but we already store normalized values where higher = better. So:
-
-- Use the **normalized_value** (already direction-corrected) for trend comparison, not raw_value
-- Or simpler: use the raw percentile rank, and let the arrow color follow the indicator's `direction`:
-  - `positive` indicator: percentile went up → green. Down → red.
-  - `negative` indicator: percentile went up → red (higher crime rank = worse). Down → green.
-  - `neutral` indicator: always gray arrow.
-
-Actually — the cleanest approach: always compare **directed percentile** (the value after direction is applied in scoring). If the system already computes `directed_value = direction === 'negative' ? 1 - normalized : normalized`, compare those. Then ↑ always means "better for the area" regardless of indicator type.
-
-### Tooltip (Current)
-
-```
-┌─────────────────────────────────────┐
-│ Median Income                       │
-│                                     │
-│ Description text about what this    │
-│ indicator measures...               │
-│                                     │
-│ National average: ~265 000 kr       │
-│ Source: SCB   Data from: 2024       │
-└─────────────────────────────────────┘
-```
-
-### Tooltip (After)
-
-```
-┌─────────────────────────────────────┐
-│ Median Income                       │
-│                                     │
-│ Description text about what this    │
-│ indicator measures...               │
-│                                     │
-│ ╭───────────────────────────╮       │
-│ │  ▁▂▃▃▄▅▆█                │       │
-│ │ '19 '20 '21 '22 '23 '24  │       │
-│ ╰───────────────────────────╯       │
-│ 68→71→73→74→75→78:e percentilen     │
-│                                     │
-│ National average: ~265 000 kr       │
-│ Source: SCB   Data from: 2024       │
-└─────────────────────────────────────┘
-```
-
-The sparkline shows the percentile trajectory. Below it, the actual percentile values per year. This gives full context: "the area has been steadily climbing in income rank for 6 years" vs "it jumped this year but was flat before."
+The total scored weight for safety drops from 0.25 to ~0.195 in the weighted average, but the penalty system more than compensates — a -15 point penalty is far more impactful than a 0.095 weight on a binary flag.
 
 ---
 
-## Step 1: Backend — Serve Historical Percentiles
+## Step 2: Penalty Configuration
 
-### 1.1 Extend the Location/DeSO API Response
+### 2.1 Config Table
 
-The API that serves indicator data for the sidebar needs to include historical values. Currently it returns something like:
-
-```json
-{
-  "slug": "median_income",
-  "raw_value": 287000,
-  "normalized_value": 0.78,
-  "percentile": 78
-}
-```
-
-Extend to:
-
-```json
-{
-  "slug": "median_income",
-  "raw_value": 287000,
-  "normalized_value": 0.78,
-  "percentile": 78,
-  "direction": "positive",
-  "trend": {
-    "years": [2019, 2020, 2021, 2022, 2023, 2024],
-    "percentiles": [68, 71, 73, 74, 75, 78],
-    "raw_values": [241000, 251000, 259000, 268000, 275000, 287000],
-    "change_1y": 3,
-    "change_3y": 5,
-    "change_5y": 10
-  }
-}
-```
-
-### 1.2 Query
+Create a new table for penalty rules. Start with vulnerability areas, but the structure supports future penalties (e.g., Seveso sites, flood zones, noise zones).
 
 ```php
-// In whatever service builds the indicator response for a DeSO
-
-private function getIndicatorWithTrend(string $desoCode, Indicator $indicator, int $currentYear): array
-{
-    // Fetch all years for this indicator + DeSO
-    $history = IndicatorValue::where('deso_code', $desoCode)
-        ->where('indicator_id', $indicator->id)
-        ->whereNotNull('raw_value')
-        ->orderBy('year')
-        ->get(['year', 'raw_value', 'normalized_value']);
-
-    $current = $history->firstWhere('year', $currentYear);
-    $prevYear = $history->firstWhere('year', $currentYear - 1);
-
-    // Percentile = normalized_value × 100 (already 0-1 from rank normalization)
-    $currentPercentile = $current ? round($current->normalized_value * 100) : null;
-    $prevPercentile = $prevYear ? round($prevYear->normalized_value * 100) : null;
-
-    return [
-        'slug' => $indicator->slug,
-        'name' => $indicator->name,
-        'raw_value' => $current?->raw_value,
-        'normalized_value' => $current?->normalized_value,
-        'percentile' => $currentPercentile,
-        'direction' => $indicator->direction,
-        'unit' => $indicator->unit,
-        'trend' => [
-            'years' => $history->pluck('year')->values(),
-            'percentiles' => $history->pluck('normalized_value')
-                ->map(fn ($v) => round($v * 100))->values(),
-            'raw_values' => $history->pluck('raw_value')->values(),
-            'change_1y' => ($currentPercentile !== null && $prevPercentile !== null)
-                ? $currentPercentile - $prevPercentile
-                : null,
-            'change_3y' => $this->computeChange($history, $currentYear, 3),
-            'change_5y' => $this->computeChange($history, $currentYear, 5),
-        ],
-    ];
-}
-
-private function computeChange(Collection $history, int $currentYear, int $span): ?int
-{
-    $current = $history->firstWhere('year', $currentYear);
-    $past = $history->firstWhere('year', $currentYear - $span);
-
-    if (!$current || !$past) return null;
-
-    return round($current->normalized_value * 100) - round($past->normalized_value * 100);
-}
+Schema::create('score_penalties', function (Blueprint $table) {
+    $table->id();
+    $table->string('slug', 60)->unique()->index();     // 'vuln_sarskilt_utsatt', 'vuln_utsatt'
+    $table->string('name');                              // 'Särskilt utsatt område'
+    $table->string('description')->nullable();
+    $table->string('category', 40);                     // 'vulnerability', 'environment', etc.
+    $table->string('penalty_type', 20);                  // 'absolute' or 'percentage'
+    $table->decimal('penalty_value', 6, 2);              // -15.00 (absolute points) or -0.15 (15% reduction)
+    $table->boolean('is_active')->default(true);
+    $table->string('applies_to', 40)->default('composite_score'); // What score it modifies
+    $table->integer('display_order')->default(0);
+    $table->string('color', 7)->nullable();              // Map layer color: '#dc2626'
+    $table->string('border_color', 7)->nullable();       // Map layer border: '#991b1b'
+    $table->decimal('opacity', 3, 2)->default(0.15);     // Map layer fill opacity
+    $table->json('metadata')->nullable();
+    $table->timestamps();
+});
 ```
 
-### 1.3 Performance Note
-
-This adds one query per indicator per DeSO (fetching ~6 rows each). With ~15 scored indicators, that's 15 extra queries returning ~6 rows each = ~90 rows total. Negligible.
-
-Or batch it: one query fetching all indicator_values for this DeSO across all years, then group in PHP:
+### 2.2 Seed Default Penalties
 
 ```php
-$allHistory = IndicatorValue::where('deso_code', $desoCode)
-    ->whereIn('indicator_id', $activeIndicatorIds)
-    ->whereNotNull('raw_value')
-    ->orderBy('year')
-    ->get()
-    ->groupBy('indicator_id');
+// database/seeders/ScorePenaltySeeder.php
+
+ScorePenalty::upsert([
+    [
+        'slug' => 'vuln_sarskilt_utsatt',
+        'name' => 'Särskilt utsatt område',
+        'description' => 'Område med parallella samhällsstrukturer, systematisk ovilja att medverka i rättsprocessen, och extremism som påverkar lokalsamhället. Klassificerat av Polismyndigheten.',
+        'category' => 'vulnerability',
+        'penalty_type' => 'absolute',
+        'penalty_value' => -15.00,        // -15 points off composite score
+        'is_active' => true,
+        'display_order' => 1,
+        'color' => '#dc2626',             // Red
+        'border_color' => '#991b1b',
+        'opacity' => 0.20,
+    ],
+    [
+        'slug' => 'vuln_utsatt',
+        'name' => 'Utsatt område',
+        'description' => 'Område med låg socioekonomisk status, kriminell påverkan på lokalsamhället, och invånare som upplever otrygghet. Klassificerat av Polismyndigheten.',
+        'category' => 'vulnerability',
+        'penalty_type' => 'absolute',
+        'penalty_value' => -8.00,         // -8 points off composite score
+        'is_active' => true,
+        'display_order' => 2,
+        'color' => '#f97316',             // Orange
+        'border_color' => '#c2410c',
+        'opacity' => 0.15,
+    ],
+], ['slug']);
 ```
 
-One query, ~90-150 rows. Fast.
+### 2.3 Why Absolute Points, Not Percentage
+
+**Absolute** (`-15 points`): A DeSO scoring 50 drops to 35. A DeSO scoring 30 drops to 15. The penalty has the same absolute impact everywhere. This makes sense because the vulnerability classification is absolute — Polisen doesn't say "relatively vulnerable," they say "this area has parallel societal structures and systematic witness intimidation."
+
+**Percentage** (`-15%`): A DeSO scoring 50 drops to 42.5. A DeSO scoring 30 drops to 25.5. Weaker areas get smaller penalties, which is backwards — being in a vulnerability zone is *worse* if you're already scoring low.
+
+**Use absolute.** The admin can switch to percentage later if needed — the `penalty_type` column supports both.
 
 ---
 
-## Step 2: Frontend — Trend Arrow Component
+## Step 3: Integrate Penalties into Scoring Engine
 
-### 2.1 TrendArrow Component
+### 3.1 Modify `ScoringService::computeScores()`
 
-```tsx
-// resources/js/Components/TrendArrow.tsx
+After computing the weighted average composite score, apply penalties:
 
-interface TrendArrowProps {
-    change: number | null;
-    direction: 'positive' | 'negative' | 'neutral';
-    size?: 'sm' | 'md';
+```php
+// In ScoringService.php
+
+public function computeScores(int $year): void
+{
+    $indicators = Indicator::where('is_active', true)->where('weight', '>', 0)->get();
+    $penalties = ScorePenalty::where('is_active', true)->get();
+
+    // Pre-load DeSO → vulnerability area mappings
+    $desoVulnerabilities = $this->loadDesoVulnerabilityMappings();
+
+    foreach ($allDesoCodes as $desoCode) {
+        // 1. Compute weighted average (existing logic)
+        $rawScore = $this->computeWeightedAverage($desoCode, $indicators, $year);
+
+        // 2. Apply penalties
+        $appliedPenalties = [];
+        $totalPenalty = 0;
+
+        foreach ($penalties as $penalty) {
+            if ($this->penaltyApplies($desoCode, $penalty, $desoVulnerabilities)) {
+                $penaltyAmount = match($penalty->penalty_type) {
+                    'absolute' => $penalty->penalty_value,                    // e.g., -15
+                    'percentage' => $rawScore * ($penalty->penalty_value / 100), // e.g., -15% of score
+                };
+
+                $totalPenalty += $penaltyAmount;
+                $appliedPenalties[] = [
+                    'slug' => $penalty->slug,
+                    'name' => $penalty->name,
+                    'amount' => round($penaltyAmount, 2),
+                ];
+            }
+        }
+
+        // 3. Final score = raw score + penalties, clamped to 0-100
+        $finalScore = max(0, min(100, $rawScore + $totalPenalty));
+
+        // 4. Store
+        CompositeScore::updateOrCreate(
+            ['deso_code' => $desoCode, 'year' => $year],
+            [
+                'score' => round($finalScore, 2),
+                'raw_score_before_penalties' => round($rawScore, 2),  // NEW column
+                'penalties_applied' => $appliedPenalties ?: null,      // NEW column (json)
+                'trend_1y' => ...,
+                'factor_scores' => ...,
+                'top_positive' => ...,
+                'top_negative' => ...,
+                'computed_at' => now(),
+            ]
+        );
+    }
 }
 
-export function TrendArrow({ change, direction, size = 'sm' }: TrendArrowProps) {
-    if (change === null || direction === 'neutral') {
-        return <span className="text-muted-foreground text-xs">—</span>;
+private function penaltyApplies(string $desoCode, ScorePenalty $penalty, Collection $mappings): bool
+{
+    if ($penalty->category !== 'vulnerability') {
+        return false; // Future: other penalty types with their own logic
     }
 
-    // For negative indicators (crime, debt), flip the interpretation
-    // A percentile decrease in crime = good = green arrow
-    const effectiveChange = direction === 'negative' ? -change : change;
+    $desoMappings = $mappings->get($desoCode, collect());
 
-    const { arrow, color } = getArrowStyle(effectiveChange);
-    const sign = change > 0 ? '+' : '';
-
-    return (
-        <span
-            className={cn(
-                'inline-flex items-center gap-0.5 font-medium tabular-nums',
-                size === 'sm' ? 'text-xs' : 'text-sm'
-            )}
-            style={{ color }}
-            title={`${sign}${change} percentilpoäng vs förra året`}
-        >
-            {arrow} {sign}{change}
-        </span>
-    );
+    return match($penalty->slug) {
+        'vuln_sarskilt_utsatt' => $desoMappings->contains(fn($m) => $m->tier === 'sarskilt_utsatt'),
+        'vuln_utsatt' => $desoMappings->contains(fn($m) => $m->tier === 'utsatt'),
+        default => false,
+    };
 }
 
-function getArrowStyle(effectiveChange: number): { arrow: string; color: string } {
-    if (effectiveChange >= 3) return { arrow: '↑', color: '#27ae60' };
-    if (effectiveChange >= 1) return { arrow: '↗', color: '#6abf4b' };
-    if (effectiveChange >= -1) return { arrow: '→', color: '#94a3b8' };
-    if (effectiveChange >= -3) return { arrow: '↘', color: '#e57373' };
-    return { arrow: '↓', color: '#e74c3c' };
+private function loadDesoVulnerabilityMappings(): Collection
+{
+    return DB::table('deso_vulnerability_mapping')
+        ->where('overlap_fraction', '>=', 0.10) // At least 10% overlap
+        ->get()
+        ->groupBy('deso_code');
 }
 ```
 
-### 2.2 Usage in Indicator Bar
-
-```tsx
-// In the sidebar indicator row
-
-<div className="flex items-center justify-between">
-    <span className="text-sm">{indicator.name}</span>
-    <div className="flex items-center gap-2">
-        <span className="text-sm text-muted-foreground">
-            {indicator.percentile}:e percentilen
-        </span>
-        <TrendArrow
-            change={indicator.trend.change_1y}
-            direction={indicator.direction}
-        />
-    </div>
-</div>
-<IndicatorBar percentile={indicator.percentile} direction={indicator.direction} />
-<span className="text-xs text-muted-foreground">
-    ({formatValue(indicator.raw_value, indicator.unit)})
-</span>
-```
-
----
-
-## Step 3: Frontend — Tooltip Sparkline
-
-### 3.1 Sparkline Component
-
-A tiny SVG line chart. No axes, no labels, no interactivity — just a line showing the trajectory.
-
-```tsx
-// resources/js/Components/Sparkline.tsx
-
-interface SparklineProps {
-    values: number[];        // Percentile values per year
-    years: number[];
-    width?: number;
-    height?: number;
-    color?: string;          // Line color — use trend direction
-}
-
-export function Sparkline({
-    values,
-    years,
-    width = 200,
-    height = 40,
-    color = '#64748b',
-}: SparklineProps) {
-    if (values.length < 2) return null;
-
-    const padding = 4;
-    const w = width - padding * 2;
-    const h = height - padding * 2;
-
-    const min = Math.min(...values);
-    const max = Math.max(...values);
-    const range = max - min || 1; // Avoid division by zero for flat lines
-
-    const points = values.map((v, i) => {
-        const x = padding + (i / (values.length - 1)) * w;
-        const y = padding + h - ((v - min) / range) * h;
-        return `${x},${y}`;
-    });
-
-    // Determine overall trend color
-    const trendColor = values[values.length - 1] > values[0]
-        ? '#27ae60'  // Trending up
-        : values[values.length - 1] < values[0]
-            ? '#e74c3c'  // Trending down
-            : '#94a3b8'; // Flat
-
-    return (
-        <div className="space-y-1">
-            <svg width={width} height={height} className="block">
-                {/* Subtle background area fill */}
-                <polygon
-                    points={`${padding},${padding + h} ${points.join(' ')} ${padding + w},${padding + h}`}
-                    fill={trendColor}
-                    opacity={0.08}
-                />
-                {/* Line */}
-                <polyline
-                    points={points.join(' ')}
-                    fill="none"
-                    stroke={color || trendColor}
-                    strokeWidth={2}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                />
-                {/* Endpoint dot */}
-                <circle
-                    cx={parseFloat(points[points.length - 1].split(',')[0])}
-                    cy={parseFloat(points[points.length - 1].split(',')[1])}
-                    r={3}
-                    fill={color || trendColor}
-                />
-            </svg>
-            {/* Year labels */}
-            <div className="flex justify-between text-[10px] text-muted-foreground" style={{ width }}>
-                {years.map((y, i) => (
-                    <span key={y}>
-                        {i === 0 || i === years.length - 1 ? `'${String(y).slice(2)}` : ''}
-                    </span>
-                ))}
-            </div>
-            {/* Percentile journey */}
-            <div className="text-[10px] text-muted-foreground">
-                {values.join(' → ')}:e percentilen
-            </div>
-        </div>
-    );
-}
-```
-
-### 3.2 Add to Existing Tooltip
-
-The indicator info tooltips (the ℹ️ icon popovers) already show description, source, national average. Add the sparkline between the description and the metadata:
-
-```tsx
-// In the tooltip/popover content
-
-<div className="space-y-3 p-3 max-w-xs">
-    <h4 className="font-semibold">{indicator.name}</h4>
-    <p className="text-sm text-muted-foreground">{indicator.description}</p>
-
-    {/* NEW: Sparkline section */}
-    {indicator.trend.percentiles.length >= 2 && (
-        <div className="border-t border-b py-2">
-            <Sparkline
-                values={indicator.trend.percentiles}
-                years={indicator.trend.years}
-                width={220}
-                height={36}
-            />
-        </div>
-    )}
-
-    <div className="text-xs text-muted-foreground italic">
-        {indicator.methodology_note}
-    </div>
-    <div className="text-xs text-muted-foreground">
-        National average: {indicator.national_average}
-    </div>
-    <div className="text-xs text-muted-foreground">
-        Source: {indicator.source_name} · Data from: {indicator.latest_year}
-    </div>
-</div>
-```
-
----
-
-## Step 4: Handle Edge Cases
-
-### 4.1 Indicators With No History
-
-POI-derived indicators (grocery_density, transit_stop_density, etc.) only have 2025 data. No sparkline, no arrow:
-
-```tsx
-{indicator.trend.percentiles.length >= 2
-    ? <TrendArrow change={indicator.trend.change_1y} direction={indicator.direction} />
-    : <span className="text-xs text-muted-foreground">—</span>
-}
-```
-
-### 4.2 Indicators Starting Later (Skolverket)
-
-School indicators start at 2021. They'll have 4-5 data points instead of 6. The sparkline handles variable-length arrays — it just renders fewer points. The 1y change still works.
-
-### 4.3 Direction-Corrected Arrows for Negative Indicators
-
-Crime rate goes DOWN → area gets BETTER → green arrow.
-
-The `TrendArrow` component handles this via the `direction` prop. When direction is `negative`, the effective change is flipped before choosing arrow color. The displayed number still shows the raw percentile change (e.g., "↑ -5" would be confusing), so:
-
-- For `positive` indicators: `↑ +3` means "percentile went up 3 points (good)"
-- For `negative` indicators: `↓ -3` with GREEN arrow means "crime percentile dropped 3 points (good)"
-
-Wait — showing a green down-arrow with a negative number is confusing. Better approach:
-
-**Show the "goodness" change, not the raw percentile change:**
-
-For all indicators, compute `directed_change`:
-- `positive`: `directed_change = change` (percentile went up = good)
-- `negative`: `directed_change = -change` (percentile went DOWN = good, so flip sign to show as positive)
-
-Then always show the directed change with matching arrow:
-- Crime percentile dropped from 65 to 60: `change = -5`, `directed_change = +5` → `↑ +5` (green) — "crime improved by 5 points"
-- Crime percentile went from 60 to 65: `change = +5`, `directed_change = -5` → `↓ -5` (red) — "crime worsened by 5 points"
-
-This way the arrow and number always mean the same thing: green ↑ = "this got better for the area."
-
-### 4.4 Vulnerability Flag
-
-`vulnerability_flag` uses the same 2025 classification retroactively for all years (as noted in the completeness report). Its sparkline would be flat — all years show the same value. Either:
-- Skip the sparkline for this indicator
-- Or show it but it'll just be a flat line (which honestly communicates "no historical data" accurately)
-
-Prefer: skip it. Show "—" for trend.
-
----
-
-## Step 5: Composite Score Trend
-
-The composite score in the sidebar header already shows a trend badge. Make sure it uses real historical data now:
-
-```
-┌─────────────────────────────────┐
-│  Södermalm 0143                 │
-│  Stockholm, Stockholms län      │
-│                                 │
-│       72                        │  ← Big score number
-│  Stabil / positiv utsikt       │
-│       ↑ +3.2 vs 2023           │  ← 1-year composite score change
-│                                 │
-│  ▁▂▃▄▅▆▇█  (sparkline)         │  ← 6-year composite trajectory
-│  '19 '20 '21 '22 '23 '24       │
-└─────────────────────────────────┘
-```
-
-The composite score sparkline comes from `composite_scores` table which now has rows for 2019-2024.
+### 3.2 New Columns on `composite_scores`
 
 ```php
-$scoreHistory = CompositeScore::where('deso_code', $desoCode)
-    ->orderBy('year')
-    ->get(['year', 'score', 'trend_1y']);
+Schema::table('composite_scores', function (Blueprint $table) {
+    $table->decimal('raw_score_before_penalties', 6, 2)->nullable()->after('score');
+    $table->json('penalties_applied')->nullable()->after('top_negative');
+});
 ```
+
+### 3.3 Penalty Stacking
+
+A DeSO can technically be flagged as both "utsatt" and "särskilt utsatt" if it overlaps multiple vulnerability area polygons of different tiers. **Apply only the worst penalty per category**, not both:
+
+```php
+// Group penalties by category, apply only the strongest per category
+$penaltiesByCategory = collect($applicablePenalties)->groupBy('category');
+$effectivePenalties = $penaltiesByCategory->map(function ($group) {
+    return $group->sortBy('penalty_value')->first(); // Most negative value = worst penalty
+});
+```
+
+So a DeSO overlapping both an "utsatt" (-8) and a "särskilt utsatt" (-15) area gets -15, not -23.
+
+### 3.4 Overlap Threshold
+
+The `deso_vulnerability_mapping` table has an `overlap_fraction` column. A DeSO with only 2% overlap (a sliver touching the edge of a vulnerability area) shouldn't get the full penalty. Options:
+
+**Simple (recommended for v1):** Binary — if overlap >= 10%, apply full penalty. Below 10%, no penalty.
+
+**Future refinement:** Scale penalty by overlap fraction: `effective_penalty = base_penalty × min(1.0, overlap_fraction × 2)`. So 50%+ overlap = full penalty, 25% overlap = half penalty. But this adds complexity and the admin can't easily reason about it. Keep it simple.
+
+---
+
+## Step 4: Admin Panel for Penalties
+
+### 4.1 Route
+
+```php
+Route::prefix('admin')->group(function () {
+    Route::get('/penalties', [AdminPenaltyController::class, 'index'])->name('admin.penalties');
+    Route::put('/penalties/{penalty}', [AdminPenaltyController::class, 'update'])->name('admin.penalties.update');
+});
+```
+
+### 4.2 Controller
+
+```php
+class AdminPenaltyController extends Controller
+{
+    public function index()
+    {
+        $penalties = ScorePenalty::orderBy('category')->orderBy('display_order')->get();
+
+        // How many DeSOs are affected by each penalty?
+        $affectedCounts = DB::table('deso_vulnerability_mapping')
+            ->where('overlap_fraction', '>=', 0.10)
+            ->select('tier', DB::raw('COUNT(DISTINCT deso_code) as deso_count'))
+            ->groupBy('tier')
+            ->pluck('deso_count', 'tier');
+
+        // Population affected
+        $affectedPopulation = DB::table('deso_vulnerability_mapping as dvm')
+            ->join('deso_areas as da', 'da.deso_code', '=', 'dvm.deso_code')
+            ->where('dvm.overlap_fraction', '>=', 0.10)
+            ->select('dvm.tier', DB::raw('SUM(da.population) as pop'))
+            ->groupBy('dvm.tier')
+            ->pluck('pop', 'tier');
+
+        return Inertia::render('Admin/Penalties', [
+            'penalties' => $penalties->map(fn($p) => [
+                ...$p->toArray(),
+                'affected_desos' => $affectedCounts[$this->tierFromSlug($p->slug)] ?? 0,
+                'affected_population' => $affectedPopulation[$this->tierFromSlug($p->slug)] ?? 0,
+            ]),
+        ]);
+    }
+
+    public function update(Request $request, ScorePenalty $penalty)
+    {
+        $validated = $request->validate([
+            'penalty_value' => 'required|numeric|min:-50|max:0',
+            'penalty_type' => 'required|in:absolute,percentage',
+            'is_active' => 'required|boolean',
+            'color' => 'nullable|string|max:7',
+            'border_color' => 'nullable|string|max:7',
+            'opacity' => 'nullable|numeric|min:0|max:1',
+        ]);
+
+        $penalty->update($validated);
+
+        return back()->with('success', 'Penalty updated. Recompute scores to apply changes.');
+    }
+}
+```
+
+### 4.3 Admin Page UI
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Poängavdrag & straffsystem                                     │
+│                                                                  │
+│  Dessa avdrag appliceras EFTER den viktade poängberäkningen.     │
+│  De påverkar den slutliga kompositspoängen direkt.               │
+│                                                                  │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │ Polisens utsatta områden                                  │  │
+│  │                                                            │  │
+│  │ ┌──────────────────────────────────────────────────────┐  │  │
+│  │ │  ● Särskilt utsatt område                            │  │  │
+│  │ │                                                       │  │  │
+│  │ │  Avdrag:  [____-15____] poäng     Typ: ○ Absolut     │  │  │
+│  │ │                                        ○ Procent     │  │  │
+│  │ │  Aktiv:   [✓]                                        │  │  │
+│  │ │                                                       │  │  │
+│  │ │  Påverkar: 87 DeSO-områden · ~180 000 invånare       │  │  │
+│  │ │                                                       │  │  │
+│  │ │  Kartfärg: [🔴 #dc2626]  Kant: [🔴 #991b1b]         │  │  │
+│  │ │  Opacitet: [____0.20____]                             │  │  │
+│  │ │                                                       │  │  │
+│  │ │  Simulering: En DeSO med poäng 50 → 35 efter avdrag  │  │  │
+│  │ │              En DeSO med poäng 30 → 15 efter avdrag  │  │  │
+│  │ │              En DeSO med poäng 10 → 0 (golv)         │  │  │
+│  │ └──────────────────────────────────────────────────────┘  │  │
+│  │                                                            │  │
+│  │ ┌──────────────────────────────────────────────────────┐  │  │
+│  │ │  ● Utsatt område                                     │  │  │
+│  │ │                                                       │  │  │
+│  │ │  Avdrag:  [_____-8____] poäng     Typ: ○ Absolut     │  │  │
+│  │ │  Aktiv:   [✓]                                        │  │  │
+│  │ │                                                       │  │  │
+│  │ │  Påverkar: 142 DeSO-områden · ~370 000 invånare      │  │  │
+│  │ │                                                       │  │  │
+│  │ │  Kartfärg: [🟠 #f97316]  Kant: [🟠 #c2410c]         │  │  │
+│  │ │  Opacitet: [____0.15____]                             │  │  │
+│  │ │                                                       │  │  │
+│  │ │  Simulering: En DeSO med poäng 50 → 42 efter avdrag  │  │  │
+│  │ └──────────────────────────────────────────────────────┘  │  │
+│  └───────────────────────────────────────────────────────────┘  │
+│                                                                  │
+│  OBS: Ändring av avdrag kräver omberäkning av poäng.            │
+│  [   Spara ändringar   ]   [   Beräkna om poäng   ]            │
+│                                                                  │
+│  Källa: Polismyndigheten, "Lägesbild utsatta områden 2025"      │
+│  Senast uppdaterad: Dec 2025 · Nästa uppdatering: ~2027          │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+Key admin features:
+- **Penalty value input** — adjust the point deduction (default -15 / -8)
+- **Type toggle** — switch between absolute points and percentage
+- **Active toggle** — disable a penalty without deleting it
+- **Impact stats** — how many DeSOs and people are affected
+- **Simulation preview** — shows what happens to a DeSO at score 50, 30, 10
+- **Map styling controls** — color, border, opacity for the map layer
+- **Recompute button** — triggers score recomputation after changes
+
+---
+
+## Step 5: Map Layer — Vulnerability Area Polygons
+
+### 5.1 API Endpoint
+
+```php
+Route::get('/api/vulnerability-areas', [VulnerabilityAreaController::class, 'index']);
+```
+
+```php
+public function index()
+{
+    $penalties = ScorePenalty::where('category', 'vulnerability')
+        ->where('is_active', true)
+        ->get()
+        ->keyBy('slug');
+
+    $areas = DB::table('vulnerability_areas')
+        ->where('is_current', true)
+        ->select(
+            'id', 'name', 'tier', 'police_region', 'municipality_name',
+            DB::raw("ST_AsGeoJSON(ST_SimplifyPreserveTopology(geom, 0.0001)) as geojson")
+        )
+        ->get()
+        ->map(function ($area) use ($penalties) {
+            $penaltySlug = 'vuln_' . $area->tier;
+            $penalty = $penalties->get($penaltySlug);
+
+            return [
+                'id' => $area->id,
+                'name' => $area->name,
+                'tier' => $area->tier,
+                'tier_label' => match($area->tier) {
+                    'sarskilt_utsatt' => 'Särskilt utsatt område',
+                    'utsatt' => 'Utsatt område',
+                    default => $area->tier,
+                },
+                'police_region' => $area->police_region,
+                'municipality' => $area->municipality_name,
+                'penalty_points' => $penalty?->penalty_value,
+                'color' => $penalty?->color ?? '#ef4444',
+                'border_color' => $penalty?->border_color ?? '#991b1b',
+                'opacity' => $penalty?->opacity ?? 0.15,
+                'geojson' => json_decode($area->geojson),
+            ];
+        });
+
+    return response()->json($areas)
+        ->header('Cache-Control', 'public, max-age=86400'); // 24h cache — rarely changes
+}
+```
+
+### 5.2 Frontend Map Layer
+
+Add vulnerability areas as a separate OpenLayers vector layer, rendered ABOVE the DeSO heatmap/coloring but BELOW school markers and pins.
+
+```tsx
+// In the map component
+
+function useVulnerabilityLayer(map: OlMap | null) {
+    const [areas, setAreas] = useState<VulnerabilityArea[]>([]);
+
+    useEffect(() => {
+        fetch('/api/vulnerability-areas')
+            .then(r => r.json())
+            .then(setAreas);
+    }, []);
+
+    useEffect(() => {
+        if (!map || !areas.length) return;
+
+        const features = areas.map(area => {
+            const feature = new GeoJSON().readFeature(
+                { type: 'Feature', geometry: area.geojson, properties: area },
+                { featureProjection: 'EPSG:3857' }
+            );
+            return feature;
+        });
+
+        const source = new VectorSource({ features });
+
+        const layer = new VectorLayer({
+            source,
+            style: (feature) => {
+                const props = feature.getProperties();
+                return new Style({
+                    fill: new Fill({
+                        color: hexToRgba(props.color, props.opacity),
+                    }),
+                    stroke: new Stroke({
+                        color: props.border_color,
+                        width: 2,
+                        lineDash: [6, 4],  // Dashed border to distinguish from DeSO borders
+                    }),
+                });
+            },
+            zIndex: 15,  // Above DeSO coloring (10), below school markers (20) and pins (25)
+        });
+
+        layer.set('name', 'vulnerability-areas');
+        map.addLayer(layer);
+
+        return () => map.removeLayer(layer);
+    }, [map, areas]);
+}
+```
+
+### 5.3 Visual Styling
+
+The vulnerability area polygons should be clearly visible but not overwhelming:
+
+| Tier | Fill Color | Fill Opacity | Border | Border Style |
+|---|---|---|---|---|
+| Särskilt utsatt | Red (#dc2626) | 0.20 | Dark red (#991b1b), 2px | Dashed |
+| Utsatt | Orange (#f97316) | 0.15 | Dark orange (#c2410c), 2px | Dashed |
+
+Dashed borders are critical — they distinguish vulnerability area boundaries from DeSO boundaries (which are solid). The user can see both layers simultaneously.
+
+### 5.4 Hover Tooltip
+
+When the user hovers over a vulnerability area polygon, show a tooltip:
+
+```
+┌──────────────────────────────────────┐
+│  ⚠️ Rinkeby                          │
+│  Särskilt utsatt område              │
+│  Polisregion Stockholm               │
+│                                       │
+│  Avdrag: -15 poäng på                │
+│  kompositspoängen                     │
+│  Källa: Polismyndigheten 2025         │
+└──────────────────────────────────────┘
+```
+
+```tsx
+// In the hover handler
+map.on('pointermove', (evt) => {
+    // Check vulnerability layer first (higher z-index)
+    const vulnFeature = map.forEachFeatureAtPixel(evt.pixel, (f) => f, {
+        layerFilter: (l) => l.get('name') === 'vulnerability-areas',
+    });
+
+    if (vulnFeature) {
+        const props = vulnFeature.getProperties();
+        showTooltip(evt.pixel, {
+            title: `⚠️ ${props.name}`,
+            subtitle: props.tier_label,
+            detail: `Avdrag: ${props.penalty_points} poäng`,
+            source: 'Polismyndigheten 2025',
+        });
+        return;
+    }
+
+    // ... existing DeSO hover logic
+});
+```
+
+### 5.5 Legend Entry
+
+Add vulnerability areas to the map legend:
+
+```
+── Utsatta områden ──
+  ┊╌╌╌╌╌╌┊  Särskilt utsatt (-15 poäng)
+  ┊╌╌╌╌╌╌┊  Utsatt (-8 poäng)
+```
+
+### 5.6 Toggle Visibility
+
+Add a toggle in the map controls to show/hide vulnerability areas:
+
+```tsx
+<div className="flex items-center gap-2">
+    <Switch
+        checked={showVulnerabilityAreas}
+        onCheckedChange={(v) => {
+            setShowVulnerabilityAreas(v);
+            vulnLayer?.setVisible(v);
+        }}
+    />
+    <Label className="text-xs">Visa utsatta områden</Label>
+</div>
+```
+
+Default: **visible**. The boundaries are public information from Polisen and a major product differentiator.
+
+---
+
+## Step 6: Sidebar — Penalty Display
+
+### 6.1 When a DeSO Has a Penalty
+
+If the selected DeSO falls within a vulnerability area, show a penalty notice in the sidebar between the score and the indicator breakdown:
+
+```
+┌─────────────────────────────────────┐
+│  Poäng: 35                          │
+│  Förhöjd risk                       │
+│                                     │
+│  ┌─────────────────────────────┐    │
+│  │ ⚠️ Särskilt utsatt område   │    │
+│  │ Rinkeby                      │    │
+│  │                              │    │
+│  │ Poäng före avdrag: 50        │    │
+│  │ Avdrag: -15 poäng            │    │
+│  │ Poäng efter avdrag: 35       │    │
+│  │                              │    │
+│  │ Polismyndigheten 2025        │    │
+│  └─────────────────────────────┘    │
+│                                     │
+│  ── Indikatorer ──                  │
+│  ...                                │
+└─────────────────────────────────────┘
+```
+
+This transparency is critical — the user should understand *why* the score is low and that it's because of a police classification, not just bad demographics.
+
+### 6.2 In the Report
+
+The report (from `task-report-page.md`) should also show the penalty in the hero score section and add a dedicated section explaining the vulnerability classification.
+
+---
+
+## Step 7: Include Penalty in Score API
+
+### 7.1 Extend Score Response
+
+The `/api/deso/scores` endpoint should include penalty information:
+
+```php
+$scores = DB::table('composite_scores')
+    ->where('year', $year)
+    ->select('deso_code', 'score', 'raw_score_before_penalties', 'trend_1y', 'penalties_applied')
+    ->get()
+    ->keyBy('deso_code');
+```
+
+The frontend can then show penalty info in the sidebar without an extra API call.
 
 ---
 
 ## Verification
 
-- [ ] Every indicator with 2+ years of data shows a trend arrow next to the percentile
-- [ ] Arrows are colored correctly: green = better for the area, red = worse
-- [ ] Negative indicators (crime, debt) show green when their percentile *drops*
-- [ ] POI indicators show "—" instead of an arrow (single year only)
-- [ ] Clicking the ℹ️ tooltip shows a sparkline with year labels
-- [ ] Sparkline renders correctly for 2 points (Skolverket 2024-2025), 5 points, and 6 points
-- [ ] Composite score at the top of the sidebar shows a sparkline of 2019-2024
-- [ ] Flat trends show gray → arrow and flat sparkline (not hidden)
-- [ ] Vulnerability flag shows "—" (no real historical variation)
-- [ ] All numbers are in percentile points, not raw values ("+3" means 3 percentile points, not 3%)
+### Score Impact
+```sql
+-- DeSOs with penalties applied
+SELECT cs.deso_code, da.kommun_name,
+       cs.raw_score_before_penalties,
+       cs.score,
+       cs.penalties_applied
+FROM composite_scores cs
+JOIN deso_areas da ON da.deso_code = cs.deso_code
+WHERE cs.penalties_applied IS NOT NULL
+  AND cs.year = 2024
+ORDER BY cs.score ASC
+LIMIT 20;
+
+-- The penalty should be visible: raw_score_before_penalties - score = penalty amount
+-- Rinkeby: raw 42, penalty -15, final 27
+-- Rosengård: raw 38, penalty -15, final 23
+
+-- Verify no DeSO gets double-penalized
+SELECT deso_code,
+       jsonb_array_length(penalties_applied::jsonb) as penalty_count
+FROM composite_scores
+WHERE penalties_applied IS NOT NULL
+  AND jsonb_array_length(penalties_applied::jsonb) > 1;
+-- Should return 0 rows (only worst penalty per category applied)
+```
+
+### Map Layer
+- [ ] Vulnerability area polygons visible on the map as dashed-border overlays
+- [ ] Red = särskilt utsatt, orange = utsatt (matching admin-configured colors)
+- [ ] Polygons are above DeSO coloring, below school markers
+- [ ] Hovering shows tooltip with area name, tier, penalty amount
+- [ ] Toggle in map controls can show/hide the layer
+- [ ] Legend includes vulnerability area entries
+
+### Admin Panel
+- [ ] `/admin/penalties` page shows both penalty types
+- [ ] Penalty value is editable (input field)
+- [ ] Type toggle works (absolute/percentage)
+- [ ] Active toggle works
+- [ ] Impact stats show correct DeSO count and population
+- [ ] Simulation preview updates when penalty value changes
+- [ ] Map color/opacity controls work
+- [ ] Recompute button triggers score recalculation
+
+### Scoring
+- [ ] `vulnerability_flag` indicator is inactive (weight 0, not scored)
+- [ ] Composite scores for vulnerability DeSOs show `raw_score_before_penalties` > `score`
+- [ ] Penalty is clamped (score never goes below 0)
+- [ ] Only the worst penalty per category applies (no stacking)
+- [ ] Overlap threshold (10%) is respected
+
+### Sidebar
+- [ ] DeSOs in vulnerability areas show penalty notice between score and indicators
+- [ ] Shows raw score, penalty amount, and final score
+- [ ] Links to Polismyndigheten source
 
 ---
 
 ## What NOT to Do
 
-- **DO NOT show raw value changes in the arrow.** "Income went up 12,000 SEK" is meaningless without context. "+3 percentile points" is universally comparable across indicators.
-- **DO NOT show both 1y and 5y arrows.** One arrow (1y) keeps it clean. The sparkline in the tooltip gives the long view.
-- **DO NOT add interactivity to the sparkline.** No hover states, no click handlers. It's a tiny glyph that communicates trajectory at a glance. Keep it a simple SVG.
-- **DO NOT fetch historical data in a separate API call.** Bundle it with the existing indicator response — it's ~90 extra rows, negligible overhead.
-- **DO NOT show trend arrows for indicators with `neutral` direction.** Population and foreign_background_pct are context-only — no "better/worse" interpretation.
+- **DO NOT delete the `vulnerability_flag` indicator or its `indicator_values`.** Deactivate it. The historical data is useful for analysis and the completeness dashboard.
+- **DO NOT apply penalties during normalization.** Penalties apply AFTER the weighted average, as the last step before clamping to 0-100.
+- **DO NOT stack multiple vulnerability penalties.** If a DeSO overlaps both tiers, apply only the worst one.
+- **DO NOT hardcode penalty values in the scoring service.** Read from `score_penalties` table. The admin must be able to change values without code deployment.
+- **DO NOT hide vulnerability areas behind a paywall.** These boundaries are public data from Polisen. Showing them builds credibility. The detailed per-DeSO penalty breakdown and score impact analysis can be in the paid report.
+- **DO NOT make penalty values positive.** They are always negative (point deductions). The admin input should enforce `max: 0`.
