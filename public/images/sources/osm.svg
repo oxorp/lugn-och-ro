@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 40" fill="none">
+  <!-- OSM magnifying glass with map -->
+  <g transform="translate(2, 4)">
+    <circle cx="14" cy="14" r="10" fill="none" stroke="#7EBC6F" stroke-width="3"/>
+    <line x1="21" y1="21" x2="28" y2="28" stroke="#7EBC6F" stroke-width="3" stroke-linecap="round"/>
+    <path d="M10 11l3 5 5-8" fill="none" stroke="#7EBC6F" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <!-- OpenStreetMap text -->
+  <text x="36" y="28" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#333333">OpenStreetMap</text>
+</svg>

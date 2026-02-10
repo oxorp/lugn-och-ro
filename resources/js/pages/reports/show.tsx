@@ -18,6 +18,7 @@ import {
     faFileLines,
     farCopy,
 } from '@/icons';
+import { SourceMarquee } from '@/components/source-marquee';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { scoreToColor, scoreToLabel } from '@/lib/score-colors';
@@ -1135,17 +1136,23 @@ export default function ReportShow({ report }: { report: ReportData }) {
                 )}
 
                 {/* Footer */}
-                <footer className="space-y-2 border-t pt-4 text-center text-xs text-muted-foreground print:hidden">
-                    <p>
-                        Rapport-ID: {report.uuid} &middot; Visningar:{' '}
-                        {report.view_count}
+                <footer className="mt-12 border-t pt-6 print:hidden">
+                    <SourceMarquee />
+                    <p className="mt-2 text-center text-[10px] text-muted-foreground">
+                        Alla data är hämtade från offentliga svenska myndigheter och öppna datakällor.
                     </p>
-                    <Link
-                        href={`/explore/${report.lat},${report.lng}`}
-                        className="text-sm font-medium text-primary hover:underline"
-                    >
-                        Visa på kartan &rarr;
-                    </Link>
+                    <div className="mt-4 space-y-2 text-center text-xs text-muted-foreground">
+                        <p>
+                            Rapport-ID: {report.uuid} &middot; Visningar:{' '}
+                            {report.view_count}
+                        </p>
+                        <Link
+                            href={`/explore/${report.lat},${report.lng}`}
+                            className="text-sm font-medium text-primary hover:underline"
+                        >
+                            Visa på kartan &rarr;
+                        </Link>
+                    </div>
                 </footer>
             </main>
         </div>

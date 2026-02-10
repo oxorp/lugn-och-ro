@@ -181,6 +181,16 @@
 /*     May need brightness/saturation boost for dark backgrounds                 */
 /* }                                                                             */
 
+@keyframes marquee {
+    0% { transform: translateX(0); }
+    100% { transform: translateX(-50%); }
+}
+
+.marquee-strip {
+    animation: marquee 40s linear infinite;
+    white-space: nowrap;
+}
+
 @layer base {
     * {
         @apply border-border;

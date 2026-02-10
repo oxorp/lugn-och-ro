@@ -1,6 +1,7 @@
 import { type IndicatorMeta, InfoTooltip } from '@/components/info-tooltip';
 import { PercentileBadge } from '@/components/percentile-badge';
 import { PercentileBar } from '@/components/percentile-bar';
+import { SourceMarquee } from '@/components/source-marquee';
 import { Button } from '@/components/ui/button';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faChartColumn, faGraduationCap, faLocationDot, faLock, faShieldHalved, faTree } from '@/icons';
@@ -298,6 +299,11 @@ export function LockedPreviewContent({
                 lat={lat}
                 lng={lng}
             />
+
+            {/* Source attribution marquee */}
+            <div className="mt-4">
+                <SourceMarquee />
+            </div>
         </>
     );
 }
