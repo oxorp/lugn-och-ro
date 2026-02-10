@@ -375,7 +375,9 @@ Category definitions for POI types.
 
 ### `reports`
 
-Paid neighborhood report purchases, linked to a specific coordinate.
+Paid neighborhood report purchases with full data snapshots frozen at generation time.
+
+**Core columns:**
 
 | Column | Type | Description |
 |---|---|---|
@@ -391,10 +393,35 @@ Paid neighborhood report purchases, linked to a specific coordinate.
 | `score_label` | varchar, nullable | Human-readable score label |
 | `stripe_session_id` | varchar, nullable | Stripe Checkout session ID |
 | `stripe_payment_intent_id` | varchar, nullable | Stripe PaymentIntent ID |
-| `amount_ore` | integer | Price in Swedish öre (7900 = 79 SEK) |
+| `amount_ore` | integer | Price in Swedish öre (7900 = 79 SEK, 0 for admin-generated) |
 | `currency` | varchar | Currency code (`sek`) |
 | `status` | varchar | `pending`, `completed`, `expired` |
 | `view_count` | integer | Number of times report was viewed |
+
+**Snapshot columns** (populated by `ReportGenerationService`):
+
+| Column | Type | Description |
+|---|---|---|
+| `default_score` | decimal(6,2) | Area + proximity blended score |
+| `personalized_score` | decimal(6,2) | Score adjusted for user priorities |
+| `trend_1y` | decimal(6,2) | 1-year score change |
+| `area_indicators` | json | All indicator snapshots with full history |
+| `proximity_factors` | json | Amenity proximity scores |
+| `schools` | json | Up to 10 nearby schools with stats |
+| `category_verdicts` | json | 4 category verdicts (safety, economy, education, environment) |
+| `score_history` | json | Historical composite scores by year |
+| `deso_meta` | json | DeSO metadata (name, area, population, urbanity) |
+| `national_references` | json | National median values per indicator |
+| `map_snapshot` | json | GeoJSON geometries, surrounding DeSOs, school markers |
+| `outlook` | json | Trend analysis + Swedish outlook narrative |
+| `top_positive` | json | Top 5 strengths (>=75th percentile) |
+| `top_negative` | json | Top 5 weaknesses (<=35th percentile) |
+| `priorities` | json | User-selected priority categories |
+| `isochrone` | json, nullable | Travel-time contour GeoJSON FeatureCollection |
+| `isochrone_mode` | varchar(20), nullable | `pedestrian` or `auto` |
+| `model_version` | varchar(20) | Algorithm version (e.g., `v1.0`) |
+| `indicator_count` | integer | Total indicators in snapshot |
+| `year` | integer, nullable | Latest data year |
 
 ## Multi-Tenancy Tables
 

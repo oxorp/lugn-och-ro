@@ -112,40 +112,69 @@ Each scoring run creates a `ScoreVersion` record. Scores are initially `draft` a
 
 ## Proximity Score (30%)
 
-The `ProximityScoreService` (`app/Services/ProximityScoreService.php`) computes a real-time 0–100 score for any coordinate. It runs on every pin drop and must complete in **< 200ms**.
+The `ProximityScoreService` (`app/Services/ProximityScoreService.php`) computes a real-time 0–100 score for any coordinate. It uses **isochrone-based scoring** (walking/driving time via Valhalla) with a fallback to radius-based scoring.
+
+### Isochrone vs Radius Scoring
+
+The service has two code paths:
+
+1. **Isochrone mode** (default when Valhalla is available): Uses `IsochroneService` to fetch a travel-time polygon from Valhalla, queries all POIs/schools/transit within the reachable area, then gets actual travel times via a Valhalla matrix call. Scores use **time decay** instead of distance decay.
+2. **Radius fallback**: When Valhalla is unavailable, falls back to straight-line `ST_DWithin` queries with distance decay. Seamless — no user-facing error.
+
+### Isochrone Architecture
+
+```mermaid
+graph TD
+    A[Pin Drop lat,lng] --> B{Isochrone enabled?}
+    B -->|Yes| C[Valhalla: Fetch isochrone polygon]
+    C --> D[PostGIS: Query POIs inside polygon]
+    D --> E[Valhalla: Matrix call for travel times]
+    E --> F[Score with time decay]
+    B -->|No / Valhalla down| G[PostGIS: ST_DWithin radius query]
+    G --> H[Score with distance decay]
+    F --> I[Proximity Score 0-100]
+    H --> I
+```
+
+The `IsochroneService` (`app/Services/IsochroneService.php`) manages all Valhalla interactions:
+- **`generate()`** — Fetches multi-contour isochrone polygons (e.g., 5/10/15 min walking). Cached by ~100m grid cell (3600s TTL).
+- **`outermostPolygonWkt()`** — Extracts the largest contour as WKT for PostGIS `ST_Contains()` queries.
+- **`travelTimes()`** — Matrix endpoint for actual travel times to multiple targets. Chunked at 50 targets per API call.
 
 ### Proximity Factors
 
-All scoring radii adapt to the DeSO's **urbanity tier** (urban / semi-urban / rural). Urban areas use stricter radii because amenities are expected to be closer; rural areas use wider radii to avoid penalizing sparse settlement.
+Scoring parameters adapt to **urbanity tier**. In isochrone mode, times are used; in radius mode, distances are used as fallback.
 
 | Factor | Slug | Weight | Urban | Semi-Urban | Rural |
 |---|---|---|---|---|---|
-| School Quality | `prox_school` | 0.10 | 1,500 m | 2,000 m | 3,500 m |
-| Green Space | `prox_green_space` | 0.04 | 1,000 m | 1,500 m | 2,500 m |
-| Transit Access | `prox_transit` | 0.05 | 800 m | 1,200 m | 2,500 m |
-| Grocery Access | `prox_grocery` | 0.03 | 800 m | 1,200 m | 2,000 m |
+| School Quality | `prox_school` | 0.10 | 15 min / 1,500 m | 15 min / 2,000 m | 20 min / 3,500 m |
+| Green Space | `prox_green_space` | 0.04 | 10 min / 1,000 m | 10 min / 1,500 m | 15 min / 2,500 m |
+| Transit Access | `prox_transit` | 0.05 | 8 min / 800 m | 10 min / 1,200 m | 15 min / 2,500 m |
+| Grocery Access | `prox_grocery` | 0.03 | 10 min / 800 m | 10 min / 1,200 m | 15 min / 2,000 m |
 | Negative POIs | `prox_negative_poi` | 0.04 | 400 m | 500 m | 500 m |
 | Positive POIs | `prox_positive_poi` | 0.04 | 800 m | 1,000 m | 1,500 m |
 
-Radii are configured in `config/proximity.php`. All factors use **linear distance decay**: `score = 1 - (distance / maxDistance)`.
+Travel mode per urbanity tier: **pedestrian** (urban, semi-urban), **auto** (rural).
 
-### Distance Decay
+Isochrone display contours shown on the map: 5/10/15 min (urban, semi-urban), 5/10/20 min (rural).
 
-Each factor computes a 0–100 sub-score using PostGIS `ST_DWithin` for candidate selection and `ST_Distance` for precise measurement:
+Configuration in `config/proximity.php` under `isochrone`, `scoring_times`, and `scoring_radii` sections.
 
-```sql
-ST_DWithin(geom::geography, ST_SetSRID(ST_MakePoint(lng, lat), 4326)::geography, radius_meters)
-```
-
-### Safety-Modulated Distance Decay
+### Safety-Modulated Time/Distance Decay
 
 Proximity scores are adjusted by area safety. The `SafetyScoreService` computes a 0.0–1.0 safety score per DeSO from crime indicators (75%) and socioeconomic proxies (25%). Each POI category has a `safety_sensitivity` value (0.0–1.5) that controls how much safety context affects its proximity score.
 
+In isochrone mode:
+```
+effective_time = travel_seconds × (1.0 + (1.0 - safety_score) × sensitivity)
+```
+
+In radius fallback mode:
 ```
 effective_distance = physical_distance × (1.0 + (1.0 - safety_score) × sensitivity)
 ```
 
-This means a park 500m away in an unsafe area (safety 0.15) feels much further than the same park in a safe area (safety 0.90). Necessities like grocery (sensitivity 0.3) are barely affected; nightlife (sensitivity 1.5) is strongly affected.
+This means a park at 8 minutes walking in an unsafe area (safety 0.15) scores as if it were much further. Necessities like grocery (sensitivity 0.3) are barely affected; nightlife (sensitivity 1.5) is strongly affected.
 
 ### Weight Source
 

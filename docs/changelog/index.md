@@ -118,6 +118,26 @@
 - `validate:indicators` command — sanity checks against known reference points (kommun averages, national medians)
 - `config/data_sanity_checks.php` — reference values for well-known municipalities (Danderyd, Lund, Filipstad, Lomma)
 
+### Isochrone-Based Proximity Scoring
+- **Replaced radius circles with isochrone overlays** — walking/driving time polygons via Valhalla routing engine
+- `IsochroneService` — fetches multi-contour polygons (5/10/15 min) from Valhalla, caches by ~100m grid cell
+- `ProximityScoreService` upgraded: queries POIs inside isochrone polygon, gets actual travel times via Valhalla matrix API
+- Display contours: 5/10/15 min (urban/semi-urban pedestrian), 5/10/20 min (rural auto)
+- Travel mode per urbanity tier: **pedestrian** (urban, semi-urban), **auto** (rural)
+- Sidebar shows travel times per amenity (e.g., "8 min promenad") instead of distances
+- Graceful fallback to radius-based scoring when Valhalla unavailable
+- Grid-cell caching (~100m, 3600s TTL) for both isochrone and proximity results
+- **Valhalla Docker service** added (`ghcr.io/gis-ops/docker-valhalla`) with Sweden OSM data
+- `.env` config: `VALHALLA_URL`, `ISOCHRONE_ENABLED`
+
+### Report Generation System
+- **`ReportGenerationService`** — snapshots all data at purchase time into 11 categories: indicators, scores, verdicts, schools, proximity, isochrone, map, strengths/weaknesses, outlook
+- **`VerdictService`** — generates Swedish-language analysis for 4 categories (safety, economy, education, environment) with A–E grades, trend direction, and narrative text
+- Report show page (`/reports/{uuid}`) — full-page printable report with hero score, map, verdict grid, indicator breakdown, schools, strengths/weaknesses, and outlook
+- 24 new snapshot columns on `reports` table (JSON + decimal) — immutable data frozen at generation time
+- Admin report generation (`POST /admin/reports/generate`) — bypasses Stripe for testing/admin use
+- Isochrone data stored per report for offline viewing
+
 ### Map & UI Improvements
 - Geography indexes on DeSO areas for faster spatial queries
 - Map refactoring for improved performance

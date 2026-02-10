@@ -58,10 +58,17 @@ API endpoints are defined in `routes/web.php` (not `routes/api.php`). They use J
 | GET | `/auth/google` | Google OAuth redirect |
 | GET | `/auth/google/callback` | Google OAuth callback |
 
+### Reports
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/reports/{uuid}` | View generated report (public, no auth required) |
+
 ### Admin Endpoints (requires auth + admin role)
 
 | Method | Path | Description |
 |---|---|---|
+| POST | `/admin/reports/generate` | Generate report for any lat/lng (bypasses Stripe) |
 | GET | `/admin/indicators` | Indicator management dashboard |
 | PUT | `/admin/indicators/{id}` | Update indicator settings |
 | PUT | `/admin/poi-categories/{id}` | Update POI category settings |
