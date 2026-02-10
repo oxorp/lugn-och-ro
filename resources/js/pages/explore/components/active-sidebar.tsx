@@ -2,8 +2,8 @@ import type { IndicatorMeta } from '@/components/info-tooltip';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faGraduationCap, faSpinnerThird, faTriangleExclamation, faXmark } from '@/icons';
-import { usePage } from '@inertiajs/react';
+import { faFileLines, faGraduationCap, faSpinnerThird, faTriangleExclamation, faXmark } from '@/icons';
+import { router, usePage } from '@inertiajs/react';
 import type { SharedData } from '@/types';
 import { useTranslation } from '@/hooks/use-translation';
 import { useEffect, useRef, useState } from 'react';
@@ -15,6 +15,7 @@ import {
     LockedPreviewContent,
     StickyUnlockBar,
 } from './locked-preview';
+import { Button } from '@/components/ui/button';
 import { ProximityFactorRow } from './proximity-factor-row';
 import { ScoreCard } from './score-card';
 
@@ -36,6 +37,7 @@ export function ActiveSidebar({
     const { t } = useTranslation();
     const isAdmin = !!usePage<SharedData>().props.auth?.user?.is_admin;
     const [showStickyBar, setShowStickyBar] = useState(false);
+    const [generatingReport, setGeneratingReport] = useState(false);
     const firstCtaRef = useRef<HTMLDivElement>(null);
 
     // IntersectionObserver for sticky CTA visibility
@@ -135,6 +137,35 @@ export function ActiveSidebar({
                         <p className="mt-2 text-[10px] text-red-900/50">
                             Admin · Polismyndigheten 2025
                         </p>
+                    </div>
+                )}
+
+                {/* Admin: Generate Report button */}
+                {isAdmin && (
+                    <div className="mb-3">
+                        <Button
+                            className="w-full"
+                            size="sm"
+                            variant="outline"
+                            disabled={generatingReport}
+                            onClick={() => {
+                                setGeneratingReport(true);
+                                router.post(
+                                    '/admin/reports/generate',
+                                    { lat: location.lat, lng: location.lng },
+                                    {
+                                        onFinish: () => setGeneratingReport(false),
+                                    },
+                                );
+                            }}
+                        >
+                            {generatingReport ? (
+                                <FontAwesomeIcon icon={faSpinnerThird} spin className="mr-1.5 h-3.5 w-3.5" />
+                            ) : (
+                                <FontAwesomeIcon icon={faFileLines} className="mr-1.5 h-3.5 w-3.5" />
+                            )}
+                            {generatingReport ? 'Genererar rapport...' : 'Generera rapport'}
+                        </Button>
                     </div>
                 )}
 

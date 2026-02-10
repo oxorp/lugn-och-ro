@@ -214,11 +214,21 @@ class ReportGenerationService
                 continue;
             }
 
-            $median = IndicatorValue::where('indicator_id', $indicator->id)
+            $latestYear = IndicatorValue::where('indicator_id', $indicator->id)
                 ->whereNotNull('raw_value')
-                ->orderByDesc('year')
-                ->limit(6160)
-                ->value(DB::raw('PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY raw_value)'));
+                ->max('year');
+
+            if (! $latestYear) {
+                $refs[$indicator->slug] = ['median' => null, 'formatted' => null];
+
+                continue;
+            }
+
+            $median = DB::selectOne('
+                SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY raw_value) as median
+                FROM indicator_values
+                WHERE indicator_id = ? AND year = ? AND raw_value IS NOT NULL
+            ', [$indicator->id, $latestYear])?->median;
 
             $medianFloat = $median !== null ? round((float) $median, 2) : null;
 
