@@ -73,6 +73,16 @@ import { faTree } from '@fortawesome/pro-solid-svg-icons/faTree';
 import { faTriangleExclamation } from '@fortawesome/pro-solid-svg-icons/faTriangleExclamation';
 import { faXmark } from '@fortawesome/pro-solid-svg-icons/faXmark';
 
+// Report page icons
+import { faPrint } from '@fortawesome/pro-solid-svg-icons/faPrint';
+import { faLink } from '@fortawesome/pro-solid-svg-icons/faLink';
+import { faCircleQuestion } from '@fortawesome/pro-solid-svg-icons/faCircleQuestion';
+import { faChartLine } from '@fortawesome/pro-solid-svg-icons/faChartLine';
+import { faThumbsUp } from '@fortawesome/pro-solid-svg-icons/faThumbsUp';
+import { faThumbsDown } from '@fortawesome/pro-solid-svg-icons/faThumbsDown';
+import { faBinoculars } from '@fortawesome/pro-solid-svg-icons/faBinoculars';
+import { faFileLines } from '@fortawesome/pro-solid-svg-icons/faFileLines';
+
 // ── Regular icons (far) ──────────────────────────────────────────────
 import { faCopy as farCopy } from '@fortawesome/pro-regular-svg-icons/faCopy';
 import { faEye as farEye } from '@fortawesome/pro-regular-svg-icons/faEye';
@@ -141,6 +151,15 @@ library.add(
     faTree,
     faTriangleExclamation,
     faXmark,
+    // Report
+    faPrint,
+    faLink,
+    faCircleQuestion,
+    faChartLine,
+    faThumbsUp,
+    faThumbsDown,
+    faBinoculars,
+    faFileLines,
     // Regular
     farCopy,
     farEye,
@@ -209,6 +228,14 @@ export {
     faTree,
     faTriangleExclamation,
     faXmark,
+    faPrint,
+    faLink,
+    faCircleQuestion,
+    faChartLine,
+    faThumbsUp,
+    faThumbsDown,
+    faBinoculars,
+    faFileLines,
     farCopy,
     farEye,
     farEyeSlash,

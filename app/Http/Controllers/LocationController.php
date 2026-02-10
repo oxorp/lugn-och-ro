@@ -8,6 +8,7 @@ use App\Models\Indicator;
 use App\Models\IndicatorValue;
 use App\Models\PoiCategory;
 use App\Services\DataTieringService;
+use App\Services\IsochroneService;
 use App\Services\PreviewStatsService;
 use App\Services\ProximityScoreService;
 use Illuminate\Http\JsonResponse;
@@ -37,6 +38,7 @@ class LocationController extends Controller
         private DataTieringService $tiering,
         private ProximityScoreService $proximityService,
         private PreviewStatsService $previewStats,
+        private IsochroneService $isochroneService,
     ) {}
 
     public function show(Request $request, float $lat, float $lng): JsonResponse
@@ -106,6 +108,22 @@ class LocationController extends Controller
         $urbanityTier = $deso->urbanity_tier ?? 'semi_urban';
         $displayRadius = $this->getQueryRadius('display_radius', $urbanityTier);
 
+        // Generate isochrone for map overlay
+        $isochrone = null;
+        $isochroneMode = null;
+        $boundaryWkt = null;
+        if (config('proximity.isochrone.enabled')) {
+            $isochroneMode = config("proximity.isochrone.costing.{$urbanityTier}", 'pedestrian');
+            $contours = config("proximity.isochrone.display_contours.{$urbanityTier}", [5, 10, 15]);
+            $isochrone = $this->isochroneService->generate($lat, $lng, $isochroneMode, $contours);
+
+            if ($isochrone) {
+                $boundaryWkt = $this->isochroneService->outermostPolygonWkt(
+                    $lat, $lng, $isochroneMode, max($contours)
+                );
+            }
+        }
+
         // Public tier: location + score + preview metadata (no actual values)
         if ($tier === DataTier::Public) {
             $preview = $this->buildPreview($deso->deso_code, $lat, $lng);
@@ -123,6 +141,8 @@ class LocationController extends Controller
                 'score' => $scoreData,
                 'tier' => $tier->value,
                 'display_radius' => $displayRadius,
+                'isochrone' => $isochrone,
+                'isochrone_mode' => $isochroneMode,
                 'preview' => $preview,
                 'proximity' => null,
                 'indicators' => [],
@@ -148,81 +168,22 @@ class LocationController extends Controller
             ->orderBy('year')
             ->get(['year', 'score']);
 
-        // 6. Get nearby schools
-        $schoolRadius = $this->getQueryRadius('school_query_radius', $urbanityTier);
-        $schools = DB::select('
-            SELECT s.name, s.type_of_schooling, s.operator_type, s.lat, s.lng,
-                   ss.merit_value_17, ss.goal_achievement_pct,
-                   ss.teacher_certification_pct, ss.student_count,
-                   ST_Distance(
-                       s.geom::geography,
-                       ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography
-                   ) as distance_m
-            FROM schools s
-            LEFT JOIN school_statistics ss ON ss.school_unit_code = s.school_unit_code
-                AND ss.academic_year = (
-                    SELECT MAX(academic_year) FROM school_statistics
-                    WHERE school_unit_code = s.school_unit_code
-                )
-            WHERE s.status = \'active\'
-              AND s.geom IS NOT NULL
-              AND ST_DWithin(
-                  s.geom::geography,
-                  ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography,
-                  ?
-              )
-            ORDER BY distance_m
-            LIMIT 10
-        ', [$lng, $lat, $lng, $lat, $schoolRadius]);
+        // 6. Get nearby schools (inside isochrone polygon or radius fallback)
+        $schools = $boundaryWkt
+            ? $this->querySchoolsInPolygon($lng, $lat, $boundaryWkt)
+            : $this->querySchoolsByRadius($lng, $lat, $urbanityTier);
 
         // 7. Get POIs — split into map markers (Tier 1) and sidebar counts (Tier 2)
-        $poiRadius = $this->getQueryRadius('poi_query_radius', $urbanityTier);
         $poiCategories = PoiCategory::all();
-        $mapSlugs = $poiCategories->where('show_on_map', true)->pluck('slug')->all();
 
-        // Tier 1: Full details + coordinates for map markers (show_on_map categories only)
-        $mapPois = [];
-        if (! empty($mapSlugs)) {
-            $mapPois = DB::select('
-                SELECT p.name, p.category, p.lat, p.lng, p.subcategory,
-                       ST_Distance(
-                           p.geom::geography,
-                           ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography
-                       ) as distance_m
-                FROM pois p
-                JOIN poi_categories pc ON pc.slug = p.category
-                WHERE p.status = \'active\'
-                  AND pc.show_on_map = true
-                  AND p.geom IS NOT NULL
-                  AND ST_DWithin(
-                      p.geom::geography,
-                      ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography,
-                      ?
-                  )
-                ORDER BY distance_m
-                LIMIT 100
-            ', [$lng, $lat, $lng, $lat, $poiRadius]);
-        }
+        // Inside isochrone polygon or radius fallback
+        $mapPois = $boundaryWkt
+            ? $this->queryMapPoisInPolygon($lng, $lat, $boundaryWkt)
+            : $this->queryMapPoisByRadius($lng, $lat, $urbanityTier);
 
-        // Tier 2: Counts + nearest distance for sidebar (all categories)
-        $poiSummary = DB::select('
-            SELECT p.category,
-                   COUNT(*) as count,
-                   ROUND(MIN(ST_Distance(
-                       p.geom::geography,
-                       ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography
-                   ))::numeric) as nearest_m
-            FROM pois p
-            WHERE p.status = \'active\'
-              AND p.geom IS NOT NULL
-              AND ST_DWithin(
-                  p.geom::geography,
-                  ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography,
-                  ?
-              )
-            GROUP BY p.category
-            ORDER BY count DESC
-        ', [$lng, $lat, $lng, $lat, $poiRadius]);
+        $poiSummary = $boundaryWkt
+            ? $this->queryPoiSummaryInPolygon($lng, $lat, $boundaryWkt)
+            : $this->queryPoiSummaryByRadius($lng, $lat, $urbanityTier);
 
         // 8. Build POI category metadata for rendering
         $poiCategoryMap = $poiCategories->mapWithKeys(fn ($cat) => [
@@ -273,6 +234,8 @@ class LocationController extends Controller
             'score' => $scoreData,
             'tier' => $tier->value,
             'display_radius' => $displayRadius,
+            'isochrone' => $isochrone,
+            'isochrone_mode' => $isochroneMode,
             'proximity' => $proximity->toArray(),
             'indicators' => $indicatorsWithTrend,
             'schools' => collect($schools)->map(fn ($s) => [
@@ -565,6 +528,170 @@ class LocationController extends Controller
                 'change_5y' => $this->computePercentileChange($history, $currentYear, 5),
             ],
         ];
+    }
+
+    // ─── School queries ─────────────────────────────────────
+
+    /** @return array<int, object> */
+    private function querySchoolsInPolygon(float $lng, float $lat, string $boundaryWkt): array
+    {
+        return DB::select('
+            SELECT s.name, s.type_of_schooling, s.operator_type, s.lat, s.lng,
+                   ss.merit_value_17, ss.goal_achievement_pct,
+                   ss.teacher_certification_pct, ss.student_count,
+                   ST_Distance(
+                       s.geom::geography,
+                       ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography
+                   ) as distance_m
+            FROM schools s
+            LEFT JOIN school_statistics ss ON ss.school_unit_code = s.school_unit_code
+                AND ss.academic_year = (
+                    SELECT MAX(academic_year) FROM school_statistics
+                    WHERE school_unit_code = s.school_unit_code
+                )
+            WHERE s.status = \'active\'
+              AND s.geom IS NOT NULL
+              AND ST_Contains(
+                  ST_SetSRID(ST_GeomFromText(?), 4326),
+                  s.geom
+              )
+            ORDER BY distance_m
+            LIMIT 15
+        ', [$lng, $lat, $boundaryWkt]);
+    }
+
+    /** @return array<int, object> */
+    private function querySchoolsByRadius(float $lng, float $lat, string $urbanityTier): array
+    {
+        $radius = $this->getQueryRadius('school_query_radius', $urbanityTier);
+
+        return DB::select('
+            SELECT s.name, s.type_of_schooling, s.operator_type, s.lat, s.lng,
+                   ss.merit_value_17, ss.goal_achievement_pct,
+                   ss.teacher_certification_pct, ss.student_count,
+                   ST_Distance(
+                       s.geom::geography,
+                       ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography
+                   ) as distance_m
+            FROM schools s
+            LEFT JOIN school_statistics ss ON ss.school_unit_code = s.school_unit_code
+                AND ss.academic_year = (
+                    SELECT MAX(academic_year) FROM school_statistics
+                    WHERE school_unit_code = s.school_unit_code
+                )
+            WHERE s.status = \'active\'
+              AND s.geom IS NOT NULL
+              AND ST_DWithin(
+                  s.geom::geography,
+                  ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography,
+                  ?
+              )
+            ORDER BY distance_m
+            LIMIT 10
+        ', [$lng, $lat, $lng, $lat, $radius]);
+    }
+
+    // ─── POI queries ────────────────────────────────────────
+
+    /** @return array<int, object> */
+    private function queryMapPoisInPolygon(float $lng, float $lat, string $boundaryWkt): array
+    {
+        return DB::select('
+            SELECT p.name, p.category, p.lat, p.lng, p.subcategory,
+                   ST_Distance(
+                       p.geom::geography,
+                       ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography
+                   ) as distance_m
+            FROM pois p
+            JOIN poi_categories pc ON pc.slug = p.category
+            WHERE p.status = \'active\'
+              AND pc.show_on_map = true
+              AND p.geom IS NOT NULL
+              AND ST_Contains(
+                  ST_SetSRID(ST_GeomFromText(?), 4326),
+                  p.geom
+              )
+            ORDER BY distance_m
+            LIMIT 100
+        ', [$lng, $lat, $boundaryWkt]);
+    }
+
+    /** @return array<int, object> */
+    private function queryMapPoisByRadius(float $lng, float $lat, string $urbanityTier): array
+    {
+        $radius = $this->getQueryRadius('poi_query_radius', $urbanityTier);
+        $hasMapCategories = PoiCategory::where('show_on_map', true)->exists();
+
+        if (! $hasMapCategories) {
+            return [];
+        }
+
+        return DB::select('
+            SELECT p.name, p.category, p.lat, p.lng, p.subcategory,
+                   ST_Distance(
+                       p.geom::geography,
+                       ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography
+                   ) as distance_m
+            FROM pois p
+            JOIN poi_categories pc ON pc.slug = p.category
+            WHERE p.status = \'active\'
+              AND pc.show_on_map = true
+              AND p.geom IS NOT NULL
+              AND ST_DWithin(
+                  p.geom::geography,
+                  ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography,
+                  ?
+              )
+            ORDER BY distance_m
+            LIMIT 100
+        ', [$lng, $lat, $lng, $lat, $radius]);
+    }
+
+    /** @return array<int, object> */
+    private function queryPoiSummaryInPolygon(float $lng, float $lat, string $boundaryWkt): array
+    {
+        return DB::select('
+            SELECT p.category,
+                   COUNT(*) as count,
+                   ROUND(MIN(ST_Distance(
+                       p.geom::geography,
+                       ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography
+                   ))::numeric) as nearest_m
+            FROM pois p
+            WHERE p.status = \'active\'
+              AND p.geom IS NOT NULL
+              AND ST_Contains(
+                  ST_SetSRID(ST_GeomFromText(?), 4326),
+                  p.geom
+              )
+            GROUP BY p.category
+            ORDER BY count DESC
+        ', [$lng, $lat, $boundaryWkt]);
+    }
+
+    /** @return array<int, object> */
+    private function queryPoiSummaryByRadius(float $lng, float $lat, string $urbanityTier): array
+    {
+        $radius = $this->getQueryRadius('poi_query_radius', $urbanityTier);
+
+        return DB::select('
+            SELECT p.category,
+                   COUNT(*) as count,
+                   ROUND(MIN(ST_Distance(
+                       p.geom::geography,
+                       ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography
+                   ))::numeric) as nearest_m
+            FROM pois p
+            WHERE p.status = \'active\'
+              AND p.geom IS NOT NULL
+              AND ST_DWithin(
+                  p.geom::geography,
+                  ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography,
+                  ?
+              )
+            GROUP BY p.category
+            ORDER BY count DESC
+        ', [$lng, $lat, $lng, $lat, $radius]);
     }
 
     /**

@@ -27,6 +27,7 @@ import {
 
 import { usePage } from '@inertiajs/react';
 import type { SharedData } from '@/types';
+import type { IsochroneData } from '@/pages/explore/types';
 import { useTranslation } from '@/hooks/use-translation';
 import { meritToColor, scoreGradientCSS } from '@/lib/score-colors';
 import { getPoiMarkerDataUrl, hasIcon } from '@/lib/poi-icons';
@@ -65,6 +66,8 @@ export interface HeatmapMapHandle {
     setSchoolMarkers: (schools: SchoolMarker[]) => void;
     clearSchoolMarkers: () => void;
     setRadiusCircle: (lat: number, lng: number, radiusMeters: number) => void;
+    setIsochrone: (geojson: IsochroneData) => void;
+    clearIsochrone: () => void;
     setPoiMarkers: (pois: PoiMarker[], categories: Record<string, PoiCategoryMeta>) => void;
     clearPoiMarkers: () => void;
     zoomToPoint: (lat: number, lng: number, zoom: number) => void;
@@ -192,6 +195,7 @@ const HeatmapMap = forwardRef<HeatmapMapHandle, HeatmapMapProps>(function Heatma
     const pinSourceRef = useRef<VectorSource | null>(null);
     const schoolSourceRef = useRef<VectorSource | null>(null);
     const radiusSourceRef = useRef<VectorSource | null>(null);
+    const isochroneSourceRef = useRef<VectorSource | null>(null);
     const poiSourceRef = useRef<VectorSource | null>(null);
     const schoolLayerRef = useRef<VectorLayer | null>(null);
     const poiLayerRef = useRef<VectorLayer | null>(null);
@@ -243,6 +247,7 @@ const HeatmapMap = forwardRef<HeatmapMapHandle, HeatmapMapProps>(function Heatma
             pinSourceRef.current?.clear();
             schoolSourceRef.current?.clear();
             radiusSourceRef.current?.clear();
+            isochroneSourceRef.current?.clear();
             poiSourceRef.current?.clear();
         },
         setSchoolMarkers(schools: SchoolMarker[]) {
@@ -304,11 +309,31 @@ const HeatmapMap = forwardRef<HeatmapMapHandle, HeatmapMapProps>(function Heatma
             const source = radiusSourceRef.current;
             if (!source) return;
             source.clear();
+            // Also clear isochrone when showing radius (fallback mode)
+            isochroneSourceRef.current?.clear();
 
             const circleGeom = circular([lng, lat], radiusMeters, 64);
             circleGeom.transform('EPSG:4326', 'EPSG:3857');
 
             source.addFeature(new Feature({ geometry: circleGeom }));
+        },
+        setIsochrone(geojson: IsochroneData) {
+            const source = isochroneSourceRef.current;
+            if (!source) return;
+            source.clear();
+
+            // Clear old radius circle when showing isochrone
+            radiusSourceRef.current?.clear();
+
+            const format = new GeoJSON();
+            const features = format.readFeatures(geojson, {
+                featureProjection: 'EPSG:3857',
+            });
+
+            source.addFeatures(features);
+        },
+        clearIsochrone() {
+            isochroneSourceRef.current?.clear();
         },
         setPoiMarkers(pois: PoiMarker[], categories: Record<string, PoiCategoryMeta>) {
             const source = poiSourceRef.current;
@@ -446,7 +471,7 @@ const HeatmapMap = forwardRef<HeatmapMapHandle, HeatmapMapProps>(function Heatma
         });
         heatmapLayerRef.current = heatmapLayer;
 
-        // Radius circle layer (3km ring around pin)
+        // Radius circle layer (fallback when isochrone unavailable)
         const radiusSource = new VectorSource();
         radiusSourceRef.current = radiusSource;
         const radiusLayer = new VectorLayer({
@@ -460,6 +485,30 @@ const HeatmapMap = forwardRef<HeatmapMapHandle, HeatmapMapProps>(function Heatma
                 fill: new Fill({ color: 'rgba(100, 116, 139, 0.04)' }),
             }),
             zIndex: 4,
+        });
+
+        // Isochrone layer — replaces radius circle when Valhalla is available
+        const isochroneSource = new VectorSource();
+        isochroneSourceRef.current = isochroneSource;
+        const isochroneLayer = new VectorLayer({
+            source: isochroneSource,
+            zIndex: 4,
+            style: (feature) => {
+                const contour = feature.get('contour') as number;
+                const opacity = contour <= 5 ? 0.15 : contour <= 10 ? 0.08 : 0.04;
+                const strokeOpacity = contour <= 5 ? 0.6 : contour <= 10 ? 0.4 : 0.25;
+
+                return new Style({
+                    fill: new Fill({
+                        color: `rgba(59, 130, 246, ${opacity})`,
+                    }),
+                    stroke: new Stroke({
+                        color: `rgba(59, 130, 246, ${strokeOpacity})`,
+                        width: contour <= 5 ? 2 : 1.5,
+                        lineDash: contour >= 15 ? [6, 4] : undefined,
+                    }),
+                });
+            },
         });
 
         // POI markers layer
@@ -558,6 +607,7 @@ const HeatmapMap = forwardRef<HeatmapMapHandle, HeatmapMapProps>(function Heatma
                 borderLayer,
                 heatmapLayer,
                 radiusLayer,
+                isochroneLayer,
                 vulnLayer,
                 poiLayer,
                 schoolLayer,
@@ -774,6 +824,7 @@ const HeatmapMap = forwardRef<HeatmapMapHandle, HeatmapMapProps>(function Heatma
                 pinSource.clear();
                 schoolSource.clear();
                 radiusSource.clear();
+                isochroneSource.clear();
                 poiSource.clear();
                 onPinClearRef.current();
             }

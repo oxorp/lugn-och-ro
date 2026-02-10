@@ -79,9 +79,13 @@ export function useLocationData(mapRef: React.RefObject<HeatmapMapHandle | null>
             const data: LocationData = await response.json();
             setLocationData(data);
 
-            // Zoom to neighborhood level and show radius
+            // Zoom to neighborhood level and show isochrone or radius fallback
             mapRef.current?.zoomToPoint(lat, lng, 14);
-            mapRef.current?.setRadiusCircle(lat, lng, data.display_radius);
+            if (data.isochrone) {
+                mapRef.current?.setIsochrone(data.isochrone);
+            } else {
+                mapRef.current?.setRadiusCircle(lat, lng, data.display_radius);
+            }
 
             // Set school markers on map
             mapRef.current?.setSchoolMarkers(data.schools);
@@ -108,6 +112,7 @@ export function useLocationData(mapRef: React.RefObject<HeatmapMapHandle | null>
         setLocationName(null);
         mapRef.current?.clearSchoolMarkers();
         mapRef.current?.clearPoiMarkers();
+        mapRef.current?.clearIsochrone();
         window.history.pushState(null, '', '/');
     }, [mapRef]);
 

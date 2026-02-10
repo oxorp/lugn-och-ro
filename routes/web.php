@@ -6,6 +6,7 @@ use App\Http\Controllers\AdminIndicatorController;
 use App\Http\Controllers\AdminPenaltyController;
 use App\Http\Controllers\AdminPipelineController;
 use App\Http\Controllers\AdminPoiCategoryController;
+use App\Http\Controllers\AdminReportController;
 use App\Http\Controllers\AdminScoreController;
 use App\Http\Controllers\DesoController;
 use App\Http\Controllers\H3Controller;
@@ -122,6 +123,8 @@ $webRoutes = function () {
         Route::get('/pipeline/{source}', [AdminPipelineController::class, 'show'])->name('admin.pipeline.show');
         Route::post('/pipeline/{source}/run', [AdminPipelineController::class, 'run'])->name('admin.pipeline.run');
         Route::post('/pipeline/run-all', [AdminPipelineController::class, 'runAll'])->name('admin.pipeline.run-all');
+
+        Route::post('/reports/generate', [AdminReportController::class, 'store'])->name('admin.reports.generate');
     });
 };
 
