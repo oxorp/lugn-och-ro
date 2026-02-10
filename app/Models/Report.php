@@ -48,6 +48,8 @@ class Report extends Model
         'model_version',
         'indicator_count',
         'year',
+        'isochrone',
+        'isochrone_mode',
     ];
 
     /**
@@ -78,6 +80,7 @@ class Report extends Model
             'top_positive' => 'array',
             'top_negative' => 'array',
             'priorities' => 'array',
+            'isochrone' => 'array',
         ];
     }
 

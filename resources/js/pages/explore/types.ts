@@ -64,6 +64,25 @@ export interface PreviewData {
     cta_summary: PreviewCtaSummary;
 }
 
+export interface IsochroneFeature {
+    type: 'Feature';
+    geometry: {
+        type: 'Polygon' | 'MultiPolygon';
+        coordinates: number[][][] | number[][][][];
+    };
+    properties: {
+        contour: number;
+        area_km2: number;
+        color?: string;
+        opacity?: number;
+    };
+}
+
+export interface IsochroneData {
+    type: 'FeatureCollection';
+    features: IsochroneFeature[];
+}
+
 export interface LocationData {
     location: {
         lat: number;
@@ -97,6 +116,8 @@ export interface LocationData {
     } | null;
     tier: number;
     display_radius: number;
+    isochrone: IsochroneData | null;
+    isochrone_mode: 'pedestrian' | 'auto' | 'bicycle' | null;
     preview?: PreviewData;
     proximity: ProximityData | null;
     indicators: Array<{

@@ -84,4 +84,79 @@ return [
         ],
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Isochrone Configuration
+    |--------------------------------------------------------------------------
+    */
+
+    'isochrone' => [
+        'enabled' => env('ISOCHRONE_ENABLED', true),
+        'valhalla_url' => env('VALHALLA_URL', 'http://valhalla:8002'),
+
+        // Display contours shown on map (minutes), per urbanity tier
+        'display_contours' => [
+            'urban' => [5, 10, 15],
+            'semi_urban' => [5, 10, 15],
+            'rural' => [5, 10, 20],
+        ],
+
+        // Travel mode per urbanity tier
+        'costing' => [
+            'urban' => 'pedestrian',
+            'semi_urban' => 'pedestrian',
+            'rural' => 'auto',
+        ],
+
+        // Outermost contour used as scoring boundary per urbanity tier (minutes)
+        'scoring_contour' => [
+            'urban' => 15,
+            'semi_urban' => 15,
+            'rural' => 20,
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Scoring Times (replaces scoring_radii when isochrone is enabled)
+    |--------------------------------------------------------------------------
+    |
+    | Max travel time per category in minutes. Beyond this time,
+    | the category contributes 0 to the proximity score.
+    |
+    */
+
+    'scoring_times' => [
+        'school' => [
+            'urban' => 15,
+            'semi_urban' => 15,
+            'rural' => 20,
+        ],
+        'green_space' => [
+            'urban' => 10,
+            'semi_urban' => 10,
+            'rural' => 5,
+        ],
+        'transit' => [
+            'urban' => 8,
+            'semi_urban' => 10,
+            'rural' => 15,
+        ],
+        'grocery' => [
+            'urban' => 10,
+            'semi_urban' => 12,
+            'rural' => 15,
+        ],
+        'negative_poi' => [
+            'urban' => 5,
+            'semi_urban' => 5,
+            'rural' => 5,
+        ],
+        'positive_poi' => [
+            'urban' => 10,
+            'semi_urban' => 10,
+            'rural' => 15,
+        ],
+    ],
+
 ];

@@ -24,6 +24,7 @@ class ReportGenerationService
     public function __construct(
         private VerdictService $verdictService,
         private ProximityScoreService $proximityService,
+        private IsochroneService $isochroneService,
     ) {}
 
     /**
@@ -95,6 +96,21 @@ class ReportGenerationService
         $proximity = $this->proximityService->scoreCached((float) $report->lat, (float) $report->lng);
         $proximityFactors = $proximity->toArray();
 
+        // 7b. Isochrone data
+        $isochrone = null;
+        $isochroneMode = null;
+        if (config('proximity.isochrone.enabled')) {
+            $urbanityTier = $deso->urbanity_tier ?? 'semi_urban';
+            $isochroneMode = config("proximity.isochrone.costing.{$urbanityTier}", 'pedestrian');
+            $contours = config("proximity.isochrone.display_contours.{$urbanityTier}", [5, 10, 15]);
+            $isochrone = $this->isochroneService->generate(
+                (float) $report->lat,
+                (float) $report->lng,
+                $isochroneMode,
+                $contours,
+            );
+        }
+
         // 8. Map snapshot data
         $mapSnapshot = $this->getMapSnapshot($deso->deso_code, (float) $report->lat, (float) $report->lng, $schools);
 
@@ -130,6 +146,8 @@ class ReportGenerationService
             'model_version' => self::MODEL_VERSION,
             'indicator_count' => count($indicators),
             'year' => $year,
+            'isochrone' => $isochrone,
+            'isochrone_mode' => $isochroneMode,
         ]);
 
         return $report->fresh();

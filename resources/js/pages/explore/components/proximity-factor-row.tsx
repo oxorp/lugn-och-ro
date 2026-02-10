@@ -25,9 +25,23 @@ export function ProximityFactorRow({ factor }: { factor: ProximityFactor }) {
     const distanceM = config.distanceKey
         ? (details[config.distanceKey] as number | undefined)
         : undefined;
-    const effectiveDistanceM = details.effective_distance_m as
-        | number
-        | undefined;
+    const travelMinutes = details.travel_minutes as number | undefined;
+    const scoringMode = details.scoring_mode as string | undefined;
+    const costing = details.costing as string | undefined;
+
+    // Build distance/time label
+    const isIsochrone = scoringMode === 'isochrone';
+    const modeLabel = costing === 'auto' ? 'bil' : 'promenad';
+
+    let distanceLabel: string | null = null;
+    if (isIsochrone && travelMinutes !== undefined && travelMinutes > 0) {
+        const timePart = `${travelMinutes} min ${modeLabel}`;
+        distanceLabel = distanceM !== undefined && distanceM > 0
+            ? `${timePart} · ${formatDistance(distanceM)}`
+            : timePart;
+    } else if (distanceM !== undefined && distanceM > 0) {
+        distanceLabel = formatDistance(distanceM);
+    }
 
     // Special label for negative/positive POI counts
     let subtitle: string | null = null;
@@ -64,28 +78,12 @@ export function ProximityFactorRow({ factor }: { factor: ProximityFactor }) {
                     }}
                 />
             </div>
-            {(subtitle || distanceM !== undefined) && (
+            {(subtitle || distanceLabel) && (
                 <div className="flex items-center justify-between text-[11px] text-muted-foreground">
                     <span className="truncate">{subtitle}</span>
-                    {distanceM !== undefined && distanceM > 0 && (
+                    {distanceLabel && (
                         <span className="ml-2 shrink-0 tabular-nums">
-                            {formatDistance(distanceM)}
-                            {effectiveDistanceM !== undefined &&
-                                effectiveDistanceM > distanceM + 10 && (
-                                    <span className="ml-1 text-orange-600">
-                                        (
-                                        {t(
-                                            'sidebar.proximity.effective_distance',
-                                            {
-                                                distance:
-                                                    formatDistance(
-                                                        effectiveDistanceM,
-                                                    ),
-                                            },
-                                        )}
-                                        )
-                                    </span>
-                                )}
+                            {distanceLabel}
                         </span>
                     )}
                 </div>

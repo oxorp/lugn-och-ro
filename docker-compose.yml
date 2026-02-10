@@ -74,6 +74,30 @@ services:
       timeout: 5s
       retries: 5
 
+  # Valhalla Routing Engine (isochrone + matrix)
+  valhalla:
+    image: ghcr.io/gis-ops/docker-valhalla/valhalla:latest
+    container_name: skapa-valhalla
+    restart: unless-stopped
+    ports:
+      - "${VALHALLA_PORT:-8002}:8002"
+    volumes:
+      - skapa-valhalla-data:/custom_files
+    environment:
+      - tile_urls=https://download.geofabrik.de/europe/sweden-latest.osm.pbf
+      - serve_tiles=True
+      - build_elevation=False
+      - build_admins=False
+      - build_time_zones=False
+      - force_rebuild=False
+    networks:
+      - skapa-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
   # Horizon Queue Manager
   horizon:
     build:
@@ -103,3 +127,4 @@ networks:
 volumes:
   skapa-postgres-data:
   skapa-redis-data:
+  skapa-valhalla-data:
