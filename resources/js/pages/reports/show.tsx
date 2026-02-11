@@ -274,6 +274,22 @@ const CATEGORY_ICONS: Record<string, typeof faShieldHalved> = {
 
 const CATEGORY_ORDER = ['safety', 'economy', 'education', 'environment'];
 
+// Priority labels mapping for Swedish display
+const PRIORITY_LABELS: Record<string, string> = {
+    schools: 'Bra skolor',
+    safety: 'Trygghet & säkerhet',
+    green_areas: 'Grönområden & natur',
+    shopping: 'Butiker & service',
+    transit: 'Kollektivtrafik',
+    healthcare: 'Sjukvård & vårdcentral',
+    dining: 'Restauranger & matställen',
+    quiet: 'Lugnt & fridfullt',
+};
+
+function formatPriorityLabel(key: string): string {
+    return PRIORITY_LABELS[key] ?? key;
+}
+
 // ── Sub-components ──────────────────────────────────────────────────
 
 function ReportNav({ uuid }: { uuid: string }) {
@@ -373,10 +389,14 @@ function ReportHeroScore({ report }: { report: ReportData }) {
     const displayScore = report.personalized_score ?? report.default_score ?? report.score;
     if (displayScore == null) return null;
 
-    const diff =
-        report.personalized_score != null && report.default_score != null
-            ? report.personalized_score - report.default_score
-            : 0;
+    const hasPersonalization =
+        report.personalized_score != null && report.default_score != null;
+    const diff = hasPersonalization
+        ? report.personalized_score! - report.default_score!
+        : 0;
+
+    // Format priorities as Swedish labels
+    const priorityLabels = report.priorities.map(formatPriorityLabel);
 
     return (
         <Card>
@@ -417,25 +437,77 @@ function ReportHeroScore({ report }: { report: ReportData }) {
 
                 {report.priorities.length > 0 && (
                     <div className="mt-6 border-t pt-4">
-                        <p className="text-sm text-muted-foreground">
-                            Baserat på dina prioriteringar:{' '}
-                            {report.priorities.join(' \u00b7 ')}
+                        <p className="text-sm font-medium text-muted-foreground">
+                            Baserat på dina prioriteringar:
                         </p>
-                        {diff !== 0 && (
-                            <p className="mt-1 text-sm">
-                                Personlig poäng:{' '}
-                                {Math.round(report.personalized_score!)}{' '}
+                        <div className="mt-2 flex flex-wrap gap-2">
+                            {priorityLabels.map((label) => (
                                 <span
-                                    className={
-                                        diff > 0
-                                            ? 'text-green-600'
-                                            : 'text-red-600'
-                                    }
+                                    key={label}
+                                    className="inline-flex items-center rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary"
                                 >
-                                    ({diff > 0 ? '+' : ''}
-                                    {diff.toFixed(0)} jämfört med standard{' '}
-                                    {Math.round(report.default_score!)})
+                                    {label}
                                 </span>
+                            ))}
+                        </div>
+
+                        {hasPersonalization && (
+                            <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
+                                {/* Personalized score badge */}
+                                <div className="flex items-center gap-2">
+                                    <div
+                                        className="flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold text-white"
+                                        style={{
+                                            backgroundColor: scoreToColor(
+                                                report.personalized_score!,
+                                            ),
+                                        }}
+                                    >
+                                        {Math.round(report.personalized_score!)}
+                                    </div>
+                                    <span className="text-sm">
+                                        Din personliga poäng
+                                    </span>
+                                </div>
+
+                                {/* Comparison arrow */}
+                                {diff !== 0 && (
+                                    <span
+                                        className={`text-sm font-medium ${
+                                            diff > 0
+                                                ? 'text-green-600'
+                                                : 'text-red-600'
+                                        }`}
+                                    >
+                                        {diff > 0 ? '+' : ''}
+                                        {diff.toFixed(0)} poäng
+                                    </span>
+                                )}
+
+                                {/* Default score badge */}
+                                <div className="flex items-center gap-2 text-muted-foreground">
+                                    <div
+                                        className="flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold text-white opacity-60"
+                                        style={{
+                                            backgroundColor: scoreToColor(
+                                                report.default_score!,
+                                            ),
+                                        }}
+                                    >
+                                        {Math.round(report.default_score!)}
+                                    </div>
+                                    <span className="text-sm">
+                                        Standardpoäng
+                                    </span>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Show note when diff is 0 but priorities exist */}
+                        {hasPersonalization && diff === 0 && (
+                            <p className="mt-2 text-xs text-muted-foreground">
+                                Dina prioriteringar påverkar inte poängen för
+                                detta område.
                             </p>
                         )}
                     </div>
