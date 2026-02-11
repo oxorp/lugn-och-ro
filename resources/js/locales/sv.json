@@ -260,5 +260,11 @@
         "cancel": "Avbryt",
         "search": "S\u00f6k...",
         "no_results": "Inga resultat hittades"
+    },
+    "footer": {
+        "company": "Platsindex AB",
+        "rights": "Alla r\u00e4ttigheter f\u00f6rbeh\u00e5llna",
+        "privacy": "Integritetspolicy",
+        "terms": "Anv\u00e4ndarvillkor"
     }
 }
