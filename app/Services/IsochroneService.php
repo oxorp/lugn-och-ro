@@ -195,6 +195,214 @@ class IsochroneService
     }
 
     /**
+     * Generate multiple reachability rings based on urbanity tier and user preferences.
+     *
+     * Ring configuration:
+     * - All locations: Ring 1 = 5 min walking
+     * - Urban/Semi-urban: Ring 2 = user's walking distance preference
+     * - Rural + car: Ring 2 = user preference walk, Ring 3 = 10 min driving
+     * - Rural + no car: Ring 2 = half preference walk, Ring 3 = full preference walk
+     *
+     * @param  string  $urbanityTier  'urban', 'semi_urban', or 'rural'
+     * @param  int  $walkingDistanceMinutes  User's preferred walking distance (10, 15, 20, or 30)
+     * @param  bool|null  $hasCar  Whether user has a car (only relevant for rural)
+     * @return array{rings: array, geojson: array{type: string, features: array}}|null
+     */
+    public function generateMultipleRings(
+        float $lat,
+        float $lng,
+        string $urbanityTier = 'urban',
+        int $walkingDistanceMinutes = 15,
+        ?bool $hasCar = null,
+    ): ?array {
+        $ringConfig = config('questionnaire.ring_config');
+        $ringRules = config('questionnaire.ring_rules');
+
+        // Build ring definitions based on urbanity and car ownership
+        $ringDefinitions = $this->buildRingDefinitions(
+            $urbanityTier,
+            $walkingDistanceMinutes,
+            $hasCar,
+            $ringConfig,
+            $ringRules
+        );
+
+        // Group rings by costing mode to minimize Valhalla calls
+        $pedestrianContours = [];
+        $autoContours = [];
+
+        foreach ($ringDefinitions as $ringDef) {
+            if ($ringDef['mode'] === 'pedestrian') {
+                $pedestrianContours[$ringDef['minutes']] = $ringDef;
+            } else {
+                $autoContours[$ringDef['minutes']] = $ringDef;
+            }
+        }
+
+        $allFeatures = [];
+
+        // Generate pedestrian isochrones
+        if (! empty($pedestrianContours)) {
+            $contourMinutes = array_keys($pedestrianContours);
+            sort($contourMinutes);
+            $geojson = $this->generate($lat, $lng, 'pedestrian', $contourMinutes);
+
+            if ($geojson && ! empty($geojson['features'])) {
+                foreach ($geojson['features'] as $feature) {
+                    $contour = $feature['properties']['contour'] ?? null;
+                    if ($contour !== null && isset($pedestrianContours[$contour])) {
+                        $ringDef = $pedestrianContours[$contour];
+                        $feature['properties']['ring'] = $ringDef['ring'];
+                        $feature['properties']['mode'] = 'pedestrian';
+                        $feature['properties']['label'] = $ringDef['label'];
+                        $feature['properties']['color'] = $ringDef['color'];
+                        $allFeatures[] = $feature;
+                    }
+                }
+            }
+        }
+
+        // Generate auto isochrones if needed (rural with car)
+        if (! empty($autoContours)) {
+            $contourMinutes = array_keys($autoContours);
+            sort($contourMinutes);
+            $geojson = $this->generate($lat, $lng, 'auto', $contourMinutes);
+
+            if ($geojson && ! empty($geojson['features'])) {
+                foreach ($geojson['features'] as $feature) {
+                    $contour = $feature['properties']['contour'] ?? null;
+                    if ($contour !== null && isset($autoContours[$contour])) {
+                        $ringDef = $autoContours[$contour];
+                        $feature['properties']['ring'] = $ringDef['ring'];
+                        $feature['properties']['mode'] = 'auto';
+                        $feature['properties']['label'] = $ringDef['label'];
+                        $feature['properties']['color'] = $ringDef['color'];
+                        $allFeatures[] = $feature;
+                    }
+                }
+            }
+        }
+
+        if (empty($allFeatures)) {
+            return null;
+        }
+
+        // Sort features by ring number (outermost first for proper layering)
+        usort($allFeatures, fn ($a, $b) => ($b['properties']['ring'] ?? 0) <=> ($a['properties']['ring'] ?? 0));
+
+        return [
+            'rings' => array_values($ringDefinitions),
+            'geojson' => [
+                'type' => 'FeatureCollection',
+                'features' => $allFeatures,
+            ],
+        ];
+    }
+
+    /**
+     * Build ring definitions based on urbanity tier and user preferences.
+     *
+     * @return array<array{ring: int, minutes: int, mode: string, label: string, color: string}>
+     */
+    private function buildRingDefinitions(
+        string $urbanityTier,
+        int $walkingDistanceMinutes,
+        ?bool $hasCar,
+        array $ringConfig,
+        array $ringRules,
+    ): array {
+        $rings = [];
+
+        // Ring 1 is always 5 min walking
+        $rings[] = [
+            'ring' => 1,
+            'minutes' => $ringConfig['ring_1']['minutes'],
+            'mode' => $ringConfig['ring_1']['mode'],
+            'label' => $ringConfig['ring_1']['label_sv'],
+            'color' => $ringConfig['ring_1']['color'],
+        ];
+
+        // Get rules for this urbanity tier
+        $rules = $ringRules[$urbanityTier] ?? $ringRules['urban'];
+
+        // For rural, we need to check car ownership
+        if ($urbanityTier === 'rural') {
+            $rules = $hasCar
+                ? ($ringRules['rural']['with_car'] ?? $rules)
+                : ($ringRules['rural']['without_car'] ?? $rules);
+        }
+
+        // Build Ring 2
+        if (isset($rules['ring_2'])) {
+            $ring2Minutes = $this->resolveMinutes(
+                $rules['ring_2'],
+                $walkingDistanceMinutes
+            );
+            $ring2Mode = $rules['ring_2']['mode'] ?? 'pedestrian';
+            $ring2Label = $this->formatRingLabel($ring2Minutes, $ring2Mode, $ringConfig);
+
+            $rings[] = [
+                'ring' => 2,
+                'minutes' => $ring2Minutes,
+                'mode' => $ring2Mode,
+                'label' => $ring2Label,
+                'color' => $ringConfig['ring_2_defaults']['color'],
+            ];
+        }
+
+        // Build Ring 3 (only for rural)
+        if (isset($rules['ring_3'])) {
+            $ring3Minutes = $this->resolveMinutes(
+                $rules['ring_3'],
+                $walkingDistanceMinutes
+            );
+            $ring3Mode = $rules['ring_3']['mode'] ?? 'pedestrian';
+            $ring3Label = $this->formatRingLabel($ring3Minutes, $ring3Mode, $ringConfig);
+
+            $rings[] = [
+                'ring' => 3,
+                'minutes' => $ring3Minutes,
+                'mode' => $ring3Mode,
+                'label' => $ring3Label,
+                'color' => $ringConfig['ring_3_defaults']['color'],
+            ];
+        }
+
+        return $rings;
+    }
+
+    /**
+     * Resolve the minutes for a ring based on the rule configuration.
+     */
+    private function resolveMinutes(array $ruleConfig, int $userPreferenceMinutes): int
+    {
+        // Fixed minutes
+        if (isset($ruleConfig['minutes'])) {
+            return $ruleConfig['minutes'];
+        }
+
+        // User preference (full or half)
+        $source = $ruleConfig['source'] ?? 'user_preference';
+
+        if ($source === 'user_preference_half') {
+            return max(5, (int) floor($userPreferenceMinutes / 2));
+        }
+
+        return $userPreferenceMinutes;
+    }
+
+    /**
+     * Format the Swedish label for a ring.
+     */
+    private function formatRingLabel(int $minutes, string $mode, array $ringConfig): string
+    {
+        $templateKey = $mode === 'auto' ? 'ring_3_defaults' : 'ring_2_defaults';
+        $template = $ringConfig[$templateKey]['label_template_sv'] ?? 'Nåbart inom {minutes} min';
+
+        return str_replace('{minutes}', (string) $minutes, $template);
+    }
+
+    /**
      * Rough area estimate from polygon coordinates (Shoelace formula on lat/lng).
      */
     private function estimateAreaKm2(array $geometry): float

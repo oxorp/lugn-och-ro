@@ -41,6 +41,7 @@ class ReportController extends Controller
                 'deso_meta' => $report->deso_meta,
                 'national_references' => $report->national_references ?? [],
                 'map_snapshot' => $report->map_snapshot,
+                'reachability_rings' => $report->reachability_rings,
                 'outlook' => $report->outlook,
                 'top_positive' => $report->top_positive ?? [],
                 'top_negative' => $report->top_negative ?? [],

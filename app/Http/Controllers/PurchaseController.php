@@ -18,7 +18,7 @@ class PurchaseController extends Controller
         abort_unless($lat >= 55 && $lat <= 69 && $lng >= 11 && $lng <= 25, 404);
 
         $deso = DB::selectOne('
-            SELECT d.deso_code, d.kommun_name, d.lan_name
+            SELECT d.deso_code, d.kommun_name, d.lan_name, d.urbanity_tier
             FROM deso_areas d
             WHERE ST_Contains(d.geom, ST_SetSRID(ST_MakePoint(?, ?), 4326))
             LIMIT 1
@@ -34,6 +34,9 @@ class PurchaseController extends Controller
 
         $address = $this->reverseGeocode($lat, $lng);
 
+        // Build questionnaire config for frontend
+        $questionnaireConfig = $this->getQuestionnaireConfig();
+
         return Inertia::render('purchase/flow', [
             'lat' => $lat,
             'lng' => $lng,
@@ -41,13 +44,45 @@ class PurchaseController extends Controller
             'kommun_name' => $deso->kommun_name ?? null,
             'lan_name' => $deso->lan_name ?? null,
             'deso_code' => $deso->deso_code ?? null,
+            'urbanity_tier' => $deso->urbanity_tier ?? 'urban',
             'score' => $score->score ?? null,
             'stripe_key' => config('stripe.key'),
+            'questionnaire_config' => $questionnaireConfig,
         ]);
+    }
+
+    /**
+     * Get questionnaire configuration formatted for the frontend.
+     */
+    private function getQuestionnaireConfig(): array
+    {
+        $priorities = config('questionnaire.priorities', []);
+
+        // Format priority options for frontend (key, label_sv, icon)
+        $priorityOptions = collect($priorities)->map(function ($config, $key) {
+            return [
+                'key' => $key,
+                'label_sv' => $config['label_sv'] ?? $key,
+                'icon' => $config['icon'] ?? 'circle-question',
+            ];
+        })->values()->all();
+
+        return [
+            'priority_options' => $priorityOptions,
+            'max_priorities' => config('questionnaire.max_priorities', 3),
+            'walking_distances' => config('questionnaire.walking_distances', []),
+            'default_walking_distance' => config('questionnaire.default_walking_distance', 15),
+            'labels' => config('questionnaire.labels', []),
+        ];
     }
 
     public function checkout(Request $request): JsonResponse
     {
+        // Get valid priority keys and walking distances from config
+        $validPriorities = array_keys(config('questionnaire.priorities', []));
+        $validWalkingDistances = array_keys(config('questionnaire.walking_distances', []));
+        $maxPriorities = config('questionnaire.max_priorities', 3);
+
         $rules = [
             'lat' => 'required|numeric|min:55|max:69',
             'lng' => 'required|numeric|min:11|max:25',
@@ -57,6 +92,12 @@ class PurchaseController extends Controller
             'lan_name' => 'nullable|string|max:100',
             'score' => 'nullable|numeric',
             'email' => 'nullable|email',
+            // Questionnaire preferences
+            'preferences' => 'nullable|array',
+            'preferences.priorities' => ['nullable', 'array', 'max:'.$maxPriorities],
+            'preferences.priorities.*' => ['string', 'in:'.implode(',', $validPriorities)],
+            'preferences.walking_distance_minutes' => ['nullable', 'integer', 'in:'.implode(',', $validWalkingDistances)],
+            'preferences.has_car' => 'nullable|boolean',
         ];
 
         if (! auth()->check()) {
@@ -68,6 +109,16 @@ class PurchaseController extends Controller
         $email = auth()->check()
             ? auth()->user()->email
             : $validated['email'];
+
+        // Build preferences with defaults
+        $preferences = $validated['preferences'] ?? null;
+        if ($preferences !== null) {
+            // Ensure walking_distance_minutes has a default if not provided
+            $preferences['walking_distance_minutes'] = $preferences['walking_distance_minutes']
+                ?? config('questionnaire.default_walking_distance', 15);
+            // Ensure priorities is an array (empty if not provided)
+            $preferences['priorities'] = $preferences['priorities'] ?? [];
+        }
 
         // Create report in pending state
         $report = Report::create([
@@ -81,6 +132,7 @@ class PurchaseController extends Controller
             'lan_name' => $validated['lan_name'] ?? null,
             'deso_code' => $validated['deso_code'] ?? null,
             'score' => $validated['score'] ?? null,
+            'preferences' => $preferences,
             'amount_ore' => 7900,
             'status' => 'pending',
         ]);

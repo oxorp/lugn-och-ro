@@ -14,6 +14,30 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import type { SharedData } from '@/types';
+import QuestionnaireStep, { type UserPreferences } from './components/questionnaire-step';
+
+interface PriorityOption {
+    key: string;
+    label_sv: string;
+    icon: string;
+}
+
+interface QuestionnaireConfig {
+    priority_options: PriorityOption[];
+    max_priorities: number;
+    walking_distances: Record<number, string>;
+    default_walking_distance: number;
+    labels: {
+        question_1_title: string;
+        question_1_subtitle: string;
+        question_2_title: string;
+        question_2_subtitle: string;
+        question_3_title: string;
+        question_3_subtitle: string;
+        yes: string;
+        no: string;
+    };
+}
 
 interface Props {
     lat: number;
@@ -24,6 +48,8 @@ interface Props {
     deso_code: string | null;
     score: number | null;
     stripe_key: string;
+    urbanity_tier: 'urban' | 'semi_urban' | 'rural';
+    questionnaire_config: QuestionnaireConfig;
 }
 
 function scoreColorClass(score: number): string {
@@ -464,6 +490,7 @@ function PaymentStep({
     lan_name,
     score,
     email,
+    preferences,
 }: {
     lat: number;
     lng: number;
@@ -473,6 +500,7 @@ function PaymentStep({
     lan_name: string | null;
     score: number | null;
     email: string;
+    preferences: UserPreferences | null;
 }) {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -504,6 +532,7 @@ function PaymentStep({
                     lan_name,
                     score,
                     email,
+                    preferences,
                 }),
             });
 
@@ -591,9 +620,28 @@ export default function PurchaseFlow(props: Props) {
     const { auth } = usePage<SharedData>().props;
     const user = auth?.user;
 
-    const initialStep = user ? 'payment' : 'identity';
-    const [step, setStep] = useState<'identity' | 'payment'>(initialStep);
+    const [step, setStep] = useState<'questionnaire' | 'identity' | 'payment'>('questionnaire');
     const [guestEmail, setGuestEmail] = useState('');
+    const [userPreferences, setUserPreferences] = useState<UserPreferences | null>(null);
+
+    // Calculate current step index for the indicator
+    const getStepIndex = (): number => {
+        if (step === 'questionnaire') return 0;
+        if (step === 'identity') return 1;
+        // payment step: if user is logged in, we skip identity so payment is at index 1
+        return user ? 1 : 2;
+    };
+
+    // Build the step labels based on whether user is logged in
+    const stepLabels = user
+        ? ['Preferenser', 'Betalning', 'Klar']
+        : ['Preferenser', 'Konto', 'Betalning', 'Klar'];
+
+    const handleQuestionnaireComplete = (preferences: UserPreferences) => {
+        setUserPreferences(preferences);
+        // If user is logged in, skip identity step
+        setStep(user ? 'payment' : 'identity');
+    };
 
     return (
         <div className="min-h-screen bg-background">
@@ -625,19 +673,17 @@ export default function PurchaseFlow(props: Props) {
                 />
 
                 <StepIndicator
-                    steps={
-                        user
-                            ? ['Betalning', 'Klar']
-                            : ['Konto', 'Betalning', 'Klar']
-                    }
-                    current={
-                        step === 'identity'
-                            ? 0
-                            : user
-                              ? 0
-                              : 1
-                    }
+                    steps={stepLabels}
+                    current={getStepIndex()}
                 />
+
+                {step === 'questionnaire' && (
+                    <QuestionnaireStep
+                        urbanityTier={props.urbanity_tier}
+                        config={props.questionnaire_config}
+                        onComplete={handleQuestionnaireComplete}
+                    />
+                )}
 
                 {step === 'identity' && (
                     <IdentityStep
@@ -656,6 +702,7 @@ export default function PurchaseFlow(props: Props) {
                     <PaymentStep
                         {...props}
                         email={user?.email ?? guestEmail}
+                        preferences={userPreferences}
                     />
                 )}
             </div>

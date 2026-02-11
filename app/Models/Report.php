@@ -42,6 +42,7 @@ class Report extends Model
         'top_positive',
         'top_negative',
         'priorities',
+        'preferences',
         'default_score',
         'personalized_score',
         'trend_1y',
@@ -50,6 +51,7 @@ class Report extends Model
         'year',
         'isochrone',
         'isochrone_mode',
+        'reachability_rings',
     ];
 
     /**
@@ -80,7 +82,9 @@ class Report extends Model
             'top_positive' => 'array',
             'top_negative' => 'array',
             'priorities' => 'array',
+            'preferences' => 'array',
             'isochrone' => 'array',
+            'reachability_rings' => 'array',
         ];
     }
 

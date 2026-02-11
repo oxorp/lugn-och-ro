@@ -25,6 +25,7 @@ class ReportGenerationService
         private VerdictService $verdictService,
         private ProximityScoreService $proximityService,
         private IsochroneService $isochroneService,
+        private PersonalizedScoringService $personalizedScoringService,
     ) {}
 
     /**
@@ -96,19 +97,50 @@ class ReportGenerationService
         $proximity = $this->proximityService->scoreCached((float) $report->lat, (float) $report->lng);
         $proximityFactors = $proximity->toArray();
 
-        // 7b. Isochrone data
+        // 7b. User preferences and reachability rings
+        $preferences = $report->preferences ?? [];
+        $urbanityTier = $deso->urbanity_tier ?? 'semi_urban';
+        $reachabilityRings = null;
         $isochrone = null;
         $isochroneMode = null;
+
         if (config('proximity.isochrone.enabled')) {
-            $urbanityTier = $deso->urbanity_tier ?? 'semi_urban';
-            $isochroneMode = config("proximity.isochrone.costing.{$urbanityTier}", 'pedestrian');
-            $contours = config("proximity.isochrone.display_contours.{$urbanityTier}", [5, 10, 15]);
-            $isochrone = $this->isochroneService->generate(
-                (float) $report->lat,
-                (float) $report->lng,
-                $isochroneMode,
-                $contours,
-            );
+            // Generate personalized reachability rings if preferences exist
+            if (! empty($preferences)) {
+                $walkingMinutes = $preferences['walking_distance_minutes']
+                    ?? config('questionnaire.default_walking_distance', 15);
+                $hasCar = $preferences['has_car'] ?? null;
+
+                $ringResult = $this->isochroneService->generateMultipleRings(
+                    (float) $report->lat,
+                    (float) $report->lng,
+                    $urbanityTier,
+                    $walkingMinutes,
+                    $hasCar,
+                );
+
+                if ($ringResult) {
+                    $reachabilityRings = $ringResult['rings'];
+                    $isochrone = $ringResult['geojson'];
+                    // Determine primary mode from the most common ring mode
+                    $modes = array_column($reachabilityRings, 'mode');
+                    $isochroneMode = count(array_filter($modes, fn ($m) => $m === 'auto')) > count($modes) / 2
+                        ? 'auto'
+                        : 'pedestrian';
+                }
+            }
+
+            // Fall back to default isochrone if no rings generated
+            if (! $isochrone) {
+                $isochroneMode = config("proximity.isochrone.costing.{$urbanityTier}", 'pedestrian');
+                $contours = config("proximity.isochrone.display_contours.{$urbanityTier}", [5, 10, 15]);
+                $isochrone = $this->isochroneService->generate(
+                    (float) $report->lat,
+                    (float) $report->lng,
+                    $isochroneMode,
+                    $contours,
+                );
+            }
         }
 
         // 8. Map snapshot data
@@ -124,6 +156,15 @@ class ReportGenerationService
         // 11. Compute default & personalized scores
         $defaultScore = $latestScore ? round((float) $latestScore->score, 2) : null;
         $trend1y = $latestScore && $latestScore->trend_1y ? round((float) $latestScore->trend_1y, 2) : null;
+
+        // Compute personalized score if preferences exist
+        $personalizedResult = $this->personalizedScoringService->compute(
+            $defaultScore,
+            $indicators,
+            $proximityFactors,
+            $preferences,
+        );
+        $personalizedScore = $personalizedResult['score'] ?? $defaultScore;
 
         // Latest year from score data
         $year = $latestScore ? (int) $latestScore->year : null;
@@ -141,13 +182,14 @@ class ReportGenerationService
             'top_positive' => $strengths,
             'top_negative' => $weaknesses,
             'default_score' => $defaultScore,
-            'personalized_score' => $defaultScore,
+            'personalized_score' => $personalizedScore,
             'trend_1y' => $trend1y,
             'model_version' => self::MODEL_VERSION,
             'indicator_count' => count($indicators),
             'year' => $year,
             'isochrone' => $isochrone,
             'isochrone_mode' => $isochroneMode,
+            'reachability_rings' => $reachabilityRings,
         ]);
 
         return $report->fresh();

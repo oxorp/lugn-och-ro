@@ -17,6 +17,11 @@ import {
     faBinoculars,
     faFileLines,
     farCopy,
+    faBus,
+    faCartShopping,
+    faPersonWalking,
+    faCar,
+    faClock,
 } from '@/icons';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -83,6 +88,33 @@ interface MapSnapshot {
     surrounding_desos: { deso_code: string; geojson: object }[];
 }
 
+interface RingDefinition {
+    ring: number;
+    minutes: number;
+    mode: 'pedestrian' | 'auto';
+    label: string;
+    color: string;
+}
+
+interface ReachabilityRingsData {
+    rings: RingDefinition[];
+    geojson: {
+        type: 'FeatureCollection';
+        features: Array<{
+            type: 'Feature';
+            geometry: object;
+            properties: {
+                ring: number;
+                contour: number;
+                mode: string;
+                label: string;
+                color: string;
+                area_km2?: number;
+            };
+        }>;
+    };
+}
+
 interface OutlookData {
     outlook: string;
     outlook_label: string;
@@ -117,6 +149,45 @@ interface ScoreHistoryPoint {
     score: number;
 }
 
+interface ProximityFactorDetails {
+    nearest_school?: string;
+    nearest_distance_m?: number;
+    distance_m?: number;
+    travel_seconds?: number | null;
+    travel_minutes?: number | null;
+    schools?: Array<{
+        name: string;
+        type: string | null;
+        distance_m: number;
+        travel_minutes: number | null;
+    }>;
+    nearest_park?: string;
+    nearest_store?: string;
+    nearest_stop?: string;
+    nearest_type?: string;
+    stops_found?: number;
+    count?: number;
+    types?: string[];
+    nearest?: string;
+    scoring_mode?: string;
+    costing?: string;
+    message?: string;
+}
+
+interface ProximityFactorData {
+    slug: string;
+    score: number | null;
+    details: ProximityFactorDetails;
+}
+
+interface ProximityFactors {
+    composite: number;
+    safety_score: number;
+    safety_zone: { level: string; label: string };
+    urbanity_tier: string;
+    factors: ProximityFactorData[];
+}
+
 interface ReportData {
     uuid: string;
     address: string | null;
@@ -133,13 +204,14 @@ interface ReportData {
     personalized_score: number | null;
     trend_1y: number | null;
     area_indicators: SnapshotIndicator[];
-    proximity_factors: Record<string, unknown> | null;
+    proximity_factors: ProximityFactors | null;
     schools: SchoolData[];
     category_verdicts: Record<string, CategoryVerdict>;
     score_history: ScoreHistoryPoint[];
     deso_meta: DesoMeta | null;
     national_references: Record<string, { median: number | null; formatted: string | null }>;
     map_snapshot: MapSnapshot | null;
+    reachability_rings: ReachabilityRingsData | null;
     outlook: OutlookData | null;
     top_positive: StrengthWeakness[];
     top_negative: StrengthWeakness[];
@@ -200,6 +272,22 @@ const CATEGORY_ICONS: Record<string, typeof faShieldHalved> = {
 };
 
 const CATEGORY_ORDER = ['safety', 'economy', 'education', 'environment'];
+
+// Priority labels mapping for Swedish display
+const PRIORITY_LABELS: Record<string, string> = {
+    schools: 'Bra skolor',
+    safety: 'Trygghet & säkerhet',
+    green_areas: 'Grönområden & natur',
+    shopping: 'Butiker & service',
+    transit: 'Kollektivtrafik',
+    healthcare: 'Sjukvård & vårdcentral',
+    dining: 'Restauranger & matställen',
+    quiet: 'Lugnt & fridfullt',
+};
+
+function formatPriorityLabel(key: string): string {
+    return PRIORITY_LABELS[key] ?? key;
+}
 
 // ── Sub-components ──────────────────────────────────────────────────
 
@@ -300,10 +388,14 @@ function ReportHeroScore({ report }: { report: ReportData }) {
     const displayScore = report.personalized_score ?? report.default_score ?? report.score;
     if (displayScore == null) return null;
 
-    const diff =
-        report.personalized_score != null && report.default_score != null
-            ? report.personalized_score - report.default_score
-            : 0;
+    const hasPersonalization =
+        report.personalized_score != null && report.default_score != null;
+    const diff = hasPersonalization
+        ? report.personalized_score! - report.default_score!
+        : 0;
+
+    // Format priorities as Swedish labels
+    const priorityLabels = report.priorities.map(formatPriorityLabel);
 
     return (
         <Card>
@@ -344,25 +436,77 @@ function ReportHeroScore({ report }: { report: ReportData }) {
 
                 {report.priorities.length > 0 && (
                     <div className="mt-6 border-t pt-4">
-                        <p className="text-sm text-muted-foreground">
-                            Baserat på dina prioriteringar:{' '}
-                            {report.priorities.join(' \u00b7 ')}
+                        <p className="text-sm font-medium text-muted-foreground">
+                            Baserat på dina prioriteringar:
                         </p>
-                        {diff !== 0 && (
-                            <p className="mt-1 text-sm">
-                                Personlig poäng:{' '}
-                                {Math.round(report.personalized_score!)}{' '}
+                        <div className="mt-2 flex flex-wrap gap-2">
+                            {priorityLabels.map((label) => (
                                 <span
-                                    className={
-                                        diff > 0
-                                            ? 'text-green-600'
-                                            : 'text-red-600'
-                                    }
+                                    key={label}
+                                    className="inline-flex items-center rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary"
                                 >
-                                    ({diff > 0 ? '+' : ''}
-                                    {diff.toFixed(0)} jämfört med standard{' '}
-                                    {Math.round(report.default_score!)})
+                                    {label}
                                 </span>
+                            ))}
+                        </div>
+
+                        {hasPersonalization && (
+                            <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
+                                {/* Personalized score badge */}
+                                <div className="flex items-center gap-2">
+                                    <div
+                                        className="flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold text-white"
+                                        style={{
+                                            backgroundColor: scoreToColor(
+                                                report.personalized_score!,
+                                            ),
+                                        }}
+                                    >
+                                        {Math.round(report.personalized_score!)}
+                                    </div>
+                                    <span className="text-sm">
+                                        Din personliga poäng
+                                    </span>
+                                </div>
+
+                                {/* Comparison arrow */}
+                                {diff !== 0 && (
+                                    <span
+                                        className={`text-sm font-medium ${
+                                            diff > 0
+                                                ? 'text-green-600'
+                                                : 'text-red-600'
+                                        }`}
+                                    >
+                                        {diff > 0 ? '+' : ''}
+                                        {diff.toFixed(0)} poäng
+                                    </span>
+                                )}
+
+                                {/* Default score badge */}
+                                <div className="flex items-center gap-2 text-muted-foreground">
+                                    <div
+                                        className="flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold text-white opacity-60"
+                                        style={{
+                                            backgroundColor: scoreToColor(
+                                                report.default_score!,
+                                            ),
+                                        }}
+                                    >
+                                        {Math.round(report.default_score!)}
+                                    </div>
+                                    <span className="text-sm">
+                                        Standardpoäng
+                                    </span>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Show note when diff is 0 but priorities exist */}
+                        {hasPersonalization && diff === 0 && (
+                            <p className="mt-2 text-xs text-muted-foreground">
+                                Dina prioriteringar påverkar inte poängen för
+                                detta område.
                             </p>
                         )}
                     </div>
@@ -375,12 +519,16 @@ function ReportHeroScore({ report }: { report: ReportData }) {
 function ReportMap({
     mapData,
     score,
+    reachabilityRings,
 }: {
     mapData: MapSnapshot | null;
     score: number | null;
+    reachabilityRings: ReachabilityRingsData | null;
 }) {
     const mapRef = useRef<HTMLDivElement>(null);
+    const tooltipRef = useRef<HTMLDivElement>(null);
     const mapInstanceRef = useRef<unknown>(null);
+    const [tooltipContent, setTooltipContent] = useState<string | null>(null);
 
     useEffect(() => {
         if (!mapRef.current || !mapData || mapInstanceRef.current) return;
@@ -403,6 +551,7 @@ function ReportMap({
             import('ol/style/Icon'),
             import('ol/proj'),
             import('ol/format/GeoJSON'),
+            import('ol/Overlay'),
         ]).then(
             ([
                 { default: OlMap },
@@ -421,6 +570,7 @@ function ReportMap({
                 _icon,
                 { fromLonLat },
                 { default: GeoJSON },
+                { default: Overlay },
             ]) => {
                 if (!mapRef.current) return;
 
@@ -458,6 +608,61 @@ function ReportMap({
                                     fill: new Fill({ color: 'rgba(229,229,229,0.3)' }),
                                     stroke: new Stroke({ color: '#d4d4d4', width: 1 }),
                                 }),
+                            }),
+                        );
+                    }
+                }
+
+                // Reachability rings (reverse order so inner rings render on top)
+                if (reachabilityRings?.geojson?.features?.length) {
+                    const ringFeatures = reachabilityRings.geojson.features
+                        .slice()
+                        .reverse()
+                        .map((f) => {
+                            try {
+                                const feature = new GeoJSON().readFeature(f, {
+                                    featureProjection: 'EPSG:3857',
+                                });
+                                // Preserve properties for styling
+                                feature.setProperties(f.properties);
+                                return feature;
+                            } catch {
+                                return null;
+                            }
+                        })
+                        .filter(Boolean) as Feature[];
+
+                    if (ringFeatures.length) {
+                        layers.push(
+                            new VectorLayer({
+                                source: new VectorSource({
+                                    features: ringFeatures,
+                                }),
+                                style: (feature) => {
+                                    const props = feature.getProperties();
+                                    const ringColor = props.color ?? '#3b82f6';
+                                    const ringNumber = props.ring ?? 1;
+
+                                    // Opacity decreases for outer rings
+                                    const fillOpacity = ringNumber === 1 ? 0.15 : ringNumber === 2 ? 0.10 : 0.06;
+                                    const strokeOpacity = ringNumber === 1 ? 0.6 : ringNumber === 2 ? 0.4 : 0.25;
+
+                                    // Parse hex color to rgba
+                                    const r = parseInt(ringColor.slice(1, 3), 16);
+                                    const g = parseInt(ringColor.slice(3, 5), 16);
+                                    const b = parseInt(ringColor.slice(5, 7), 16);
+
+                                    return new Style({
+                                        fill: new Fill({
+                                            color: `rgba(${r}, ${g}, ${b}, ${fillOpacity})`,
+                                        }),
+                                        stroke: new Stroke({
+                                            color: `rgba(${r}, ${g}, ${b}, ${strokeOpacity})`,
+                                            width: ringNumber === 1 ? 2 : 1.5,
+                                            lineDash: ringNumber >= 3 ? [6, 4] : undefined,
+                                        }),
+                                    });
+                                },
                             }),
                         );
                     }
@@ -537,6 +742,17 @@ function ReportMap({
                     }),
                 );
 
+                // Create tooltip overlay
+                let tooltipOverlay: InstanceType<typeof Overlay> | null = null;
+                if (tooltipRef.current && reachabilityRings?.geojson?.features?.length) {
+                    tooltipOverlay = new Overlay({
+                        element: tooltipRef.current,
+                        positioning: 'bottom-center',
+                        offset: [0, -10],
+                        stopEvent: false,
+                    });
+                }
+
                 const map = new OlMap({
                     target: mapRef.current,
                     interactions: [],
@@ -548,6 +764,37 @@ function ReportMap({
                     }),
                 });
 
+                // Add tooltip overlay if we have rings
+                if (tooltipOverlay) {
+                    map.addOverlay(tooltipOverlay);
+
+                    // Add pointer move handler for ring tooltips
+                    map.on('pointermove', (evt) => {
+                        const pixel = map.getEventPixel(evt.originalEvent);
+                        let foundRingFeature = false;
+
+                        map.forEachFeatureAtPixel(pixel, (feature) => {
+                            const props = feature.getProperties();
+                            // Check if this is a ring feature (has ring and mode properties)
+                            if (props.ring != null && props.mode != null) {
+                                foundRingFeature = true;
+                                const minutes = props.contour ?? props.ring * 5;
+                                const modeText = props.mode === 'pedestrian' ? 'promenad' : 'körning';
+                                const text = `Nåbart inom ${minutes} min ${modeText}`;
+                                setTooltipContent(text);
+                                tooltipOverlay?.setPosition(evt.coordinate);
+                                return true; // Stop iterating
+                            }
+                            return false;
+                        });
+
+                        if (!foundRingFeature) {
+                            setTooltipContent(null);
+                            tooltipOverlay?.setPosition(undefined);
+                        }
+                    });
+                }
+
                 mapInstanceRef.current = map;
             },
         );
@@ -558,17 +805,28 @@ function ReportMap({
                 mapInstanceRef.current = null;
             }
         };
-    }, [mapData, score]);
+    }, [mapData, score, reachabilityRings]);
 
     if (!mapData) return null;
 
+    const hasRings = reachabilityRings?.geojson?.features?.length;
+
     return (
-        <section>
+        <section className="relative">
             <div
                 ref={mapRef}
                 className="h-[300px] w-full overflow-hidden rounded-lg border"
-                style={{ pointerEvents: 'none' }}
+                style={{ pointerEvents: hasRings ? 'auto' : 'none' }}
             />
+            {/* Tooltip element for ring hover */}
+            <div
+                ref={tooltipRef}
+                className={`pointer-events-none rounded bg-foreground/90 px-2 py-1 text-xs text-background shadow-lg transition-opacity ${
+                    tooltipContent ? 'opacity-100' : 'opacity-0'
+                }`}
+            >
+                {tooltipContent}
+            </div>
         </section>
     );
 }
@@ -877,6 +1135,260 @@ function SchoolStat({
     );
 }
 
+// ── POI Item type for categorization ────────────────────────────────
+interface POIItem {
+    name: string;
+    category: string;
+    icon: typeof faLocationDot;
+    travelMinutes: number | null;
+    distanceM: number | null;
+    ringNumber: number; // 1, 2, 3, or 4 (beyond)
+}
+
+const POI_CATEGORY_CONFIG: Record<
+    string,
+    { label: string; icon: typeof faLocationDot }
+> = {
+    school: { label: 'Skola', icon: faGraduationCap },
+    green_space: { label: 'Grönområde', icon: faTree },
+    transit: { label: 'Kollektivtrafik', icon: faBus },
+    grocery: { label: 'Matbutik', icon: faCartShopping },
+    positive_poi: { label: 'Service', icon: faLocationDot },
+    negative_poi: { label: 'Störning', icon: faTriangleExclamation },
+};
+
+function assignToRing(
+    travelMinutes: number | null,
+    rings: RingDefinition[],
+): number {
+    if (travelMinutes == null || rings.length === 0) return 4; // Beyond
+
+    // Sort rings by minutes ascending
+    const sortedRings = [...rings].sort((a, b) => a.minutes - b.minutes);
+
+    for (const ring of sortedRings) {
+        if (travelMinutes <= ring.minutes) {
+            return ring.ring;
+        }
+    }
+
+    return 4; // Beyond all rings
+}
+
+function extractPOIItems(
+    schools: SchoolData[],
+    proximityFactors: ProximityFactors | null,
+    rings: RingDefinition[],
+): POIItem[] {
+    const items: POIItem[] = [];
+
+    // Add schools
+    for (const school of schools) {
+        // Estimate travel time from distance (assume ~80m/min walking)
+        const estimatedMinutes = school.distance_m / 80;
+        const ringNumber = assignToRing(estimatedMinutes, rings);
+
+        items.push({
+            name: school.name,
+            category: 'school',
+            icon: faGraduationCap,
+            travelMinutes: Math.round(estimatedMinutes * 10) / 10,
+            distanceM: school.distance_m,
+            ringNumber,
+        });
+    }
+
+    // Add POIs from proximity factors
+    if (proximityFactors?.factors) {
+        for (const factor of proximityFactors.factors) {
+            const config = POI_CATEGORY_CONFIG[factor.slug.replace('prox_', '')];
+            if (!config) continue;
+
+            // Skip schools (already handled above) and negative POIs
+            if (factor.slug === 'prox_school' || factor.slug === 'prox_negative_poi') {
+                continue;
+            }
+
+            const details = factor.details;
+            const travelMinutes = details.travel_minutes ?? null;
+            const distanceM = details.nearest_distance_m ?? details.distance_m ?? null;
+
+            // Get the nearest item name
+            let name =
+                details.nearest_park ??
+                details.nearest_store ??
+                details.nearest_stop ??
+                details.nearest ??
+                config.label;
+
+            // Skip if no valid data
+            if (factor.score === 0 || details.message) continue;
+
+            const ringNumber = assignToRing(travelMinutes, rings);
+
+            items.push({
+                name,
+                category: factor.slug.replace('prox_', ''),
+                icon: config.icon,
+                travelMinutes,
+                distanceM: typeof distanceM === 'number' ? distanceM : null,
+                ringNumber,
+            });
+        }
+    }
+
+    return items;
+}
+
+function ReportPOICategorization({
+    schools,
+    proximityFactors,
+    reachabilityRings,
+}: {
+    schools: SchoolData[];
+    proximityFactors: ProximityFactors | null;
+    reachabilityRings: ReachabilityRingsData | null;
+}) {
+    // If no rings data, don't show the section
+    if (!reachabilityRings?.rings?.length) return null;
+
+    const rings = reachabilityRings.rings;
+    const poiItems = extractPOIItems(schools, proximityFactors, rings);
+
+    if (poiItems.length === 0) return null;
+
+    // Group items by ring number
+    const byRing: Record<number, POIItem[]> = { 1: [], 2: [], 3: [], 4: [] };
+    for (const item of poiItems) {
+        byRing[item.ringNumber].push(item);
+    }
+
+    // Get ring labels
+    const ringLabels: Record<number, { label: string; mode: 'pedestrian' | 'auto' }> = {
+        4: { label: 'Utom räckhåll', mode: 'pedestrian' },
+    };
+    for (const ring of rings) {
+        ringLabels[ring.ring] = { label: ring.label, mode: ring.mode };
+    }
+
+    // Define ring colors
+    const ringColors: Record<number, string> = {
+        1: '#22c55e', // green
+        2: '#3b82f6', // blue
+        3: '#8b5cf6', // purple
+        4: '#94a3b8', // gray
+    };
+
+    return (
+        <section>
+            <div className="mb-3 flex items-center gap-2">
+                <FontAwesomeIcon
+                    icon={faLocationDot}
+                    className="h-4 w-4 text-muted-foreground"
+                />
+                <h2 className="text-lg font-semibold">Närhet &amp; tillgänglighet</h2>
+            </div>
+            <p className="mb-4 text-sm text-muted-foreground">
+                Platser i närheten grupperade efter hur snabbt du når dem.
+            </p>
+
+            <div className="space-y-6">
+                {[1, 2, 3, 4].map((ringNum) => {
+                    const ringItems = byRing[ringNum];
+                    if (ringItems.length === 0) return null;
+
+                    const ringInfo = ringLabels[ringNum];
+                    const ringColor = ringColors[ringNum];
+
+                    return (
+                        <div key={ringNum} className="space-y-2">
+                            <div className="flex items-center gap-2">
+                                <div
+                                    className="h-3 w-3 rounded-full"
+                                    style={{ backgroundColor: ringColor }}
+                                />
+                                <h3 className="text-sm font-medium">
+                                    {ringNum === 4 ? 'Utom räckhåll' : `Ring ${ringNum}`}
+                                </h3>
+                                {ringInfo && ringNum !== 4 && (
+                                    <span className="flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                                        <FontAwesomeIcon
+                                            icon={
+                                                ringInfo.mode === 'pedestrian'
+                                                    ? faPersonWalking
+                                                    : faCar
+                                            }
+                                            className="h-2.5 w-2.5"
+                                        />
+                                        {ringInfo.label.replace('Nåbart inom ', '').replace(' promenad', '').replace(' bil', '')}
+                                    </span>
+                                )}
+                            </div>
+
+                            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                {ringItems.map((item, idx) => (
+                                    <Card key={`${item.category}-${idx}`} className="p-3">
+                                        <div className="flex items-start gap-3">
+                                            <div
+                                                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
+                                                style={{
+                                                    backgroundColor: `${ringColor}20`,
+                                                    color: ringColor,
+                                                }}
+                                            >
+                                                <FontAwesomeIcon
+                                                    icon={item.icon}
+                                                    className="h-3.5 w-3.5"
+                                                />
+                                            </div>
+                                            <div className="min-w-0 flex-1">
+                                                <p className="truncate text-sm font-medium">
+                                                    {item.name}
+                                                </p>
+                                                <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
+                                                    <span>
+                                                        {POI_CATEGORY_CONFIG[item.category]?.label ??
+                                                            item.category}
+                                                    </span>
+                                                    {item.travelMinutes != null && (
+                                                        <>
+                                                            <span>&middot;</span>
+                                                            <span className="flex items-center gap-1">
+                                                                <FontAwesomeIcon
+                                                                    icon={faClock}
+                                                                    className="h-2.5 w-2.5"
+                                                                />
+                                                                {item.travelMinutes < 1
+                                                                    ? '<1'
+                                                                    : Math.round(item.travelMinutes)}{' '}
+                                                                min
+                                                            </span>
+                                                        </>
+                                                    )}
+                                                    {item.distanceM != null && (
+                                                        <>
+                                                            <span>&middot;</span>
+                                                            <span>
+                                                                {item.distanceM < 1000
+                                                                    ? `${Math.round(item.distanceM)} m`
+                                                                    : `${(item.distanceM / 1000).toFixed(1)} km`}
+                                                            </span>
+                                                        </>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </Card>
+                                ))}
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        </section>
+    );
+}
+
 function ReportStrengthsWeaknesses({
     positive,
     negative,
@@ -1089,6 +1601,7 @@ export default function ReportShow({ report }: { report: ReportData }) {
                 <ReportMap
                     mapData={report.map_snapshot}
                     score={report.default_score ?? report.score}
+                    reachabilityRings={report.reachability_rings}
                 />
 
                 {hasSnapshot ? (
@@ -1105,6 +1618,13 @@ export default function ReportShow({ report }: { report: ReportData }) {
 
                         {/* 6. Schools */}
                         <ReportSchoolSection schools={report.schools} />
+
+                        {/* 6b. POI Categorization by Ring */}
+                        <ReportPOICategorization
+                            schools={report.schools}
+                            proximityFactors={report.proximity_factors}
+                            reachabilityRings={report.reachability_rings}
+                        />
 
                         {/* 7. Strengths & Weaknesses */}
                         <ReportStrengthsWeaknesses
