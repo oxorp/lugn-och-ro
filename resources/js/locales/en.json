@@ -365,5 +365,11 @@
         "cancel": "Cancel",
         "search": "Search...",
         "no_results": "No results found"
+    },
+    "footer": {
+        "company": "Platsindex AB",
+        "rights": "All rights reserved",
+        "privacy": "Privacy Policy",
+        "terms": "Terms of Service"
     }
 }
