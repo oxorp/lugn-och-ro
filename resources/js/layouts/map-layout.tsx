@@ -246,6 +246,23 @@ export default function MapLayout({ children }: MapLayoutProps) {
                                 </DropdownMenu>
                             </>
                         )}
+                        {/* Footer links */}
+                        <div className="mt-2 border-t border-border pt-3">
+                            <Link
+                                href="/privacy"
+                                onClick={() => setMobileMenuOpen(false)}
+                                className="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+                            >
+                                {t('footer.privacy')}
+                            </Link>
+                        </div>
+                        <Link
+                            href="/terms"
+                            onClick={() => setMobileMenuOpen(false)}
+                            className="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+                        >
+                            {t('footer.terms')}
+                        </Link>
                     </nav>
                 </div>
             )}
