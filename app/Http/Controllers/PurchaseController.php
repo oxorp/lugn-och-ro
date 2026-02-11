@@ -78,6 +78,11 @@ class PurchaseController extends Controller
 
     public function checkout(Request $request): JsonResponse
     {
+        // Get valid priority keys and walking distances from config
+        $validPriorities = array_keys(config('questionnaire.priorities', []));
+        $validWalkingDistances = array_keys(config('questionnaire.walking_distances', []));
+        $maxPriorities = config('questionnaire.max_priorities', 3);
+
         $rules = [
             'lat' => 'required|numeric|min:55|max:69',
             'lng' => 'required|numeric|min:11|max:25',
@@ -87,6 +92,12 @@ class PurchaseController extends Controller
             'lan_name' => 'nullable|string|max:100',
             'score' => 'nullable|numeric',
             'email' => 'nullable|email',
+            // Questionnaire preferences
+            'preferences' => 'nullable|array',
+            'preferences.priorities' => ['nullable', 'array', 'max:'.$maxPriorities],
+            'preferences.priorities.*' => ['string', 'in:'.implode(',', $validPriorities)],
+            'preferences.walking_distance_minutes' => ['nullable', 'integer', 'in:'.implode(',', $validWalkingDistances)],
+            'preferences.has_car' => 'nullable|boolean',
         ];
 
         if (! auth()->check()) {
@@ -98,6 +109,16 @@ class PurchaseController extends Controller
         $email = auth()->check()
             ? auth()->user()->email
             : $validated['email'];
+
+        // Build preferences with defaults
+        $preferences = $validated['preferences'] ?? null;
+        if ($preferences !== null) {
+            // Ensure walking_distance_minutes has a default if not provided
+            $preferences['walking_distance_minutes'] = $preferences['walking_distance_minutes']
+                ?? config('questionnaire.default_walking_distance', 15);
+            // Ensure priorities is an array (empty if not provided)
+            $preferences['priorities'] = $preferences['priorities'] ?? [];
+        }
 
         // Create report in pending state
         $report = Report::create([
@@ -111,6 +132,7 @@ class PurchaseController extends Controller
             'lan_name' => $validated['lan_name'] ?? null,
             'deso_code' => $validated['deso_code'] ?? null,
             'score' => $validated['score'] ?? null,
+            'preferences' => $preferences,
             'amount_ore' => 7900,
             'status' => 'pending',
         ]);
