@@ -83,6 +83,11 @@ import { faThumbsDown } from '@fortawesome/pro-solid-svg-icons/faThumbsDown';
 import { faBinoculars } from '@fortawesome/pro-solid-svg-icons/faBinoculars';
 import { faFileLines } from '@fortawesome/pro-solid-svg-icons/faFileLines';
 
+// Questionnaire icons
+import { faHeartPulse } from '@fortawesome/pro-solid-svg-icons/faHeartPulse';
+import { faUtensils } from '@fortawesome/pro-solid-svg-icons/faUtensils';
+import { faVolumeOff } from '@fortawesome/pro-solid-svg-icons/faVolumeOff';
+
 // ── Regular icons (far) ──────────────────────────────────────────────
 import { faCopy as farCopy } from '@fortawesome/pro-regular-svg-icons/faCopy';
 import { faEye as farEye } from '@fortawesome/pro-regular-svg-icons/faEye';
@@ -160,6 +165,10 @@ library.add(
     faThumbsDown,
     faBinoculars,
     faFileLines,
+    // Questionnaire
+    faHeartPulse,
+    faUtensils,
+    faVolumeOff,
     // Regular
     farCopy,
     farEye,
@@ -236,6 +245,9 @@ export {
     faThumbsDown,
     faBinoculars,
     faFileLines,
+    faHeartPulse,
+    faUtensils,
+    faVolumeOff,
     farCopy,
     farEye,
     farEyeSlash,
