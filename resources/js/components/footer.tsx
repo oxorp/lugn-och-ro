@@ -14,11 +14,11 @@ export function Footer({ className }: FooterProps) {
     return (
         <footer
             className={cn(
-                'border-t border-border bg-background px-4 py-4',
+                'border-t border-border bg-background px-4 py-6',
                 className,
             )}
         >
-            <div className="mx-auto flex max-w-7xl flex-col items-center gap-2 text-center text-xs text-muted-foreground md:flex-row md:justify-between md:text-left">
+            <div className="flex flex-col items-center gap-2 text-center text-xs text-muted-foreground md:flex-row md:justify-between md:text-left">
                 <p>
                     © {currentYear} {t('footer.company')}. {t('footer.rights')}
                 </p>
