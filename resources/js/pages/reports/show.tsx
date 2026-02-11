@@ -84,6 +84,33 @@ interface MapSnapshot {
     surrounding_desos: { deso_code: string; geojson: object }[];
 }
 
+interface RingDefinition {
+    ring: number;
+    minutes: number;
+    mode: 'pedestrian' | 'auto';
+    label: string;
+    color: string;
+}
+
+interface ReachabilityRingsData {
+    rings: RingDefinition[];
+    geojson: {
+        type: 'FeatureCollection';
+        features: Array<{
+            type: 'Feature';
+            geometry: object;
+            properties: {
+                ring: number;
+                contour: number;
+                mode: string;
+                label: string;
+                color: string;
+                area_km2?: number;
+            };
+        }>;
+    };
+}
+
 interface OutlookData {
     outlook: string;
     outlook_label: string;
@@ -141,6 +168,7 @@ interface ReportData {
     deso_meta: DesoMeta | null;
     national_references: Record<string, { median: number | null; formatted: string | null }>;
     map_snapshot: MapSnapshot | null;
+    reachability_rings: ReachabilityRingsData | null;
     outlook: OutlookData | null;
     top_positive: StrengthWeakness[];
     top_negative: StrengthWeakness[];
@@ -376,9 +404,11 @@ function ReportHeroScore({ report }: { report: ReportData }) {
 function ReportMap({
     mapData,
     score,
+    reachabilityRings,
 }: {
     mapData: MapSnapshot | null;
     score: number | null;
+    reachabilityRings: ReachabilityRingsData | null;
 }) {
     const mapRef = useRef<HTMLDivElement>(null);
     const mapInstanceRef = useRef<unknown>(null);
@@ -459,6 +489,61 @@ function ReportMap({
                                     fill: new Fill({ color: 'rgba(229,229,229,0.3)' }),
                                     stroke: new Stroke({ color: '#d4d4d4', width: 1 }),
                                 }),
+                            }),
+                        );
+                    }
+                }
+
+                // Reachability rings (reverse order so inner rings render on top)
+                if (reachabilityRings?.geojson?.features?.length) {
+                    const ringFeatures = reachabilityRings.geojson.features
+                        .slice()
+                        .reverse()
+                        .map((f) => {
+                            try {
+                                const feature = new GeoJSON().readFeature(f, {
+                                    featureProjection: 'EPSG:3857',
+                                });
+                                // Preserve properties for styling
+                                feature.setProperties(f.properties);
+                                return feature;
+                            } catch {
+                                return null;
+                            }
+                        })
+                        .filter(Boolean) as Feature[];
+
+                    if (ringFeatures.length) {
+                        layers.push(
+                            new VectorLayer({
+                                source: new VectorSource({
+                                    features: ringFeatures,
+                                }),
+                                style: (feature) => {
+                                    const props = feature.getProperties();
+                                    const ringColor = props.color ?? '#3b82f6';
+                                    const ringNumber = props.ring ?? 1;
+
+                                    // Opacity decreases for outer rings
+                                    const fillOpacity = ringNumber === 1 ? 0.15 : ringNumber === 2 ? 0.10 : 0.06;
+                                    const strokeOpacity = ringNumber === 1 ? 0.6 : ringNumber === 2 ? 0.4 : 0.25;
+
+                                    // Parse hex color to rgba
+                                    const r = parseInt(ringColor.slice(1, 3), 16);
+                                    const g = parseInt(ringColor.slice(3, 5), 16);
+                                    const b = parseInt(ringColor.slice(5, 7), 16);
+
+                                    return new Style({
+                                        fill: new Fill({
+                                            color: `rgba(${r}, ${g}, ${b}, ${fillOpacity})`,
+                                        }),
+                                        stroke: new Stroke({
+                                            color: `rgba(${r}, ${g}, ${b}, ${strokeOpacity})`,
+                                            width: ringNumber === 1 ? 2 : 1.5,
+                                            lineDash: ringNumber >= 3 ? [6, 4] : undefined,
+                                        }),
+                                    });
+                                },
                             }),
                         );
                     }
@@ -559,7 +644,7 @@ function ReportMap({
                 mapInstanceRef.current = null;
             }
         };
-    }, [mapData, score]);
+    }, [mapData, score, reachabilityRings]);
 
     if (!mapData) return null;
 
@@ -1090,6 +1175,7 @@ export default function ReportShow({ report }: { report: ReportData }) {
                 <ReportMap
                     mapData={report.map_snapshot}
                     score={report.default_score ?? report.score}
+                    reachabilityRings={report.reachability_rings}
                 />
 
                 {hasSnapshot ? (
