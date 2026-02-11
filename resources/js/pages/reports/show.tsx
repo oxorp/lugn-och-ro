@@ -17,6 +17,11 @@ import {
     faBinoculars,
     faFileLines,
     farCopy,
+    faBus,
+    faCartShopping,
+    faPersonWalking,
+    faCar,
+    faClock,
 } from '@/icons';
 import { SourceMarquee } from '@/components/source-marquee';
 import { Card, CardContent } from '@/components/ui/card';
@@ -145,6 +150,45 @@ interface ScoreHistoryPoint {
     score: number;
 }
 
+interface ProximityFactorDetails {
+    nearest_school?: string;
+    nearest_distance_m?: number;
+    distance_m?: number;
+    travel_seconds?: number | null;
+    travel_minutes?: number | null;
+    schools?: Array<{
+        name: string;
+        type: string | null;
+        distance_m: number;
+        travel_minutes: number | null;
+    }>;
+    nearest_park?: string;
+    nearest_store?: string;
+    nearest_stop?: string;
+    nearest_type?: string;
+    stops_found?: number;
+    count?: number;
+    types?: string[];
+    nearest?: string;
+    scoring_mode?: string;
+    costing?: string;
+    message?: string;
+}
+
+interface ProximityFactorData {
+    slug: string;
+    score: number | null;
+    details: ProximityFactorDetails;
+}
+
+interface ProximityFactors {
+    composite: number;
+    safety_score: number;
+    safety_zone: { level: string; label: string };
+    urbanity_tier: string;
+    factors: ProximityFactorData[];
+}
+
 interface ReportData {
     uuid: string;
     address: string | null;
@@ -161,7 +205,7 @@ interface ReportData {
     personalized_score: number | null;
     trend_1y: number | null;
     area_indicators: SnapshotIndicator[];
-    proximity_factors: Record<string, unknown> | null;
+    proximity_factors: ProximityFactors | null;
     schools: SchoolData[];
     category_verdicts: Record<string, CategoryVerdict>;
     score_history: ScoreHistoryPoint[];
@@ -1020,6 +1064,260 @@ function SchoolStat({
     );
 }
 
+// ── POI Item type for categorization ────────────────────────────────
+interface POIItem {
+    name: string;
+    category: string;
+    icon: typeof faLocationDot;
+    travelMinutes: number | null;
+    distanceM: number | null;
+    ringNumber: number; // 1, 2, 3, or 4 (beyond)
+}
+
+const POI_CATEGORY_CONFIG: Record<
+    string,
+    { label: string; icon: typeof faLocationDot }
+> = {
+    school: { label: 'Skola', icon: faGraduationCap },
+    green_space: { label: 'Grönområde', icon: faTree },
+    transit: { label: 'Kollektivtrafik', icon: faBus },
+    grocery: { label: 'Matbutik', icon: faCartShopping },
+    positive_poi: { label: 'Service', icon: faLocationDot },
+    negative_poi: { label: 'Störning', icon: faTriangleExclamation },
+};
+
+function assignToRing(
+    travelMinutes: number | null,
+    rings: RingDefinition[],
+): number {
+    if (travelMinutes == null || rings.length === 0) return 4; // Beyond
+
+    // Sort rings by minutes ascending
+    const sortedRings = [...rings].sort((a, b) => a.minutes - b.minutes);
+
+    for (const ring of sortedRings) {
+        if (travelMinutes <= ring.minutes) {
+            return ring.ring;
+        }
+    }
+
+    return 4; // Beyond all rings
+}
+
+function extractPOIItems(
+    schools: SchoolData[],
+    proximityFactors: ProximityFactors | null,
+    rings: RingDefinition[],
+): POIItem[] {
+    const items: POIItem[] = [];
+
+    // Add schools
+    for (const school of schools) {
+        // Estimate travel time from distance (assume ~80m/min walking)
+        const estimatedMinutes = school.distance_m / 80;
+        const ringNumber = assignToRing(estimatedMinutes, rings);
+
+        items.push({
+            name: school.name,
+            category: 'school',
+            icon: faGraduationCap,
+            travelMinutes: Math.round(estimatedMinutes * 10) / 10,
+            distanceM: school.distance_m,
+            ringNumber,
+        });
+    }
+
+    // Add POIs from proximity factors
+    if (proximityFactors?.factors) {
+        for (const factor of proximityFactors.factors) {
+            const config = POI_CATEGORY_CONFIG[factor.slug.replace('prox_', '')];
+            if (!config) continue;
+
+            // Skip schools (already handled above) and negative POIs
+            if (factor.slug === 'prox_school' || factor.slug === 'prox_negative_poi') {
+                continue;
+            }
+
+            const details = factor.details;
+            const travelMinutes = details.travel_minutes ?? null;
+            const distanceM = details.nearest_distance_m ?? details.distance_m ?? null;
+
+            // Get the nearest item name
+            let name =
+                details.nearest_park ??
+                details.nearest_store ??
+                details.nearest_stop ??
+                details.nearest ??
+                config.label;
+
+            // Skip if no valid data
+            if (factor.score === 0 || details.message) continue;
+
+            const ringNumber = assignToRing(travelMinutes, rings);
+
+            items.push({
+                name,
+                category: factor.slug.replace('prox_', ''),
+                icon: config.icon,
+                travelMinutes,
+                distanceM: typeof distanceM === 'number' ? distanceM : null,
+                ringNumber,
+            });
+        }
+    }
+
+    return items;
+}
+
+function ReportPOICategorization({
+    schools,
+    proximityFactors,
+    reachabilityRings,
+}: {
+    schools: SchoolData[];
+    proximityFactors: ProximityFactors | null;
+    reachabilityRings: ReachabilityRingsData | null;
+}) {
+    // If no rings data, don't show the section
+    if (!reachabilityRings?.rings?.length) return null;
+
+    const rings = reachabilityRings.rings;
+    const poiItems = extractPOIItems(schools, proximityFactors, rings);
+
+    if (poiItems.length === 0) return null;
+
+    // Group items by ring number
+    const byRing: Record<number, POIItem[]> = { 1: [], 2: [], 3: [], 4: [] };
+    for (const item of poiItems) {
+        byRing[item.ringNumber].push(item);
+    }
+
+    // Get ring labels
+    const ringLabels: Record<number, { label: string; mode: 'pedestrian' | 'auto' }> = {
+        4: { label: 'Utom räckhåll', mode: 'pedestrian' },
+    };
+    for (const ring of rings) {
+        ringLabels[ring.ring] = { label: ring.label, mode: ring.mode };
+    }
+
+    // Define ring colors
+    const ringColors: Record<number, string> = {
+        1: '#22c55e', // green
+        2: '#3b82f6', // blue
+        3: '#8b5cf6', // purple
+        4: '#94a3b8', // gray
+    };
+
+    return (
+        <section>
+            <div className="mb-3 flex items-center gap-2">
+                <FontAwesomeIcon
+                    icon={faLocationDot}
+                    className="h-4 w-4 text-muted-foreground"
+                />
+                <h2 className="text-lg font-semibold">Närhet &amp; tillgänglighet</h2>
+            </div>
+            <p className="mb-4 text-sm text-muted-foreground">
+                Platser i närheten grupperade efter hur snabbt du når dem.
+            </p>
+
+            <div className="space-y-6">
+                {[1, 2, 3, 4].map((ringNum) => {
+                    const ringItems = byRing[ringNum];
+                    if (ringItems.length === 0) return null;
+
+                    const ringInfo = ringLabels[ringNum];
+                    const ringColor = ringColors[ringNum];
+
+                    return (
+                        <div key={ringNum} className="space-y-2">
+                            <div className="flex items-center gap-2">
+                                <div
+                                    className="h-3 w-3 rounded-full"
+                                    style={{ backgroundColor: ringColor }}
+                                />
+                                <h3 className="text-sm font-medium">
+                                    {ringNum === 4 ? 'Utom räckhåll' : `Ring ${ringNum}`}
+                                </h3>
+                                {ringInfo && ringNum !== 4 && (
+                                    <span className="flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                                        <FontAwesomeIcon
+                                            icon={
+                                                ringInfo.mode === 'pedestrian'
+                                                    ? faPersonWalking
+                                                    : faCar
+                                            }
+                                            className="h-2.5 w-2.5"
+                                        />
+                                        {ringInfo.label.replace('Nåbart inom ', '').replace(' promenad', '').replace(' bil', '')}
+                                    </span>
+                                )}
+                            </div>
+
+                            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                {ringItems.map((item, idx) => (
+                                    <Card key={`${item.category}-${idx}`} className="p-3">
+                                        <div className="flex items-start gap-3">
+                                            <div
+                                                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
+                                                style={{
+                                                    backgroundColor: `${ringColor}20`,
+                                                    color: ringColor,
+                                                }}
+                                            >
+                                                <FontAwesomeIcon
+                                                    icon={item.icon}
+                                                    className="h-3.5 w-3.5"
+                                                />
+                                            </div>
+                                            <div className="min-w-0 flex-1">
+                                                <p className="truncate text-sm font-medium">
+                                                    {item.name}
+                                                </p>
+                                                <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
+                                                    <span>
+                                                        {POI_CATEGORY_CONFIG[item.category]?.label ??
+                                                            item.category}
+                                                    </span>
+                                                    {item.travelMinutes != null && (
+                                                        <>
+                                                            <span>&middot;</span>
+                                                            <span className="flex items-center gap-1">
+                                                                <FontAwesomeIcon
+                                                                    icon={faClock}
+                                                                    className="h-2.5 w-2.5"
+                                                                />
+                                                                {item.travelMinutes < 1
+                                                                    ? '<1'
+                                                                    : Math.round(item.travelMinutes)}{' '}
+                                                                min
+                                                            </span>
+                                                        </>
+                                                    )}
+                                                    {item.distanceM != null && (
+                                                        <>
+                                                            <span>&middot;</span>
+                                                            <span>
+                                                                {item.distanceM < 1000
+                                                                    ? `${Math.round(item.distanceM)} m`
+                                                                    : `${(item.distanceM / 1000).toFixed(1)} km`}
+                                                            </span>
+                                                        </>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </Card>
+                                ))}
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        </section>
+    );
+}
+
 function ReportStrengthsWeaknesses({
     positive,
     negative,
@@ -1249,6 +1547,13 @@ export default function ReportShow({ report }: { report: ReportData }) {
 
                         {/* 6. Schools */}
                         <ReportSchoolSection schools={report.schools} />
+
+                        {/* 6b. POI Categorization by Ring */}
+                        <ReportPOICategorization
+                            schools={report.schools}
+                            proximityFactors={report.proximity_factors}
+                            reachabilityRings={report.reachability_rings}
+                        />
 
                         {/* 7. Strengths & Weaknesses */}
                         <ReportStrengthsWeaknesses
