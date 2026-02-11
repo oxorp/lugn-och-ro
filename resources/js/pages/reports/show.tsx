@@ -411,7 +411,9 @@ function ReportMap({
     reachabilityRings: ReachabilityRingsData | null;
 }) {
     const mapRef = useRef<HTMLDivElement>(null);
+    const tooltipRef = useRef<HTMLDivElement>(null);
     const mapInstanceRef = useRef<unknown>(null);
+    const [tooltipContent, setTooltipContent] = useState<string | null>(null);
 
     useEffect(() => {
         if (!mapRef.current || !mapData || mapInstanceRef.current) return;
@@ -434,6 +436,7 @@ function ReportMap({
             import('ol/style/Icon'),
             import('ol/proj'),
             import('ol/format/GeoJSON'),
+            import('ol/Overlay'),
         ]).then(
             ([
                 { default: OlMap },
@@ -452,6 +455,7 @@ function ReportMap({
                 _icon,
                 { fromLonLat },
                 { default: GeoJSON },
+                { default: Overlay },
             ]) => {
                 if (!mapRef.current) return;
 
@@ -623,6 +627,17 @@ function ReportMap({
                     }),
                 );
 
+                // Create tooltip overlay
+                let tooltipOverlay: InstanceType<typeof Overlay> | null = null;
+                if (tooltipRef.current && reachabilityRings?.geojson?.features?.length) {
+                    tooltipOverlay = new Overlay({
+                        element: tooltipRef.current,
+                        positioning: 'bottom-center',
+                        offset: [0, -10],
+                        stopEvent: false,
+                    });
+                }
+
                 const map = new OlMap({
                     target: mapRef.current,
                     interactions: [],
@@ -633,6 +648,37 @@ function ReportMap({
                         zoom: mapData.zoom,
                     }),
                 });
+
+                // Add tooltip overlay if we have rings
+                if (tooltipOverlay) {
+                    map.addOverlay(tooltipOverlay);
+
+                    // Add pointer move handler for ring tooltips
+                    map.on('pointermove', (evt) => {
+                        const pixel = map.getEventPixel(evt.originalEvent);
+                        let foundRingFeature = false;
+
+                        map.forEachFeatureAtPixel(pixel, (feature) => {
+                            const props = feature.getProperties();
+                            // Check if this is a ring feature (has ring and mode properties)
+                            if (props.ring != null && props.mode != null) {
+                                foundRingFeature = true;
+                                const minutes = props.contour ?? props.ring * 5;
+                                const modeText = props.mode === 'pedestrian' ? 'promenad' : 'körning';
+                                const text = `Nåbart inom ${minutes} min ${modeText}`;
+                                setTooltipContent(text);
+                                tooltipOverlay?.setPosition(evt.coordinate);
+                                return true; // Stop iterating
+                            }
+                            return false;
+                        });
+
+                        if (!foundRingFeature) {
+                            setTooltipContent(null);
+                            tooltipOverlay?.setPosition(undefined);
+                        }
+                    });
+                }
 
                 mapInstanceRef.current = map;
             },
@@ -648,13 +694,24 @@ function ReportMap({
 
     if (!mapData) return null;
 
+    const hasRings = reachabilityRings?.geojson?.features?.length;
+
     return (
-        <section>
+        <section className="relative">
             <div
                 ref={mapRef}
                 className="h-[300px] w-full overflow-hidden rounded-lg border"
-                style={{ pointerEvents: 'none' }}
+                style={{ pointerEvents: hasRings ? 'auto' : 'none' }}
             />
+            {/* Tooltip element for ring hover */}
+            <div
+                ref={tooltipRef}
+                className={`pointer-events-none rounded bg-foreground/90 px-2 py-1 text-xs text-background shadow-lg transition-opacity ${
+                    tooltipContent ? 'opacity-100' : 'opacity-0'
+                }`}
+            >
+                {tooltipContent}
+            </div>
         </section>
     );
 }
