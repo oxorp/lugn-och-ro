@@ -18,7 +18,7 @@ class PurchaseController extends Controller
         abort_unless($lat >= 55 && $lat <= 69 && $lng >= 11 && $lng <= 25, 404);
 
         $deso = DB::selectOne('
-            SELECT d.deso_code, d.kommun_name, d.lan_name
+            SELECT d.deso_code, d.kommun_name, d.lan_name, d.urbanity_tier
             FROM deso_areas d
             WHERE ST_Contains(d.geom, ST_SetSRID(ST_MakePoint(?, ?), 4326))
             LIMIT 1
@@ -34,6 +34,9 @@ class PurchaseController extends Controller
 
         $address = $this->reverseGeocode($lat, $lng);
 
+        // Build questionnaire config for frontend
+        $questionnaireConfig = $this->getQuestionnaireConfig();
+
         return Inertia::render('purchase/flow', [
             'lat' => $lat,
             'lng' => $lng,
@@ -41,9 +44,36 @@ class PurchaseController extends Controller
             'kommun_name' => $deso->kommun_name ?? null,
             'lan_name' => $deso->lan_name ?? null,
             'deso_code' => $deso->deso_code ?? null,
+            'urbanity_tier' => $deso->urbanity_tier ?? 'urban',
             'score' => $score->score ?? null,
             'stripe_key' => config('stripe.key'),
+            'questionnaire_config' => $questionnaireConfig,
         ]);
+    }
+
+    /**
+     * Get questionnaire configuration formatted for the frontend.
+     */
+    private function getQuestionnaireConfig(): array
+    {
+        $priorities = config('questionnaire.priorities', []);
+
+        // Format priority options for frontend (key, label_sv, icon)
+        $priorityOptions = collect($priorities)->map(function ($config, $key) {
+            return [
+                'key' => $key,
+                'label_sv' => $config['label_sv'] ?? $key,
+                'icon' => $config['icon'] ?? 'circle-question',
+            ];
+        })->values()->all();
+
+        return [
+            'priority_options' => $priorityOptions,
+            'max_priorities' => config('questionnaire.max_priorities', 3),
+            'walking_distances' => config('questionnaire.walking_distances', []),
+            'default_walking_distance' => config('questionnaire.default_walking_distance', 15),
+            'labels' => config('questionnaire.labels', []),
+        ];
     }
 
     public function checkout(Request $request): JsonResponse
