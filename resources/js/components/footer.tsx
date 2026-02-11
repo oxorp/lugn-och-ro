@@ -1,5 +1,6 @@
 import { Link } from '@inertiajs/react';
 
+import { SourceMarquee } from '@/components/source-marquee';
 import { useTranslation } from '@/hooks/use-translation';
 import { cn } from '@/lib/utils';
 
@@ -12,13 +13,9 @@ export function Footer({ className }: FooterProps) {
     const currentYear = new Date().getFullYear();
 
     return (
-        <footer
-            className={cn(
-                'border-t border-border bg-background px-4 py-6',
-                className,
-            )}
-        >
-            <div className="flex flex-col items-center gap-2 text-center text-xs text-muted-foreground md:flex-row md:justify-between md:text-left">
+        <footer className={cn('bg-background', className)}>
+            <SourceMarquee />
+            <div className="flex flex-col items-center gap-2 px-4 py-6 text-center text-xs text-muted-foreground md:flex-row md:justify-between md:text-left">
                 <p>
                     © {currentYear} {t('footer.company')}. {t('footer.rights')}
                 </p>
