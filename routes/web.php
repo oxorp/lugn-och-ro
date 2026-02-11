@@ -88,6 +88,15 @@ Route::get('/my-reports', [MyReportsController::class, 'index'])
 Route::post('/my-reports/request-access', [MyReportsController::class, 'requestAccess'])
     ->name('my-reports.request-access');
 
+// For Mäklare landing page — different URLs for Swedish vs English
+Route::get('/for-makare', [PageController::class, 'forMakare'])
+    ->middleware('set-locale:sv')
+    ->name('for-makare');
+
+Route::get('/en/for-agents', [PageController::class, 'forMakare'])
+    ->middleware('set-locale:en')
+    ->name('en.for-makare');
+
 // Shared route definitions (used for both Swedish and English)
 $webRoutes = function () {
     Route::get('/', [MapController::class, 'index'])->name('map');

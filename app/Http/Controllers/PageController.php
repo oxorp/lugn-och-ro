@@ -11,4 +11,11 @@ class PageController extends Controller
     {
         return Inertia::render('methodology');
     }
+
+    public function forMakare(): Response
+    {
+        return Inertia::render('for-makare', [
+            'translations' => __('for-makare'),
+        ]);
+    }
 }
