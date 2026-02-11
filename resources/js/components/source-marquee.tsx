@@ -18,7 +18,7 @@ export function SourceMarquee() {
                 <span className="shrink-0 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/70">
                     Data från
                 </span>
-                <div className="relative h-5 flex-1 overflow-hidden">
+                <div className="relative h-8 flex-1 overflow-hidden">
                     {/* Fade edges */}
                     <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-8 bg-gradient-to-r from-muted/30 to-transparent" />
                     <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8 bg-gradient-to-l from-muted/30 to-transparent" />
@@ -31,7 +31,7 @@ export function SourceMarquee() {
                                 src={source.logo}
                                 alt={source.name}
                                 title={source.name}
-                                className="h-5 w-auto shrink-0 object-contain opacity-50 grayscale transition-all hover:opacity-100 hover:grayscale-0"
+                                className="h-8 w-auto shrink-0 object-contain opacity-50 transition-all hover:opacity-100"
                                 loading="lazy"
                             />
                         ))}
