@@ -98,6 +98,7 @@ $webRoutes = function () {
         ->where(['lat' => '[0-9.-]+', 'lng' => '[0-9.-]+'])
         ->name('explore');
     Route::get('/methodology', [PageController::class, 'methodology'])->name('methodology');
+    Route::get('/for-maklare', [PageController::class, 'forMakare'])->name('for-maklare');
 
     Route::middleware(['auth', 'verified'])->group(function () {
         Route::get('dashboard', function () {

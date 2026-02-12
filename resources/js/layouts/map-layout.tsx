@@ -249,13 +249,20 @@ export default function MapLayout({ children }: MapLayoutProps) {
                         {/* Footer links */}
                         <div className="mt-2 border-t border-border pt-3">
                             <Link
-                                href="/privacy"
+                                href="/for-maklare"
                                 onClick={() => setMobileMenuOpen(false)}
                                 className="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
                             >
-                                {t('footer.privacy')}
+                                {t('footer.for_maklare')}
                             </Link>
                         </div>
+                        <Link
+                            href="/privacy"
+                            onClick={() => setMobileMenuOpen(false)}
+                            className="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+                        >
+                            {t('footer.privacy')}
+                        </Link>
                         <Link
                             href="/terms"
                             onClick={() => setMobileMenuOpen(false)}

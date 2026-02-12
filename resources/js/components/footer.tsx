@@ -21,6 +21,12 @@ export function Footer({ className }: FooterProps) {
                 </p>
                 <nav className="flex gap-4">
                     <Link
+                        href="/for-maklare"
+                        className="transition-colors hover:text-foreground"
+                    >
+                        {t('footer.for_maklare')}
+                    </Link>
+                    <Link
                         href="/privacy"
                         className="transition-colors hover:text-foreground"
                     >
