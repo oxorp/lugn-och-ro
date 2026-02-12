@@ -3,27 +3,28 @@ import {
     faCheck,
     faChevronLeft,
     faEnvelope,
+    faFileLines,
     faLocationDot,
     faLock,
     faSpinnerThird,
 } from '@/icons';
-import { Head, Link, useForm, usePage } from '@inertiajs/react';
+import { Head, Link, router, useForm, usePage } from '@inertiajs/react';
 import React, { type FormEvent, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import type { SharedData } from '@/types';
-import QuestionnaireStep, { type UserPreferences } from './components/questionnaire-step';
-
-interface PriorityOption {
-    key: string;
-    label_sv: string;
-    icon: string;
-}
+import QuestionnaireStep, {
+    type UserPreferences,
+} from './components/questionnaire-step';
 
 interface QuestionnaireConfig {
-    priority_options: PriorityOption[];
+    priority_options: Array<{
+        key: string;
+        label_sv: string;
+        icon: string;
+    }>;
     max_priorities: number;
     walking_distances: Record<number, string>;
     default_walking_distance: number;
@@ -39,6 +40,39 @@ interface QuestionnaireConfig {
     };
 }
 
+/**
+ * Store user preferences in session before OAuth redirect.
+ * This ensures questionnaire selections survive the OAuth round-trip.
+ */
+async function storePreferencesInSession(
+    preferences: UserPreferences,
+    lat: number,
+    lng: number,
+): Promise<void> {
+    const csrfToken = document
+        .querySelector('meta[name="csrf-token"]')
+        ?.getAttribute('content');
+
+    const response = await fetch('/purchase/store-preferences', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+            ...(csrfToken ? { 'X-CSRF-TOKEN': csrfToken } : {}),
+        },
+        body: JSON.stringify({
+            preferences,
+            lat,
+            lng,
+        }),
+    });
+
+    if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        throw new Error(data?.message ?? 'Failed to store preferences');
+    }
+}
+
 interface Props {
     lat: number;
     lng: number;
@@ -48,9 +82,12 @@ interface Props {
     deso_code: string | null;
     score: number | null;
     stripe_key: string;
+    restored_preferences: UserPreferences | null;
     urbanity_tier: 'urban' | 'semi_urban' | 'rural';
     questionnaire_config: QuestionnaireConfig;
 }
+
+type Step = 'questionnaire' | 'identity' | 'payment';
 
 function scoreColorClass(score: number): string {
     if (score >= 80) return 'text-green-700';
@@ -378,14 +415,40 @@ function IdentityStep({
     onGuestContinue,
     onSignedIn,
     redirectAfterAuth,
+    preferences,
+    lat,
+    lng,
 }: {
     onGuestContinue: (email: string) => void;
     onSignedIn: () => void;
     redirectAfterAuth: string;
+    preferences: UserPreferences;
+    lat: number;
+    lng: number;
 }) {
     const [mode, setMode] = useState<
         'choose' | 'guest' | 'signup' | 'login'
     >('choose');
+    const [isStoringPreferences, setIsStoringPreferences] = useState(false);
+    const [oauthError, setOauthError] = useState<string | null>(null);
+
+    const handleGoogleClick = async () => {
+        setIsStoringPreferences(true);
+        setOauthError(null);
+
+        try {
+            await storePreferencesInSession(preferences, lat, lng);
+            // Navigate to Google OAuth after preferences are stored
+            window.location.href = `/auth/google?redirect=${encodeURIComponent(redirectAfterAuth)}`;
+        } catch (err: unknown) {
+            setOauthError(
+                err instanceof Error
+                    ? err.message
+                    : 'Kunde inte spara dina val. Försök igen.',
+            );
+            setIsStoringPreferences(false);
+        }
+    };
 
     if (mode === 'guest') {
         return (
@@ -441,18 +504,29 @@ function IdentityStep({
                 </div>
             </button>
 
-            <a
-                href={`/auth/google?redirect=${encodeURIComponent(redirectAfterAuth)}`}
-                className="flex w-full items-center gap-3 rounded-lg border p-4 transition-colors hover:bg-accent"
+            <button
+                onClick={handleGoogleClick}
+                disabled={isStoringPreferences}
+                className="flex w-full items-center gap-3 rounded-lg border p-4 text-left transition-colors hover:bg-accent disabled:cursor-wait disabled:opacity-60"
             >
-                <GoogleIcon className="h-5 w-5" />
+                {isStoringPreferences ? (
+                    <FontAwesomeIcon icon={faSpinnerThird} spin className="h-5 w-5" />
+                ) : (
+                    <GoogleIcon className="h-5 w-5" />
+                )}
                 <div>
-                    <p className="font-medium">Fortsätt med Google</p>
+                    <p className="font-medium">
+                        {isStoringPreferences ? 'Förbereder...' : 'Fortsätt med Google'}
+                    </p>
                     <p className="text-sm text-muted-foreground">
                         Logga in och spara rapporter automatiskt
                     </p>
                 </div>
-            </a>
+            </button>
+
+            {oauthError && (
+                <p className="text-sm text-destructive">{oauthError}</p>
+            )}
 
             <div className="flex gap-3">
                 <button
@@ -500,7 +574,7 @@ function PaymentStep({
     lan_name: string | null;
     score: number | null;
     email: string;
-    preferences: UserPreferences | null;
+    preferences: UserPreferences;
 }) {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -616,36 +690,150 @@ function PaymentStep({
     );
 }
 
+function AdminGenerateStep({
+    lat,
+    lng,
+    preferences,
+}: {
+    lat: number;
+    lng: number;
+    preferences: UserPreferences;
+}) {
+    const [generating, setGenerating] = useState(false);
+
+    return (
+        <div className="space-y-6">
+            <div>
+                <h2 className="mb-1 text-xl font-semibold">
+                    Generera rapport
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                    Admin — ingen betalning krävs.
+                </p>
+            </div>
+
+            <div className="space-y-2 rounded-lg bg-muted/50 p-4">
+                <p className="mb-3 text-sm font-medium">
+                    Dina preferenser:
+                </p>
+                {preferences.priorities && preferences.priorities.length > 0 && (
+                    <p className="text-sm text-muted-foreground">
+                        Prioriteringar: {preferences.priorities.join(', ')}
+                    </p>
+                )}
+                {preferences.walking_distance_minutes && (
+                    <p className="text-sm text-muted-foreground">
+                        Promenadavstånd: {preferences.walking_distance_minutes} min
+                    </p>
+                )}
+                {preferences.has_car !== null && (
+                    <p className="text-sm text-muted-foreground">
+                        Bil: {preferences.has_car ? 'Ja' : 'Nej'}
+                    </p>
+                )}
+            </div>
+
+            <Button
+                onClick={() => {
+                    setGenerating(true);
+                    router.post(
+                        '/admin/reports/generate',
+                        {
+                            lat,
+                            lng,
+                            'preferences[priorities]': preferences.priorities ?? [],
+                            'preferences[walking_distance_minutes]': preferences.walking_distance_minutes,
+                            'preferences[has_car]': preferences.has_car,
+                        },
+                        {
+                            onFinish: () => setGenerating(false),
+                        },
+                    );
+                }}
+                disabled={generating}
+                className="w-full"
+                size="lg"
+            >
+                {generating ? (
+                    <>
+                        <FontAwesomeIcon icon={faSpinnerThird} spin className="mr-2 h-4 w-4" />
+                        Genererar rapport...
+                    </>
+                ) : (
+                    <>
+                        <FontAwesomeIcon icon={faFileLines} className="mr-2 h-4 w-4" />
+                        Generera rapport
+                    </>
+                )}
+            </Button>
+        </div>
+    );
+}
+
 export default function PurchaseFlow(props: Props) {
     const { auth } = usePage<SharedData>().props;
     const user = auth?.user;
+    const isAdmin = !!user?.is_admin;
 
-    const [step, setStep] = useState<'questionnaire' | 'identity' | 'payment'>('questionnaire');
+    // Determine initial step:
+    // - If restored preferences exist (returning from OAuth): skip questionnaire, go to payment
+    // - If admin: always start with questionnaire (never payment)
+    // - If authenticated regular user: start with questionnaire
+    // - If unauthenticated: start with questionnaire
+    const hasRestoredPreferences = !!props.restored_preferences;
+
+    let initialStep: Step;
+    if (isAdmin) {
+        initialStep = hasRestoredPreferences ? 'payment' : 'questionnaire';
+    } else if (hasRestoredPreferences && user) {
+        // Returning from OAuth with preferences already filled
+        initialStep = 'payment';
+    } else {
+        initialStep = 'questionnaire';
+    }
+
+    const [step, setStep] = useState<Step>(initialStep);
     const [guestEmail, setGuestEmail] = useState('');
-    const [userPreferences, setUserPreferences] = useState<UserPreferences | null>(null);
 
-    // Calculate current step index for the indicator
-    const getStepIndex = (): number => {
-        if (step === 'questionnaire') return 0;
-        if (step === 'identity') return 1;
-        // payment step: if user is logged in, we skip identity so payment is at index 1
-        return user ? 1 : 2;
+    // User preferences state - initialized from restored preferences (after OAuth) or defaults.
+    const [userPreferences, setUserPreferences] = useState<UserPreferences>(
+        props.restored_preferences ?? {
+            priorities: [],
+            walking_distance_minutes: props.questionnaire_config.default_walking_distance,
+            has_car: null,
+        },
+    );
+
+    // Build step labels based on user type
+    const getStepConfig = (): { steps: string[]; currentIndex: number } => {
+        if (isAdmin) {
+            // Admin: Preferenser → Generera
+            const steps = ['Preferenser', 'Generera'];
+            const currentIndex = step === 'questionnaire' ? 0 : 1;
+            return { steps, currentIndex };
+        }
+
+        if (user) {
+            // Authenticated user: Preferenser → Betalning → Klar
+            const steps = ['Preferenser', 'Betalning', 'Klar'];
+            const currentIndex = step === 'questionnaire' ? 0 : step === 'payment' ? 1 : 2;
+            return { steps, currentIndex };
+        }
+
+        // Unauthenticated: Preferenser → Konto → Betalning → Klar
+        const steps = ['Preferenser', 'Konto', 'Betalning', 'Klar'];
+        const currentIndex =
+            step === 'questionnaire' ? 0 :
+            step === 'identity' ? 1 :
+            step === 'payment' ? 2 : 3;
+        return { steps, currentIndex };
     };
 
-    // Build the step labels based on whether user is logged in
-    const stepLabels = user
-        ? ['Preferenser', 'Betalning', 'Klar']
-        : ['Preferenser', 'Konto', 'Betalning', 'Klar'];
-
-    const handleQuestionnaireComplete = (preferences: UserPreferences) => {
-        setUserPreferences(preferences);
-        // If user is logged in, skip identity step
-        setStep(user ? 'payment' : 'identity');
-    };
+    const { steps, currentIndex } = getStepConfig();
 
     return (
         <div className="min-h-screen bg-background">
-            <Head title="Köp rapport" />
+            <Head title={isAdmin ? 'Generera rapport' : 'Köp rapport'} />
 
             <header className="flex h-12 shrink-0 items-center border-b border-border bg-background px-4">
                 <div className="flex w-full items-center gap-6">
@@ -672,20 +860,28 @@ export default function PurchaseFlow(props: Props) {
                     score={props.score}
                 />
 
-                <StepIndicator
-                    steps={stepLabels}
-                    current={getStepIndex()}
-                />
+                <StepIndicator steps={steps} current={currentIndex} />
 
                 {step === 'questionnaire' && (
                     <QuestionnaireStep
                         urbanityTier={props.urbanity_tier}
                         config={props.questionnaire_config}
-                        onComplete={handleQuestionnaireComplete}
+                        onComplete={(prefs) => {
+                            setUserPreferences(prefs);
+                            if (isAdmin) {
+                                // Admin skips identity + payment
+                                setStep('payment');
+                            } else if (user) {
+                                // Authenticated user skips identity
+                                setStep('payment');
+                            } else {
+                                setStep('identity');
+                            }
+                        }}
                     />
                 )}
 
-                {step === 'identity' && (
+                {step === 'identity' && !isAdmin && (
                     <IdentityStep
                         onGuestContinue={(email) => {
                             setGuestEmail(email);
@@ -695,10 +891,21 @@ export default function PurchaseFlow(props: Props) {
                             setStep('payment');
                         }}
                         redirectAfterAuth={`/purchase/${props.lat},${props.lng}`}
+                        preferences={userPreferences}
+                        lat={props.lat}
+                        lng={props.lng}
                     />
                 )}
 
-                {step === 'payment' && (
+                {step === 'payment' && isAdmin && (
+                    <AdminGenerateStep
+                        lat={props.lat}
+                        lng={props.lng}
+                        preferences={userPreferences}
+                    />
+                )}
+
+                {step === 'payment' && !isAdmin && (
                     <PaymentStep
                         {...props}
                         email={user?.email ?? guestEmail}

@@ -24,6 +24,11 @@ class AdminReportController extends Controller
         $validated = $request->validate([
             'lat' => 'required|numeric|min:55|max:69',
             'lng' => 'required|numeric|min:11|max:25',
+            'preferences' => 'nullable|array',
+            'preferences.priorities' => 'nullable|array',
+            'preferences.priorities.*' => 'string',
+            'preferences.walking_distance_minutes' => 'nullable|integer|min:1|max:60',
+            'preferences.has_car' => 'nullable|boolean',
         ]);
 
         $lat = (float) $validated['lat'];
@@ -57,6 +62,7 @@ class AdminReportController extends Controller
             'lan_name' => $deso->lan_name ?? null,
             'deso_code' => $deso->deso_code ?? null,
             'score' => $score->score ?? null,
+            'preferences' => $validated['preferences'] ?? null,
             'amount_ore' => 0,
             'status' => 'completed',
         ]);

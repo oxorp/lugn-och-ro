@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Mail\ReportReady;
 use App\Models\Report;
+use App\Services\ReportGenerationService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Mail;
@@ -45,6 +46,9 @@ class StripeWebhookController extends Controller
             'status' => 'completed',
             'stripe_payment_intent_id' => $session->payment_intent,
         ]);
+
+        // Generate the full report snapshot
+        app(ReportGenerationService::class)->generate($report);
 
         $email = $report->guest_email ?? $report->user?->email;
         if ($email) {

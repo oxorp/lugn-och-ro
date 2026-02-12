@@ -1,5 +1,6 @@
 import type { HeatmapMapHandle } from '@/components/deso-map';
 import { useCallback, useRef, useState } from 'react';
+import { toast } from 'sonner';
 
 import type { LocationData } from '../types';
 
@@ -71,6 +72,9 @@ export function useLocationData(mapRef: React.RefObject<HeatmapMapHandle | null>
                     setLocationData(null);
                     setPinActive(false);
                     mapRef.current?.clearPin();
+                    toast.info('Platsen saknar data — välj en annan plats i Sverige', {
+                        duration: 4000,
+                    });
                     return;
                 }
                 throw new Error(`API error: ${response.status}`);

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Report;
+use App\Services\ReportGenerationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -13,12 +14,37 @@ use Inertia\Response;
 
 class PurchaseController extends Controller
 {
+    public function __construct(
+        private ReportGenerationService $generator,
+    ) {}
+
+    public function storePreferences(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'preferences' => 'required|array',
+            'preferences.priorities' => 'nullable|array',
+            'preferences.priorities.*' => 'string',
+            'preferences.walking_distance_minutes' => 'nullable|integer|min:1|max:60',
+            'preferences.has_car' => 'nullable|boolean',
+            'lat' => 'required|numeric|min:55|max:69',
+            'lng' => 'required|numeric|min:11|max:25',
+        ]);
+
+        session([
+            'purchase.preferences' => $validated['preferences'],
+            'purchase.lat' => $validated['lat'],
+            'purchase.lng' => $validated['lng'],
+        ]);
+
+        return response()->json(['status' => 'ok']);
+    }
+
     public function show(float $lat, float $lng): Response
     {
         abort_unless($lat >= 55 && $lat <= 69 && $lng >= 11 && $lng <= 25, 404);
 
         $deso = DB::selectOne('
-            SELECT d.deso_code, d.kommun_name, d.lan_name, d.urbanity_tier
+            SELECT d.deso_code, d.kommun_name, d.lan_name
             FROM deso_areas d
             WHERE ST_Contains(d.geom, ST_SetSRID(ST_MakePoint(?, ?), 4326))
             LIMIT 1
@@ -34,8 +60,28 @@ class PurchaseController extends Controller
 
         $address = $this->reverseGeocode($lat, $lng);
 
-        // Build questionnaire config for frontend
-        $questionnaireConfig = $this->getQuestionnaireConfig();
+        // Check for restored preferences from session (after OAuth redirect)
+        $restoredPreferences = null;
+        $sessionLat = session('purchase.lat');
+        $sessionLng = session('purchase.lng');
+
+        // Only restore if coordinates match (to avoid wrong location data)
+        if (session('purchase.preferences') !== null &&
+            $sessionLat !== null && $sessionLng !== null &&
+            abs((float) $sessionLat - $lat) < 0.0001 &&
+            abs((float) $sessionLng - $lng) < 0.0001) {
+            $restoredPreferences = session('purchase.preferences');
+
+            // Clear session data after reading to prevent stale data
+            session()->forget(['purchase.preferences', 'purchase.lat', 'purchase.lng']);
+        }
+
+        // Determine urbanity tier for questionnaire
+        $urbanityTier = 'semi_urban';
+        if ($deso) {
+            $desoArea = \App\Models\DesoArea::where('deso_code', $deso->deso_code)->first();
+            $urbanityTier = $desoArea?->urbanity_tier ?? 'semi_urban';
+        }
 
         return Inertia::render('purchase/flow', [
             'lat' => $lat,
@@ -44,45 +90,26 @@ class PurchaseController extends Controller
             'kommun_name' => $deso->kommun_name ?? null,
             'lan_name' => $deso->lan_name ?? null,
             'deso_code' => $deso->deso_code ?? null,
-            'urbanity_tier' => $deso->urbanity_tier ?? 'urban',
             'score' => $score->score ?? null,
             'stripe_key' => config('stripe.key'),
-            'questionnaire_config' => $questionnaireConfig,
+            'restored_preferences' => $restoredPreferences,
+            'urbanity_tier' => $urbanityTier,
+            'questionnaire_config' => [
+                'priority_options' => collect(config('questionnaire.priorities'))->map(fn ($p, $key) => [
+                    'key' => $key,
+                    'label_sv' => $p['label_sv'],
+                    'icon' => $p['icon'],
+                ])->values()->toArray(),
+                'max_priorities' => config('questionnaire.max_priorities'),
+                'walking_distances' => config('questionnaire.walking_distances'),
+                'default_walking_distance' => config('questionnaire.default_walking_distance'),
+                'labels' => config('questionnaire.labels'),
+            ],
         ]);
-    }
-
-    /**
-     * Get questionnaire configuration formatted for the frontend.
-     */
-    private function getQuestionnaireConfig(): array
-    {
-        $priorities = config('questionnaire.priorities', []);
-
-        // Format priority options for frontend (key, label_sv, icon)
-        $priorityOptions = collect($priorities)->map(function ($config, $key) {
-            return [
-                'key' => $key,
-                'label_sv' => $config['label_sv'] ?? $key,
-                'icon' => $config['icon'] ?? 'circle-question',
-            ];
-        })->values()->all();
-
-        return [
-            'priority_options' => $priorityOptions,
-            'max_priorities' => config('questionnaire.max_priorities', 3),
-            'walking_distances' => config('questionnaire.walking_distances', []),
-            'default_walking_distance' => config('questionnaire.default_walking_distance', 15),
-            'labels' => config('questionnaire.labels', []),
-        ];
     }
 
     public function checkout(Request $request): JsonResponse
     {
-        // Get valid priority keys and walking distances from config
-        $validPriorities = array_keys(config('questionnaire.priorities', []));
-        $validWalkingDistances = array_keys(config('questionnaire.walking_distances', []));
-        $maxPriorities = config('questionnaire.max_priorities', 3);
-
         $rules = [
             'lat' => 'required|numeric|min:55|max:69',
             'lng' => 'required|numeric|min:11|max:25',
@@ -92,11 +119,10 @@ class PurchaseController extends Controller
             'lan_name' => 'nullable|string|max:100',
             'score' => 'nullable|numeric',
             'email' => 'nullable|email',
-            // Questionnaire preferences
             'preferences' => 'nullable|array',
-            'preferences.priorities' => ['nullable', 'array', 'max:'.$maxPriorities],
-            'preferences.priorities.*' => ['string', 'in:'.implode(',', $validPriorities)],
-            'preferences.walking_distance_minutes' => ['nullable', 'integer', 'in:'.implode(',', $validWalkingDistances)],
+            'preferences.priorities' => 'nullable|array',
+            'preferences.priorities.*' => 'string',
+            'preferences.walking_distance_minutes' => 'nullable|integer|min:1|max:60',
             'preferences.has_car' => 'nullable|boolean',
         ];
 
@@ -110,16 +136,6 @@ class PurchaseController extends Controller
             ? auth()->user()->email
             : $validated['email'];
 
-        // Build preferences with defaults
-        $preferences = $validated['preferences'] ?? null;
-        if ($preferences !== null) {
-            // Ensure walking_distance_minutes has a default if not provided
-            $preferences['walking_distance_minutes'] = $preferences['walking_distance_minutes']
-                ?? config('questionnaire.default_walking_distance', 15);
-            // Ensure priorities is an array (empty if not provided)
-            $preferences['priorities'] = $preferences['priorities'] ?? [];
-        }
-
         // Create report in pending state
         $report = Report::create([
             'uuid' => Str::uuid(),
@@ -132,7 +148,7 @@ class PurchaseController extends Controller
             'lan_name' => $validated['lan_name'] ?? null,
             'deso_code' => $validated['deso_code'] ?? null,
             'score' => $validated['score'] ?? null,
-            'preferences' => $preferences,
+            'preferences' => $validated['preferences'] ?? null,
             'amount_ore' => 7900,
             'status' => 'pending',
         ]);
@@ -140,6 +156,7 @@ class PurchaseController extends Controller
         // Dev bypass — skip Stripe when no secret configured
         if (app()->environment('local') && ! config('stripe.secret')) {
             $report->update(['status' => 'completed']);
+            $this->generator->generate($report);
 
             return response()->json([
                 'checkout_url' => "/reports/{$report->uuid}",
@@ -250,6 +267,11 @@ class PurchaseController extends Controller
                     'status' => 'completed',
                     'stripe_payment_intent_id' => $session->payment_intent,
                 ]);
+
+                // Generate the full report snapshot if not already done
+                if (! $report->area_indicators) {
+                    $this->generator->generate($report);
+                }
 
                 $email = $report->guest_email ?? $report->user?->email;
                 if ($email) {
